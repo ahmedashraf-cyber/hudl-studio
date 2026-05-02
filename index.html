@@ -1,46 +1,147 @@
-import { auth } from './firebase-config.js';
-import {
-  createUserWithEmailAndPassword,
-  signInWithEmailAndPassword,
-  signInWithPopup,
-  GoogleAuthProvider,
-  signOut,
-  onAuthStateChanged,
-  updateProfile
-} from "https://www.gstatic.com/firebasejs/12.12.1/firebase-auth.js";
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Hudl Studio</title>
+<link rel="stylesheet" href="css/main.css">
+</head>
+<body>
 
-const provider = new GoogleAuthProvider();
+<!-- AUTH PAGE -->
+<div id="page-auth" class="page active">
+  <div class="auth-box">
+    <div class="auth-logo">
+      <div class="auth-logo-mark">
+        <svg width="18" height="18" viewBox="0 0 18 18" fill="none"><path d="M3 9L9 3L15 9L9 15Z" fill="white"/><circle cx="9" cy="9" r="2.5" fill="white"/></svg>
+      </div>
+      <div class="auth-logo-text">Hudl <span>Studio</span></div>
+    </div>
+    <div class="auth-title">Welcome back</div>
+    <div class="auth-sub">Sign in to access your projects and creative tools</div>
+    <div class="auth-tabs">
+      <div class="auth-tab on" data-tab="login" onclick="switchAuthTab('login')">Sign In</div>
+      <div class="auth-tab" data-tab="signup" onclick="switchAuthTab('signup')">Create Account</div>
+    </div>
+    <div id="auth-name-field" class="auth-field" style="display:none">
+      <label>Full Name</label>
+      <input id="auth-name" type="text" placeholder="Your name">
+    </div>
+    <div class="auth-field">
+      <label>Email</label>
+      <input id="auth-email" type="email" placeholder="you@email.com" onkeydown="if(event.key==='Enter')handleAuth()">
+    </div>
+    <div class="auth-field">
+      <label>Password</label>
+      <input id="auth-pass" type="password" placeholder="••••••••" onkeydown="if(event.key==='Enter')handleAuth()">
+    </div>
+    <div class="auth-err" id="auth-err"></div>
+    <button class="btn-auth" id="auth-btn" onclick="handleAuth()">Sign In</button>
+    <div class="auth-divider"><span>or</span></div>
+    <button class="btn-google" onclick="handleGoogleAuth()">
+      <svg width="18" height="18" viewBox="0 0 24 24"><path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/><path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/><path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"/><path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"/></svg>
+      Continue with Google
+    </button>
+  </div>
+</div>
 
-// ── AUTH STATE LISTENER ──
-export function onAuthChanged(callback) {
-  return onAuthStateChanged(auth, callback);
-}
+<!-- LAUNCHER PAGE -->
+<div id="page-launcher" class="page">
+  <div class="l-bg"></div>
+  <div class="l-topbar">
+    <div class="l-logo">
+      <div class="l-logo-mark"><svg width="16" height="16" viewBox="0 0 18 18" fill="none"><path d="M3 9L9 3L15 9L9 15Z" fill="white"/><circle cx="9" cy="9" r="2.5" fill="white"/></svg></div>
+      <div class="l-logo-text">Hudl <span>Studio</span></div>
+    </div>
+    <div class="l-topbar-right">
+      <div class="user-pill"><div class="user-avatar" id="user-avatar">U</div><span id="user-name">User</span></div>
+      <button class="btn-primary" onclick="openNewProjectModal()">+ New Project</button>
+      <button class="btn-ghost" onclick="handleLogout()">Sign Out</button>
+    </div>
+  </div>
+  <div class="l-body">
+    <div style="margin-bottom:28px">
+      <h1 style="font-size:24px;font-weight:700;letter-spacing:-0.5px;margin-bottom:5px">Welcome to <span style="color:var(--red)">Hudl Studio</span></h1>
+      <p style="font-size:13px;color:var(--mu)">Your complete creative suite — projects saved to the cloud automatically</p>
+    </div>
+    <div class="sec-label">Applications</div>
+    <div class="apps-grid">
+      <div class="app-card" style="--ca:#E31837" onclick="openApp('canvas')">
+        <div class="app-icon" style="background:rgba(227,24,55,0.15)"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#E31837" stroke-width="1.8"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg></div>
+        <div class="app-name">Canvas</div>
+        <div class="app-tag">Layer-based photo editing & compositing</div>
+        <div class="app-feats"><div class="app-feat">Layers, masks & blend modes</div><div class="app-feat">Brush, eraser, fill, shapes, text</div><div class="app-feat">Filters, adjustments & histogram</div><div class="app-feat">Drag & drop images, export PNG/JPEG</div></div>
+        <div class="app-foot"><button class="btn-primary" onclick="event.stopPropagation();openApp('canvas')">Open Canvas</button><span class="app-badge">Ready</span></div>
+      </div>
+      <div class="app-card" style="--ca:#58a6ff" onclick="openApp('cut')">
+        <div class="app-icon" style="background:rgba(88,166,255,0.12)"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#58a6ff" stroke-width="1.8"><rect x="2" y="6" width="20" height="12" rx="2"/><path d="M8 6V18M16 6V18"/><circle cx="5" cy="12" r="1"/></svg></div>
+        <div class="app-name">Cut</div>
+        <div class="app-tag">Professional multi-track video editor</div>
+        <div class="app-feats"><div class="app-feat">Import real video, audio & images</div><div class="app-feat">Drag clips to multi-track timeline</div><div class="app-feat">Trim, split, resize, delete clips</div><div class="app-feat">Color grade, transport controls</div></div>
+        <div class="app-foot"><button style="padding:7px 16px;background:#58a6ff;border:none;border-radius:8px;color:#fff;font-size:13px;font-weight:600;font-family:'DM Sans',sans-serif;cursor:pointer" onclick="event.stopPropagation();openApp('cut')">Open Cut</button><span class="app-badge">Ready</span></div>
+      </div>
+      <div class="app-card" style="--ca:#d29922" onclick="openApp('motion')">
+        <div class="app-icon" style="background:rgba(210,153,34,0.12)"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#d29922" stroke-width="1.8"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg></div>
+        <div class="app-name">Motion</div>
+        <div class="app-tag">Keyframe animation & motion graphics</div>
+        <div class="app-feats"><div class="app-feat">Live animated composition preview</div><div class="app-feat">Keyframe timeline with markers</div><div class="app-feat">Effects library — toggle live</div><div class="app-feat">Add layers: solid, text, shape, camera</div></div>
+        <div class="app-foot"><button style="padding:7px 16px;background:#d29922;border:none;border-radius:8px;color:#fff;font-size:13px;font-weight:600;font-family:'DM Sans',sans-serif;cursor:pointer" onclick="event.stopPropagation();openApp('motion')">Open Motion</button><span class="app-badge">Ready</span></div>
+      </div>
+    </div>
+    <div class="sec-label">Your Projects</div>
+    <div class="projects-list" id="projects-list"><div class="empty-projects">Loading projects…</div></div>
+  </div>
+</div>
 
-// ── EMAIL SIGN UP ──
-export async function signUp(email, password, displayName) {
-  const cred = await createUserWithEmailAndPassword(auth, email, password);
-  await updateProfile(cred.user, { displayName });
-  return cred.user;
-}
+<!-- APP PAGE -->
+<div id="page-app" class="page">
+  <div class="titlebar">
+    <div class="tl-logo"><svg width="11" height="11" viewBox="0 0 18 18" fill="none"><path d="M3 9L9 3L15 9L9 15Z" fill="white"/><circle cx="9" cy="9" r="2.5" fill="white"/></svg></div>
+    <span class="tl-app-name" id="tl-app-name">Canvas</span>
+    <span class="tl-file" id="tl-file-name">Untitled</span>
+    <span class="tl-save-indicator" id="save-indicator">● Saved</span>
+    <div class="tl-sp"></div>
+    <button class="tl-btn" id="btn-to-cut" style="display:none;color:#58a6ff;border-color:rgba(88,166,255,0.4)" onclick="sendToCut()">→ Send to Cut</button>
+    <button class="tl-btn" id="btn-to-motion" style="display:none;color:#d29922;border-color:rgba(210,153,34,0.4)" onclick="sendToMotion()">→ Motion</button>
+    <button class="tl-btn acc" onclick="doSave()">Save</button>
+    <button class="tl-btn" onclick="doExport()">Export</button>
+    <button class="tl-btn" onclick="goToLauncher()">← Projects</button>
+  </div>
+  <div class="menubar" id="menubar"></div>
+  <div id="cv-app" class="hidden"></div>
+  <div id="cut-app" class="hidden"></div>
+  <div id="ae-app" class="hidden"></div>
+</div>
 
-// ── EMAIL SIGN IN ──
-export async function signIn(email, password) {
-  const cred = await signInWithEmailAndPassword(auth, email, password);
-  return cred.user;
-}
+<!-- NEW PROJECT MODAL -->
+<div class="modal-overlay" id="np-modal" onclick="if(event.target===this)closeNPModal()">
+  <div class="modal-box">
+    <div class="modal-title">New Project</div>
+    <div class="modal-sub">Projects are saved to your account automatically</div>
+    <div class="modal-field"><label>Project Name</label><input id="np-name" value="Untitled Project"></div>
+    <div class="modal-field"><label>Application</label>
+      <select id="np-app"><option value="canvas">Canvas — Photo editing</option><option value="cut">Cut — Video editing</option><option value="motion">Motion — Motion graphics</option></select>
+    </div>
+    <div class="modal-grid">
+      <div class="modal-field"><label>Width (px)</label><input id="np-w" type="number" value="1920"></div>
+      <div class="modal-field"><label>Height (px)</label><input id="np-h" type="number" value="1080"></div>
+    </div>
+    <div class="modal-grid">
+      <div class="modal-field"><label>Duration (seconds)</label><input id="np-dur" type="number" value="30" min="1"></div>
+      <div class="modal-field"><label>Frame Rate</label>
+        <select id="np-fps"><option value="24">24 fps — Cinematic</option><option value="25">25 fps — PAL</option><option value="30" selected>30 fps — Standard</option><option value="60">60 fps — Smooth</option></select>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn-cancel" onclick="closeNPModal()">Cancel</button>
+      <button class="btn-create" id="np-create-btn" onclick="createNewProject()">Create Project</button>
+    </div>
+  </div>
+</div>
 
-// ── GOOGLE SIGN IN ──
-export async function signInGoogle() {
-  const cred = await signInWithPopup(auth, provider);
-  return cred.user;
-}
+<!-- NOTIFICATION -->
+<div class="notif" id="notif"><div class="notif-dot" id="notif-dot"></div><span id="notif-text">Saved</span></div>
 
-// ── SIGN OUT ──
-export async function logout() {
-  await signOut(auth);
-}
-
-// ── GET CURRENT USER ──
-export function currentUser() {
-  return auth.currentUser;
-}
+<script type="module" src="js/app.js"></script>
+</body>
+</html>
