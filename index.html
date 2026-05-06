@@ -11,7 +11,7 @@
     // Layer 3: bfcache reload
     // Together these make stale-cache login failures impossible.
     (function() {
-      var V = '1778053951';
+      var V = '1778054376';
 
       // Layer 2: localStorage version check (survives browser restarts)
       try {
@@ -29,7 +29,7 @@
 
       // Layer 1: Register Service Worker
       if ('serviceWorker' in navigator) {
-        navigator.serviceWorker.register('/sw.js?v=1778053951')
+        navigator.serviceWorker.register('/sw.js?v=1778054376')
           .then(function(reg) {
             // If a new SW is waiting, activate it immediately
             if (reg.waiting) { reg.waiting.postMessage({type:'SKIP_WAITING'}); }
@@ -195,7 +195,7 @@
 <!-- NOTIFICATION -->
 <div class="notif" id="notif"><div class="notif-dot" id="notif-dot"></div><span id="notif-text">Saved</span></div>
 
-<script type="module" src="js/app.js?v=1778054199"></script>
-<script defer src="js/cut-features.js?v=1778054199"></script>
+<script type="module" src="js/app.js?v=1778054376"></script>
+<script defer src="js/cut-features.js?v=1778054376"></script>
 </body>
 </html>

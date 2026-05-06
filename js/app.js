@@ -164,7 +164,10 @@ window.handleAuth = async function() {
     btn.style.background = 'linear-gradient(180deg,#30D158,#25a244)';
     btn.style.boxShadow  = '0 2px 12px rgba(48,209,88,0.35)';
   } catch (e) {
-    showErr(e.message && !e.code ? e.message : firebaseErrMsg(e.code));
+    // Show the raw error so we can debug exactly what's happening
+    const msg = e.message || e.code || JSON.stringify(e) || 'Unknown error';
+    showErr(msg);
+    console.error('Auth error:', e);
     resetBtn();
   }
 
