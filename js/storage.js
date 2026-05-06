@@ -1,7 +1,7 @@
 import { storage } from './firebase-config.js';
 import {
   ref, uploadBytesResumable, getDownloadURL, deleteObject, listAll
-} from "https://www.gstatic.com/firebasejs/12.12.1/firebase-storage.js";
+} from "https://www.gstatic.com/firebasejs/11.6.0/firebase-storage.js";
 
 export function uploadMedia(userId, projectId, file, onProgress) {
   return new Promise((resolve, reject) => {

@@ -1,9 +1,9 @@
 // Field Studio Service Worker
-// Version: 1778053951
+// Version: 1778054199
 // This SW ensures index.html is ALWAYS fresh from network.
 // JS files (app.js?v=xxx) are cached forever (immutable, versioned).
 
-const CACHE_NAME = 'fstudio-1778053951';
+const CACHE_NAME = 'fstudio-1778054199';
 const JS_CACHE   = 'fstudio-js-1778053951';
 
 self.addEventListener('install', e => {

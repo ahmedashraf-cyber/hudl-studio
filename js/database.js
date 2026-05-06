@@ -2,7 +2,7 @@ import { db } from './firebase-config.js';
 import {
   collection, doc, addDoc, updateDoc, deleteDoc,
   getDocs, getDoc, query, where, orderBy, serverTimestamp
-} from "https://www.gstatic.com/firebasejs/12.12.1/firebase-firestore.js";
+} from "https://www.gstatic.com/firebasejs/11.6.0/firebase-firestore.js";
 
 export async function createProject(userId, projectData) {
   const ref = await addDoc(collection(db, 'projects'), {
