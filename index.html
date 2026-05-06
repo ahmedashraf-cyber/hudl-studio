@@ -5,19 +5,34 @@
   <meta http-equiv="Pragma" content="no-cache">
   <meta http-equiv="Expires" content="0">
   <script>
-    // Version guard — runs synchronously before any module loads.
-    // Fetches /version.json with no-cache. If version changed, hard-reload.
-    (function(){
-      var CURRENT = '1777976966';
-      // Store in sessionStorage so we don't reload in a loop
-      if(sessionStorage.getItem('appVersion') === CURRENT) return;
-      sessionStorage.setItem('appVersion', CURRENT);
-      // Also reload if the page was served from bfcache (back button)
+    // ── BULLETPROOF CACHE GUARD ──────────────────────────────
+    // Runs synchronously BEFORE any module loads.
+    // Reloads the page if the loaded version doesn't match
+    // the version stamped at deploy time.
+    (function() {
+      var DEPLOYED = '1778053824';
+
+      // localStorage persists across browser restarts (unlike sessionStorage)
+      try {
+        var stored = localStorage.getItem('fstudio_v');
+        if (stored !== DEPLOYED) {
+          localStorage.setItem('fstudio_v', DEPLOYED);
+          // Only reload if we're not already in a reload loop
+          if (stored !== null) {
+            window.location.reload(true);
+            return;
+          }
+        }
+      } catch(e) {}
+
+      // bfcache: page restored from memory after closing tab/window
+      // e.persisted = true means the page came from bfcache, not network
+      window.addEventListener('pageshow', function(e) {
+        if (e.persisted) {
+          window.location.reload(true);
+        }
+      });
     })();
-    // On bfcache restore, always reload to get fresh module
-    window.addEventListener('pageshow', function(e){
-      if(e.persisted) window.location.reload(true);
-    });
   </script>
 
 <meta charset="UTF-8">
@@ -161,7 +176,7 @@
 <!-- NOTIFICATION -->
 <div class="notif" id="notif"><div class="notif-dot" id="notif-dot"></div><span id="notif-text">Saved</span></div>
 
-<script type="module" src="js/app.js?v=1778053157"></script>
-<script defer src="js/cut-features.js?v=1778053157"></script>
+<script type="module" src="js/app.js?v=1778053824"></script>
+<script defer src="js/cut-features.js?v=1778053824"></script>
 </body>
 </html>
