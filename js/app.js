@@ -3540,7 +3540,7 @@ function cutTogglePlay(){
           startAudioPlayback();
           if(mv2Ref){ mv2Ref.style.display='block'; }
           const c2=document.getElementById('cut-trans-cvs');
-          if(c2) c2.style.display='none';
+          if(c2) c2.style.visibility='hidden';
         } else if(trNow||hasEffNow||hasOverlays){
           // Ensure mv keeps playing while canvas is active (visibility:hidden still decodes)
           const mv3=document.getElementById('cut-main-vid');
@@ -3552,15 +3552,11 @@ function cutTogglePlay(){
             syncCutVid();
           }
         } else {
-          // No overlays/effects — show video element directly (no canvas overhead)
+          // No overlays/effects — show video directly via visibility
           const canv=document.getElementById('cut-trans-cvs');
           const mv2=document.getElementById('cut-main-vid');
-          if(canv&&canv.style.display!=='none'){
-            canv.style.display='none';
-          }
-          if(mv2&&mv2.src&&mv2.style.display==='none'){
-            mv2.style.display='block';
-          }
+          if(canv) canv.style.visibility='hidden';
+          if(mv2)  mv2.style.visibility='visible';
           if(mv2&&mv2.paused&&S.cut.playing) mv2.play().catch(()=>{});
         }
       }
