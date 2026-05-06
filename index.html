@@ -5,33 +5,52 @@
   <meta http-equiv="Pragma" content="no-cache">
   <meta http-equiv="Expires" content="0">
   <script>
-    // ── BULLETPROOF CACHE GUARD ──────────────────────────────
-    // Runs synchronously BEFORE any module loads.
-    // Reloads the page if the loaded version doesn't match
-    // the version stamped at deploy time.
+    // ── PERMANENT CACHE SOLUTION ─────────────────────────────
+    // Layer 1: Service Worker (registered below) — network-first for HTML
+    // Layer 2: localStorage version guard
+    // Layer 3: bfcache reload
+    // Together these make stale-cache login failures impossible.
     (function() {
-      var DEPLOYED = '1778053824';
+      var V = '1778053951';
 
-      // localStorage persists across browser restarts (unlike sessionStorage)
+      // Layer 2: localStorage version check (survives browser restarts)
       try {
-        var stored = localStorage.getItem('fstudio_v');
-        if (stored !== DEPLOYED) {
-          localStorage.setItem('fstudio_v', DEPLOYED);
-          // Only reload if we're not already in a reload loop
-          if (stored !== null) {
-            window.location.reload(true);
-            return;
-          }
+        if (localStorage.getItem('fstudio_v') !== V) {
+          var hadOld = localStorage.getItem('fstudio_v') !== null;
+          localStorage.setItem('fstudio_v', V);
+          if (hadOld) { window.location.reload(true); return; }
         }
       } catch(e) {}
 
-      // bfcache: page restored from memory after closing tab/window
-      // e.persisted = true means the page came from bfcache, not network
+      // Layer 3: bfcache — page restored from memory (back button, reopen tab)
       window.addEventListener('pageshow', function(e) {
-        if (e.persisted) {
-          window.location.reload(true);
-        }
+        if (e.persisted) { window.location.reload(true); }
       });
+
+      // Layer 1: Register Service Worker
+      if ('serviceWorker' in navigator) {
+        navigator.serviceWorker.register('/sw.js?v=1778053951')
+          .then(function(reg) {
+            // If a new SW is waiting, activate it immediately
+            if (reg.waiting) { reg.waiting.postMessage({type:'SKIP_WAITING'}); }
+            reg.addEventListener('updatefound', function() {
+              var nw = reg.installing;
+              if (nw) {
+                nw.addEventListener('statechange', function() {
+                  if (nw.state === 'installed' && navigator.serviceWorker.controller) {
+                    // New version available — reload to get fresh app
+                    window.location.reload(true);
+                  }
+                });
+              }
+            });
+          });
+
+        // Listen for SW telling us to reload
+        navigator.serviceWorker.addEventListener('message', function(e) {
+          if (e.data && e.data.type === 'RELOAD') { window.location.reload(true); }
+        });
+      }
     })();
   </script>
 
@@ -176,7 +195,7 @@
 <!-- NOTIFICATION -->
 <div class="notif" id="notif"><div class="notif-dot" id="notif-dot"></div><span id="notif-text">Saved</span></div>
 
-<script type="module" src="js/app.js?v=1778053824"></script>
-<script defer src="js/cut-features.js?v=1778053824"></script>
+<script type="module" src="js/app.js?v=1778053951"></script>
+<script defer src="js/cut-features.js?v=1778053951"></script>
 </body>
 </html>
