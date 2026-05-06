@@ -2004,6 +2004,17 @@ function updatePropsPanel(ci){
       <button onclick="showSpeedDialog(${ci})" style="width:100%;padding:5px;background:rgba(232,89,12,0.1);border:0.5px solid rgba(232,89,12,0.3);border-radius:6px;color:#E8590C;font-size:10px;cursor:pointer;font-family:'DM Sans',sans-serif">⚡ Speed / Duration…</button>
     </div>
     ${audioSection}
+    <div class="prop-section">⚙ Transform</div>
+    <div class="prop-row"><span class="prop-label">Scale</span>
+      <input type="range" min="0" max="500" value="${c.scale||100}" style="flex:1;accent-color:#E8590C"
+        oninput="S.cut.clips[${ci}].scale=parseInt(this.value);this.nextElementSibling.textContent=this.value+'%';syncCutVid()">
+      <span style="font-size:10px;color:var(--mu);min-width:38px;text-align:right">${c.scale||100}%</span>
+    </div>
+    <div class="prop-row"><span class="prop-label">Rotation</span>
+      <input type="range" min="0" max="360" value="${c.rotation||0}" style="flex:1;accent-color:#E8590C"
+        oninput="S.cut.clips[${ci}].rotation=parseInt(this.value);this.nextElementSibling.textContent=this.value+'°';syncCutVid()">
+      <span style="font-size:10px;color:var(--mu);min-width:38px;text-align:right">${c.rotation||0}°</span>
+    </div>
     <div class="prop-section">🎬 Actions</div>
     <div style="display:flex;gap:4px;flex-wrap:wrap;padding:2px 0">
       <button onclick="deleteSelected()" style="flex:1;padding:5px;background:rgba(255,69,58,0.1);border:0.5px solid rgba(255,69,58,0.2);border-radius:6px;color:#ff453a;font-size:10px;cursor:pointer;font-family:'DM Sans',sans-serif">🗑 Delete</button>
@@ -3669,13 +3680,21 @@ function stopCutPlay(){
 const _audioEls = {};
 function getAudioEl(url){
   if(!_audioEls[url]){
-    // Kill any existing audio elements for this URL first
     document.querySelectorAll('audio[data-url]').forEach(a=>{
       if(a.dataset.url===url){a.pause();a.remove();}
     });
     const a=document.createElement('audio');
     a.src=url; a.preload='auto'; a.dataset.url=url;
     document.body.appendChild(a);
+    // Wire Web Audio GainNode for linearRamp fades
+    try{
+      const actx=new(window.AudioContext||window.webkitAudioContext)();
+      const src=actx.createMediaElementSource(a);
+      const gainN=actx.createGain();
+      src.connect(gainN); gainN.connect(actx.destination);
+      a._audioCtx=actx; a._gainNode=gainN;
+      actx.resume().catch(()=>{});
+    }catch(e){}
     _audioEls[url]=a;
   }
   return _audioEls[url];
@@ -3766,8 +3785,17 @@ function syncAudioPlayback(){
       } else if (!a.paused && Math.abs(a.currentTime - expected) > 0.5) {
         a.currentTime = expected;
       }
-      // Apply fade gain
-      a.volume = Math.min(1, getClipGainAtPh(activeClip, ph));
+      // Apply fade gain via Web Audio API (linearRamp for smooth fade)
+      const targetGain = Math.min(1, getClipGainAtPh(activeClip, ph));
+      if(a._gainNode){
+        // Use Web Audio ramp for smooth fade (not abrupt per-frame jumps)
+        const now = a._audioCtx ? a._audioCtx.currentTime : 0;
+        a._gainNode.gain.cancelScheduledValues(now);
+        a._gainNode.gain.setValueAtTime(a._gainNode.gain.value, now);
+        a._gainNode.gain.linearRampToValueAtTime(targetGain, now + 0.033);
+      } else {
+        a.volume = targetGain;
+      }
     }
   });
   // Start audio for clips not yet in cache
@@ -3932,8 +3960,8 @@ function syncCutVid(){
     const ctx = canvas.getContext('2d');
     const drawSrc = mv;
 
-    // Center-crop draw helper — preserves native video AR in any canvas size
-    function _drawVideoFrame(src, ctx, cW, cH){
+    // Draw video frame with optional scale/rotation transform
+    function _drawVideoFrame(src, ctx, cW, cH, clipData){
       if(!src || src.readyState < 2) return false;
       const vW = src.videoWidth  || cW;
       const vH = src.videoHeight || cH;
@@ -3941,17 +3969,20 @@ function syncCutVid(){
       const canvasAR = cW / cH;
       const videoAR  = vW / vH;
       let sx=0, sy=0, sw=vW, sh=vH;
-      if(videoAR > canvasAR){
-        // Video wider than canvas — crop left/right (center crop horizontally)
-        sw = Math.round(vH * canvasAR);
-        sx = Math.round((vW - sw) / 2);
-      } else if(videoAR < canvasAR){
-        // Video taller than canvas — crop top/bottom (center crop vertically)
-        sh = Math.round(vW / canvasAR);
-        sy = Math.round((vH - sh) / 2);
-      }
+      if(videoAR > canvasAR){ sw=Math.round(vH*canvasAR); sx=Math.round((vW-sw)/2); }
+      else if(videoAR < canvasAR){ sh=Math.round(vW/canvasAR); sy=Math.round((vH-sh)/2); }
       try{
+        ctx.save();
+        const scale    = (clipData?.scale    ?? 100) / 100;
+        const rotation = (clipData?.rotation ?? 0) * Math.PI / 180;
+        if(scale !== 1 || rotation !== 0){
+          ctx.translate(cW/2, cH/2);
+          ctx.rotate(rotation);
+          ctx.scale(scale, scale);
+          ctx.translate(-cW/2, -cH/2);
+        }
         ctx.drawImage(src, sx, sy, sw, sh, 0, 0, cW, cH);
+        ctx.restore();
         return true;
       }catch(e){ return false; }
     }
@@ -3990,47 +4021,47 @@ function syncCutVid(){
       const elapsed = ph - active.start - (active.effects?.[0]?.startOffset||0);
       const progress = Math.max(0, Math.min(1, elapsed / (tr.dur||1)));
       ctx.save();
-      if(tr.mode==='fadein'){ ctx.globalAlpha=progress; _drawVideoFrame(drawSrc, ctx, canvas.width, canvas.height); ctx.globalAlpha=1; }
-      else if(tr.mode==='fadeout'){ ctx.globalAlpha=1-progress; _drawVideoFrame(drawSrc, ctx, canvas.width, canvas.height); ctx.globalAlpha=1; }
-      else if(tr.mode==='dissolve'){ ctx.globalAlpha=progress; _drawVideoFrame(drawSrc, ctx, canvas.width, canvas.height); ctx.globalAlpha=1; }
-      else if(tr.mode==='zoomin'){ const s=1+(1-progress)*0.3; ctx.translate(canvas.width/2,canvas.height/2); ctx.scale(s,s); ctx.translate(-canvas.width/2,-canvas.height/2); ctx.globalAlpha=Math.min(1,progress+0.1); _drawVideoFrame(drawSrc, ctx, canvas.width, canvas.height); ctx.globalAlpha=1; }
-      else if(tr.mode==='zoomout'){ const s=0.7+progress*0.3; ctx.translate(canvas.width/2,canvas.height/2); ctx.scale(s,s); ctx.translate(-canvas.width/2,-canvas.height/2); ctx.globalAlpha=progress; _drawVideoFrame(drawSrc, ctx, canvas.width, canvas.height); ctx.globalAlpha=1; }
+      if(tr.mode==='fadein'){ ctx.globalAlpha=progress; _drawVideoFrame(drawSrc, ctx, canvas.width, canvas.height, active); ctx.globalAlpha=1; }
+      else if(tr.mode==='fadeout'){ ctx.globalAlpha=1-progress; _drawVideoFrame(drawSrc, ctx, canvas.width, canvas.height, active); ctx.globalAlpha=1; }
+      else if(tr.mode==='dissolve'){ ctx.globalAlpha=progress; _drawVideoFrame(drawSrc, ctx, canvas.width, canvas.height, active); ctx.globalAlpha=1; }
+      else if(tr.mode==='zoomin'){ const s=1+(1-progress)*0.3; ctx.translate(canvas.width/2,canvas.height/2); ctx.scale(s,s); ctx.translate(-canvas.width/2,-canvas.height/2); ctx.globalAlpha=Math.min(1,progress+0.1); _drawVideoFrame(drawSrc, ctx, canvas.width, canvas.height, active); ctx.globalAlpha=1; }
+      else if(tr.mode==='zoomout'){ const s=0.7+progress*0.3; ctx.translate(canvas.width/2,canvas.height/2); ctx.scale(s,s); ctx.translate(-canvas.width/2,-canvas.height/2); ctx.globalAlpha=progress; _drawVideoFrame(drawSrc, ctx, canvas.width, canvas.height, active); ctx.globalAlpha=1; }
       else if(tr.mode==='slideleft'){ try{ctx.drawImage(drawSrc,canvas.width*(1-progress),0,canvas.width,canvas.height);}catch(e){} }
       else if(tr.mode==='slideright'){ try{ctx.drawImage(drawSrc,-canvas.width*(1-progress),0,canvas.width,canvas.height);}catch(e){} }
-      else if(tr.mode==='wipeleft'){ _drawVideoFrame(drawSrc, ctx, canvas.width, canvas.height); ctx.clearRect(canvas.width*progress,0,canvas.width,canvas.height); }
-      else if(tr.mode==='wiperight'){ _drawVideoFrame(drawSrc, ctx, canvas.width, canvas.height); ctx.clearRect(0,0,canvas.width*(1-progress),canvas.height); }
-      else if(tr.mode==='blur'){ ctx.filter=`blur(${Math.max(0,(1-progress)*12)}px)`; ctx.globalAlpha=Math.min(1,progress+0.2); _drawVideoFrame(drawSrc, ctx, canvas.width, canvas.height); ctx.filter='none'; ctx.globalAlpha=1; }
-      else if(tr.mode==='flash'){ _drawVideoFrame(drawSrc, ctx, canvas.width, canvas.height); ctx.fillStyle=`rgba(255,255,255,${1-progress})`; ctx.fillRect(0,0,canvas.width,canvas.height); }
-      else if(tr.mode==='flashblack'){ _drawVideoFrame(drawSrc, ctx, canvas.width, canvas.height); ctx.fillStyle=`rgba(0,0,0,${1-progress})`; ctx.fillRect(0,0,canvas.width,canvas.height); }
-      else if(tr.mode==='spin'){ const angle=(1-progress)*Math.PI*2; ctx.translate(canvas.width/2,canvas.height/2); ctx.rotate(angle); ctx.translate(-canvas.width/2,-canvas.height/2); ctx.globalAlpha=progress; _drawVideoFrame(drawSrc, ctx, canvas.width, canvas.height); ctx.globalAlpha=1; }
+      else if(tr.mode==='wipeleft'){ _drawVideoFrame(drawSrc, ctx, canvas.width, canvas.height, active); ctx.clearRect(canvas.width*progress,0,canvas.width,canvas.height); }
+      else if(tr.mode==='wiperight'){ _drawVideoFrame(drawSrc, ctx, canvas.width, canvas.height, active); ctx.clearRect(0,0,canvas.width*(1-progress),canvas.height); }
+      else if(tr.mode==='blur'){ ctx.filter=`blur(${Math.max(0,(1-progress)*12)}px)`; ctx.globalAlpha=Math.min(1,progress+0.2); _drawVideoFrame(drawSrc, ctx, canvas.width, canvas.height, active); ctx.filter='none'; ctx.globalAlpha=1; }
+      else if(tr.mode==='flash'){ _drawVideoFrame(drawSrc, ctx, canvas.width, canvas.height, active); ctx.fillStyle=`rgba(255,255,255,${1-progress})`; ctx.fillRect(0,0,canvas.width,canvas.height); }
+      else if(tr.mode==='flashblack'){ _drawVideoFrame(drawSrc, ctx, canvas.width, canvas.height, active); ctx.fillStyle=`rgba(0,0,0,${1-progress})`; ctx.fillRect(0,0,canvas.width,canvas.height); }
+      else if(tr.mode==='spin'){ const angle=(1-progress)*Math.PI*2; ctx.translate(canvas.width/2,canvas.height/2); ctx.rotate(angle); ctx.translate(-canvas.width/2,-canvas.height/2); ctx.globalAlpha=progress; _drawVideoFrame(drawSrc, ctx, canvas.width, canvas.height, active); ctx.globalAlpha=1; }
 
       // ── DISSOLVES ──
-      else if(tr.mode==='dip_black'){ const mid=progress<0.5?progress*2:1-(progress-0.5)*2; ctx.globalAlpha=mid; _drawVideoFrame(drawSrc, ctx, canvas.width, canvas.height); ctx.globalAlpha=1; ctx.fillStyle='#000'; ctx.globalAlpha=1-mid; ctx.fillRect(0,0,canvas.width,canvas.height); ctx.globalAlpha=1; }
-      else if(tr.mode==='dip_white'){ const mid=progress<0.5?progress*2:1-(progress-0.5)*2; ctx.globalAlpha=mid; _drawVideoFrame(drawSrc, ctx, canvas.width, canvas.height); ctx.globalAlpha=1; ctx.fillStyle='#fff'; ctx.globalAlpha=1-mid; ctx.fillRect(0,0,canvas.width,canvas.height); ctx.globalAlpha=1; }
-      else if(tr.mode==='additive'){ ctx.globalAlpha=progress; _drawVideoFrame(drawSrc, ctx, canvas.width, canvas.height); ctx.fillStyle='rgba(255,255,255,'+(1-progress)*0.3+')'; ctx.fillRect(0,0,canvas.width,canvas.height); ctx.globalAlpha=1; }
-      else if(tr.mode==='film_dissolve'){ ctx.globalAlpha=progress; _drawVideoFrame(drawSrc, ctx, canvas.width, canvas.height); ctx.globalAlpha=1; if(progress<0.5){ctx.fillStyle='rgba(0,0,0,'+(0.5-progress)+')';ctx.fillRect(0,0,canvas.width,canvas.height);} }
-      else if(tr.mode==='morph'){ ctx.filter=`blur(${(1-Math.abs(progress-0.5)*2)*6}px)`; ctx.globalAlpha=progress; _drawVideoFrame(drawSrc, ctx, canvas.width, canvas.height); ctx.filter='none'; ctx.globalAlpha=1; }
+      else if(tr.mode==='dip_black'){ const mid=progress<0.5?progress*2:1-(progress-0.5)*2; ctx.globalAlpha=mid; _drawVideoFrame(drawSrc, ctx, canvas.width, canvas.height, active); ctx.globalAlpha=1; ctx.fillStyle='#000'; ctx.globalAlpha=1-mid; ctx.fillRect(0,0,canvas.width,canvas.height); ctx.globalAlpha=1; }
+      else if(tr.mode==='dip_white'){ const mid=progress<0.5?progress*2:1-(progress-0.5)*2; ctx.globalAlpha=mid; _drawVideoFrame(drawSrc, ctx, canvas.width, canvas.height, active); ctx.globalAlpha=1; ctx.fillStyle='#fff'; ctx.globalAlpha=1-mid; ctx.fillRect(0,0,canvas.width,canvas.height); ctx.globalAlpha=1; }
+      else if(tr.mode==='additive'){ ctx.globalAlpha=progress; _drawVideoFrame(drawSrc, ctx, canvas.width, canvas.height, active); ctx.fillStyle='rgba(255,255,255,'+(1-progress)*0.3+')'; ctx.fillRect(0,0,canvas.width,canvas.height); ctx.globalAlpha=1; }
+      else if(tr.mode==='film_dissolve'){ ctx.globalAlpha=progress; _drawVideoFrame(drawSrc, ctx, canvas.width, canvas.height, active); ctx.globalAlpha=1; if(progress<0.5){ctx.fillStyle='rgba(0,0,0,'+(0.5-progress)+')';ctx.fillRect(0,0,canvas.width,canvas.height);} }
+      else if(tr.mode==='morph'){ ctx.filter=`blur(${(1-Math.abs(progress-0.5)*2)*6}px)`; ctx.globalAlpha=progress; _drawVideoFrame(drawSrc, ctx, canvas.width, canvas.height, active); ctx.filter='none'; ctx.globalAlpha=1; }
 
       // ── WIPES ──
-      else if(tr.mode==='wipeup'){ _drawVideoFrame(drawSrc, ctx, canvas.width, canvas.height); ctx.clearRect(0,0,canvas.width,canvas.height*(1-progress)); }
-      else if(tr.mode==='wipedown'){ _drawVideoFrame(drawSrc, ctx, canvas.width, canvas.height); ctx.clearRect(0,canvas.height*progress,canvas.width,canvas.height); }
-      else if(tr.mode==='clock'){ ctx.save(); ctx.beginPath(); ctx.moveTo(canvas.width/2,canvas.height/2); ctx.arc(canvas.width/2,canvas.height/2,Math.max(canvas.width,canvas.height),-(Math.PI/2),-(Math.PI/2)+progress*Math.PI*2); ctx.closePath(); ctx.clip(); _drawVideoFrame(drawSrc, ctx, canvas.width, canvas.height); ctx.restore(); }
-      else if(tr.mode==='radial'){ const R=Math.max(canvas.width,canvas.height)*progress; ctx.save(); ctx.beginPath(); ctx.arc(canvas.width/2,canvas.height/2,R,0,Math.PI*2); ctx.clip(); _drawVideoFrame(drawSrc, ctx, canvas.width, canvas.height); ctx.restore(); }
-      else if(tr.mode==='iris_round'){ const R=Math.max(canvas.width,canvas.height)*progress; ctx.save(); ctx.beginPath(); ctx.arc(canvas.width/2,canvas.height/2,R,0,Math.PI*2); ctx.clip(); _drawVideoFrame(drawSrc, ctx, canvas.width, canvas.height); ctx.restore(); }
-      else if(tr.mode==='iris_diamond'){ const hw=canvas.width*progress,hh=canvas.height*progress; ctx.save(); ctx.beginPath(); ctx.moveTo(canvas.width/2,canvas.height/2-hh); ctx.lineTo(canvas.width/2+hw,canvas.height/2); ctx.lineTo(canvas.width/2,canvas.height/2+hh); ctx.lineTo(canvas.width/2-hw,canvas.height/2); ctx.closePath(); ctx.clip(); _drawVideoFrame(drawSrc, ctx, canvas.width, canvas.height); ctx.restore(); }
-      else if(tr.mode==='band_h'){ const bh=canvas.height/4; for(let i=0;i<4;i++){const y=i*bh; ctx.save(); ctx.beginPath(); const w2=canvas.width*progress; const x=(i%2===0)?0:canvas.width-w2; ctx.rect(x,y,w2,bh); ctx.clip(); _drawVideoFrame(drawSrc, ctx, canvas.width, canvas.height); ctx.restore();} }
-      else if(tr.mode==='band_v'){ const bw=canvas.width/4; for(let i=0;i<4;i++){const x=i*bw; ctx.save(); ctx.beginPath(); const h2=canvas.height*progress; const y=(i%2===0)?0:canvas.height-h2; ctx.rect(x,y,bw,h2); ctx.clip(); _drawVideoFrame(drawSrc, ctx, canvas.width, canvas.height); ctx.restore();} }
+      else if(tr.mode==='wipeup'){ _drawVideoFrame(drawSrc, ctx, canvas.width, canvas.height, active); ctx.clearRect(0,0,canvas.width,canvas.height*(1-progress)); }
+      else if(tr.mode==='wipedown'){ _drawVideoFrame(drawSrc, ctx, canvas.width, canvas.height, active); ctx.clearRect(0,canvas.height*progress,canvas.width,canvas.height); }
+      else if(tr.mode==='clock'){ ctx.save(); ctx.beginPath(); ctx.moveTo(canvas.width/2,canvas.height/2); ctx.arc(canvas.width/2,canvas.height/2,Math.max(canvas.width,canvas.height),-(Math.PI/2),-(Math.PI/2)+progress*Math.PI*2); ctx.closePath(); ctx.clip(); _drawVideoFrame(drawSrc, ctx, canvas.width, canvas.height, active); ctx.restore(); }
+      else if(tr.mode==='radial'){ const R=Math.max(canvas.width,canvas.height)*progress; ctx.save(); ctx.beginPath(); ctx.arc(canvas.width/2,canvas.height/2,R,0,Math.PI*2); ctx.clip(); _drawVideoFrame(drawSrc, ctx, canvas.width, canvas.height, active); ctx.restore(); }
+      else if(tr.mode==='iris_round'){ const R=Math.max(canvas.width,canvas.height)*progress; ctx.save(); ctx.beginPath(); ctx.arc(canvas.width/2,canvas.height/2,R,0,Math.PI*2); ctx.clip(); _drawVideoFrame(drawSrc, ctx, canvas.width, canvas.height, active); ctx.restore(); }
+      else if(tr.mode==='iris_diamond'){ const hw=canvas.width*progress,hh=canvas.height*progress; ctx.save(); ctx.beginPath(); ctx.moveTo(canvas.width/2,canvas.height/2-hh); ctx.lineTo(canvas.width/2+hw,canvas.height/2); ctx.lineTo(canvas.width/2,canvas.height/2+hh); ctx.lineTo(canvas.width/2-hw,canvas.height/2); ctx.closePath(); ctx.clip(); _drawVideoFrame(drawSrc, ctx, canvas.width, canvas.height, active); ctx.restore(); }
+      else if(tr.mode==='band_h'){ const bh=canvas.height/4; for(let i=0;i<4;i++){const y=i*bh; ctx.save(); ctx.beginPath(); const w2=canvas.width*progress; const x=(i%2===0)?0:canvas.width-w2; ctx.rect(x,y,w2,bh); ctx.clip(); _drawVideoFrame(drawSrc, ctx, canvas.width, canvas.height, active); ctx.restore();} }
+      else if(tr.mode==='band_v'){ const bw=canvas.width/4; for(let i=0;i<4;i++){const x=i*bw; ctx.save(); ctx.beginPath(); const h2=canvas.height*progress; const y=(i%2===0)?0:canvas.height-h2; ctx.rect(x,y,bw,h2); ctx.clip(); _drawVideoFrame(drawSrc, ctx, canvas.width, canvas.height, active); ctx.restore();} }
 
       // ── MOTION ZOOMS ──
-      else if(tr.mode==='zoom_blur_in'){ const s=1+progress*0.5; ctx.save(); ctx.translate(canvas.width/2,canvas.height/2); ctx.scale(s,s); ctx.translate(-canvas.width/2,-canvas.height/2); ctx.filter=`blur(${(1-progress)*8}px)`; ctx.globalAlpha=progress; _drawVideoFrame(drawSrc, ctx, canvas.width, canvas.height); ctx.filter='none'; ctx.globalAlpha=1; ctx.restore(); }
-      else if(tr.mode==='zoom_blur_out'){ const s=1+(1-progress)*0.5; ctx.save(); ctx.translate(canvas.width/2,canvas.height/2); ctx.scale(s,s); ctx.translate(-canvas.width/2,-canvas.height/2); ctx.filter=`blur(${(1-progress)*8}px)`; ctx.globalAlpha=progress; _drawVideoFrame(drawSrc, ctx, canvas.width, canvas.height); ctx.filter='none'; ctx.globalAlpha=1; ctx.restore(); }
-      else if(tr.mode==='ken_burns'){ const s=1+progress*0.15; const tx=(progress-0.5)*canvas.width*0.1; ctx.save(); ctx.translate(canvas.width/2+tx,canvas.height/2); ctx.scale(s,s); ctx.translate(-canvas.width/2,-canvas.height/2); _drawVideoFrame(drawSrc, ctx, canvas.width, canvas.height); ctx.restore(); }
-      else if(tr.mode==='push_in'){ const s=0.85+progress*0.15; ctx.save(); ctx.translate(canvas.width/2,canvas.height/2); ctx.scale(s,s); ctx.translate(-canvas.width/2,-canvas.height/2); ctx.globalAlpha=Math.min(1,progress*2); _drawVideoFrame(drawSrc, ctx, canvas.width, canvas.height); ctx.globalAlpha=1; ctx.restore(); }
-      else if(tr.mode==='pull_back'){ const s=1+progress*0.2; ctx.save(); ctx.translate(canvas.width/2,canvas.height/2); ctx.scale(s,s); ctx.translate(-canvas.width/2,-canvas.height/2); ctx.globalAlpha=Math.min(1,progress*2); _drawVideoFrame(drawSrc, ctx, canvas.width, canvas.height); ctx.globalAlpha=1; ctx.restore(); }
+      else if(tr.mode==='zoom_blur_in'){ const s=1+progress*0.5; ctx.save(); ctx.translate(canvas.width/2,canvas.height/2); ctx.scale(s,s); ctx.translate(-canvas.width/2,-canvas.height/2); ctx.filter=`blur(${(1-progress)*8}px)`; ctx.globalAlpha=progress; _drawVideoFrame(drawSrc, ctx, canvas.width, canvas.height, active); ctx.filter='none'; ctx.globalAlpha=1; ctx.restore(); }
+      else if(tr.mode==='zoom_blur_out'){ const s=1+(1-progress)*0.5; ctx.save(); ctx.translate(canvas.width/2,canvas.height/2); ctx.scale(s,s); ctx.translate(-canvas.width/2,-canvas.height/2); ctx.filter=`blur(${(1-progress)*8}px)`; ctx.globalAlpha=progress; _drawVideoFrame(drawSrc, ctx, canvas.width, canvas.height, active); ctx.filter='none'; ctx.globalAlpha=1; ctx.restore(); }
+      else if(tr.mode==='ken_burns'){ const s=1+progress*0.15; const tx=(progress-0.5)*canvas.width*0.1; ctx.save(); ctx.translate(canvas.width/2+tx,canvas.height/2); ctx.scale(s,s); ctx.translate(-canvas.width/2,-canvas.height/2); _drawVideoFrame(drawSrc, ctx, canvas.width, canvas.height, active); ctx.restore(); }
+      else if(tr.mode==='push_in'){ const s=0.85+progress*0.15; ctx.save(); ctx.translate(canvas.width/2,canvas.height/2); ctx.scale(s,s); ctx.translate(-canvas.width/2,-canvas.height/2); ctx.globalAlpha=Math.min(1,progress*2); _drawVideoFrame(drawSrc, ctx, canvas.width, canvas.height, active); ctx.globalAlpha=1; ctx.restore(); }
+      else if(tr.mode==='pull_back'){ const s=1+progress*0.2; ctx.save(); ctx.translate(canvas.width/2,canvas.height/2); ctx.scale(s,s); ctx.translate(-canvas.width/2,-canvas.height/2); ctx.globalAlpha=Math.min(1,progress*2); _drawVideoFrame(drawSrc, ctx, canvas.width, canvas.height, active); ctx.globalAlpha=1; ctx.restore(); }
 
       // ── SPORT SPOTLIGHTS ──
       else if(tr.mode==='spotlight'){
-        _drawVideoFrame(drawSrc, ctx, canvas.width, canvas.height);
+        _drawVideoFrame(drawSrc, ctx, canvas.width, canvas.height, active);
         // Dark overlay with bright circle in center
         ctx.fillStyle='rgba(0,0,0,0.7)'; ctx.fillRect(0,0,canvas.width,canvas.height);
         const r=Math.min(canvas.width,canvas.height)*0.35*Math.min(1,progress*2);
@@ -4038,24 +4069,24 @@ function syncCutVid(){
         g.addColorStop(0,'rgba(0,0,0,0.9)'); g.addColorStop(0.7,'rgba(0,0,0,0.3)'); g.addColorStop(1,'rgba(0,0,0,0)');
         ctx.fillStyle=g; ctx.fillRect(0,0,canvas.width,canvas.height);
         // Redraw center bright
-        ctx.save(); ctx.beginPath(); ctx.arc(canvas.width/2,canvas.height/2,r,0,Math.PI*2); ctx.clip(); _drawVideoFrame(drawSrc, ctx, canvas.width, canvas.height); ctx.restore();
+        ctx.save(); ctx.beginPath(); ctx.arc(canvas.width/2,canvas.height/2,r,0,Math.PI*2); ctx.clip(); _drawVideoFrame(drawSrc, ctx, canvas.width, canvas.height, active); ctx.restore();
       }
       else if(tr.mode==='spotlight_sweep'){
-        _drawVideoFrame(drawSrc, ctx, canvas.width, canvas.height);
+        _drawVideoFrame(drawSrc, ctx, canvas.width, canvas.height, active);
         ctx.fillStyle='rgba(0,0,0,0.65)'; ctx.fillRect(0,0,canvas.width,canvas.height);
         const sx=canvas.width*progress, sy=canvas.height/2;
         const r2=Math.min(canvas.width,canvas.height)*0.3;
-        ctx.save(); ctx.beginPath(); ctx.arc(sx,sy,r2,0,Math.PI*2); ctx.clip(); _drawVideoFrame(drawSrc, ctx, canvas.width, canvas.height); ctx.restore();
+        ctx.save(); ctx.beginPath(); ctx.arc(sx,sy,r2,0,Math.PI*2); ctx.clip(); _drawVideoFrame(drawSrc, ctx, canvas.width, canvas.height, active); ctx.restore();
       }
       else if(tr.mode==='zoom_player'){
         // Zoom into center with vignette
-        const s=1+progress*1.2; ctx.save(); ctx.translate(canvas.width/2,canvas.height/2); ctx.scale(s,s); ctx.translate(-canvas.width/2,-canvas.height/2); _drawVideoFrame(drawSrc, ctx, canvas.width, canvas.height); ctx.restore();
+        const s=1+progress*1.2; ctx.save(); ctx.translate(canvas.width/2,canvas.height/2); ctx.scale(s,s); ctx.translate(-canvas.width/2,-canvas.height/2); _drawVideoFrame(drawSrc, ctx, canvas.width, canvas.height, active); ctx.restore();
         const vig=ctx.createRadialGradient(canvas.width/2,canvas.height/2,canvas.width*0.2,canvas.width/2,canvas.height/2,canvas.width*0.7);
         vig.addColorStop(0,'rgba(0,0,0,0)'); vig.addColorStop(1,'rgba(0,0,0,'+progress*0.7+')');
         ctx.fillStyle=vig; ctx.fillRect(0,0,canvas.width,canvas.height);
       }
       else if(tr.mode==='highlight_ring'){
-        _drawVideoFrame(drawSrc, ctx, canvas.width, canvas.height);
+        _drawVideoFrame(drawSrc, ctx, canvas.width, canvas.height, active);
         const r3=Math.min(canvas.width,canvas.height)*0.25;
         ctx.strokeStyle=`rgba(255,220,0,${Math.sin(progress*Math.PI)})`; ctx.lineWidth=6;
         ctx.beginPath(); ctx.arc(canvas.width/2,canvas.height/2,r3,0,Math.PI*2); ctx.stroke();
@@ -4065,7 +4096,7 @@ function syncCutVid(){
 
       // ── ADVANCED ──
       else if(tr.mode==='glitch'){
-        _drawVideoFrame(drawSrc, ctx, canvas.width, canvas.height);
+        _drawVideoFrame(drawSrc, ctx, canvas.width, canvas.height, active);
         if(Math.random()>0.4){
           const slices=8;
           for(let i=0;i<slices;i++){
@@ -4093,10 +4124,10 @@ function syncCutVid(){
         }catch(e){}
         ctx.globalAlpha=1;
       }
-      else if(tr.mode==='vr_roll'){ ctx.save(); ctx.translate(canvas.width/2,canvas.height/2); ctx.rotate(progress*Math.PI*2); const s2=1+Math.abs(Math.sin(progress*Math.PI))*0.2; ctx.scale(s2,s2); ctx.translate(-canvas.width/2,-canvas.height/2); ctx.globalAlpha=progress; _drawVideoFrame(drawSrc, ctx, canvas.width, canvas.height); ctx.globalAlpha=1; ctx.restore(); }
-      else if(tr.mode==='vr_spin'){ ctx.save(); ctx.translate(canvas.width/2,canvas.height/2); ctx.scale(progress,1); ctx.translate(-canvas.width/2,-canvas.height/2); ctx.globalAlpha=progress; _drawVideoFrame(drawSrc, ctx, canvas.width, canvas.height); ctx.globalAlpha=1; ctx.restore(); }
+      else if(tr.mode==='vr_roll'){ ctx.save(); ctx.translate(canvas.width/2,canvas.height/2); ctx.rotate(progress*Math.PI*2); const s2=1+Math.abs(Math.sin(progress*Math.PI))*0.2; ctx.scale(s2,s2); ctx.translate(-canvas.width/2,-canvas.height/2); ctx.globalAlpha=progress; _drawVideoFrame(drawSrc, ctx, canvas.width, canvas.height, active); ctx.globalAlpha=1; ctx.restore(); }
+      else if(tr.mode==='vr_spin'){ ctx.save(); ctx.translate(canvas.width/2,canvas.height/2); ctx.scale(progress,1); ctx.translate(-canvas.width/2,-canvas.height/2); ctx.globalAlpha=progress; _drawVideoFrame(drawSrc, ctx, canvas.width, canvas.height, active); ctx.globalAlpha=1; ctx.restore(); }
 
-      else { _drawVideoFrame(drawSrc, ctx, canvas.width, canvas.height); }
+      else { _drawVideoFrame(drawSrc, ctx, canvas.width, canvas.height, active); }
       ctx.restore();
       // Draw overlays AFTER transition (last layer = topmost)
       if(window.renderOverlaysOnCanvas)
