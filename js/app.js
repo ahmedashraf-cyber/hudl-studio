@@ -192,6 +192,19 @@ window.handleGoogleAuth = async function() {
   }
 }
 
+// Wire stubs to real functions (runs when module finishes loading)
+window._handleAuth       = window.handleAuth;
+window._handleGoogleAuth = window.handleGoogleAuth;
+window._switchAuthTab    = window.switchAuthTab;
+window._openApp          = window.openApp;
+window._handleLogout     = window.handleLogout;
+window._openNewProjectModal = window.openNewProjectModal;
+
+// Flush any click that happened before module loaded
+if(window._authPending === 'login')  { window._authPending=null; window.handleAuth && window.handleAuth(); }
+if(window._authPending === 'google') { window._authPending=null; window.handleGoogleAuth && window.handleGoogleAuth(); }
+
+
 // Wire real functions to stubs and flush any queued clicks
 if(window._flushAuthQueue){
   window._handleAuthReady = window.handleAuth;
