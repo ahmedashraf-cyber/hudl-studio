@@ -1,8 +1,3 @@
-import { onAuthChanged, signUp, signIn, signInGoogle, logout, currentUser } from './auth.js';
-import { createProject, getUserProjects, saveProjectState, loadProject, deleteProject } from './database.js';
-import { uploadMedia } from './storage.js';
-import { saveMediaFile, loadMediaFiles, deleteMediaFiles } from './mediastore.js';
-
 // ═══════════════════════════════════════
 // GLOBAL STATE
 // ═══════════════════════════════════════

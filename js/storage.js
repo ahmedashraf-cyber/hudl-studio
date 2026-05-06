@@ -1,9 +1,8 @@
-import { storage } from './firebase-config.js';
 import {
   ref, uploadBytesResumable, getDownloadURL, deleteObject, listAll
 } from "https://www.gstatic.com/firebasejs/11.6.0/firebase-storage.js";
 
-export function uploadMedia(userId, projectId, file, onProgress) {
+function uploadMedia(userId, projectId, file, onProgress) {
   return new Promise((resolve, reject) => {
     const path = `users/${userId}/projects/${projectId}/media/${Date.now()}_${file.name}`;
     const storageRef = ref(storage, path);
@@ -22,11 +21,11 @@ export function uploadMedia(userId, projectId, file, onProgress) {
   });
 }
 
-export async function deleteMedia(path) {
+async function deleteMedia(path) {
   await deleteObject(ref(storage, path));
 }
 
-export async function listProjectMedia(userId, projectId) {
+async function listProjectMedia(userId, projectId) {
   const listRef = ref(storage, `users/${userId}/projects/${projectId}/media`);
   const res = await listAll(listRef);
   return Promise.all(res.items.map(item => getDownloadURL(item)));

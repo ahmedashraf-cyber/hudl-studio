@@ -1,40 +1,30 @@
-import { auth } from './firebase-config.js';
-import {
-  createUserWithEmailAndPassword,
-  signInWithEmailAndPassword,
-  signInWithPopup,
-  GoogleAuthProvider,
-  signOut,
-  onAuthStateChanged,
-  updateProfile
-} from "https://www.gstatic.com/firebasejs/11.6.0/firebase-auth.js";
+// Auth functions using Firebase compat SDK (window.firebase)
 
-const provider = new GoogleAuthProvider();
-
-export function onAuthChanged(callback) {
-  return onAuthStateChanged(auth, callback);
+function onAuthChanged(callback) {
+  return auth.onAuthStateChanged(callback);
 }
 
-export async function signUp(email, password, displayName) {
-  const cred = await createUserWithEmailAndPassword(auth, email, password);
-  await updateProfile(cred.user, { displayName });
+async function signUp(email, password, displayName) {
+  const cred = await auth.createUserWithEmailAndPassword(email, password);
+  await cred.user.updateProfile({ displayName: displayName });
   return cred.user;
 }
 
-export async function signIn(email, password) {
-  const cred = await signInWithEmailAndPassword(auth, email, password);
+async function signIn(email, password) {
+  const cred = await auth.signInWithEmailAndPassword(email, password);
   return cred.user;
 }
 
-export async function signInGoogle() {
-  const cred = await signInWithPopup(auth, provider);
+async function signInGoogle() {
+  const provider = new firebase.auth.GoogleAuthProvider();
+  const cred = await auth.signInWithPopup(provider);
   return cred.user;
 }
 
-export async function logout() {
-  await signOut(auth);
+async function logout() {
+  await auth.signOut();
 }
 
-export function currentUser() {
+function currentUser() {
   return auth.currentUser;
 }
