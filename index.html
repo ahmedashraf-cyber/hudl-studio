@@ -5,15 +5,10 @@
   <meta http-equiv="Pragma" content="no-cache">
   <meta http-equiv="Expires" content="0">
   <script>
-    // ── PERMANENT CACHE SOLUTION ─────────────────────────────
-    // Layer 1: Service Worker (registered below) — network-first for HTML
-    // Layer 2: localStorage version guard
-    // Layer 3: bfcache reload
-    // Together these make stale-cache login failures impossible.
+    // Cache guard: localStorage version check + bfcache reload
+    // No Service Worker — it was intercepting JS module requests
     (function() {
-      var V = '1778054579';
-
-      // Layer 2: localStorage version check (survives browser restarts)
+      var V = '1778054705';
       try {
         if (localStorage.getItem('fstudio_v') !== V) {
           var hadOld = localStorage.getItem('fstudio_v') !== null;
@@ -21,54 +16,19 @@
           if (hadOld) { window.location.reload(true); return; }
         }
       } catch(e) {}
-
-      // Layer 3: bfcache — page restored from memory (back button, reopen tab)
+      // bfcache: page restored from memory — always reload
       window.addEventListener('pageshow', function(e) {
-        if (e.persisted) { window.location.reload(true); }
+        if (e.persisted) window.location.reload(true);
       });
-
-      // Layer 1: Register Service Worker
+      // Unregister any old service workers that may be intercepting requests
       if ('serviceWorker' in navigator) {
-        navigator.serviceWorker.register('/sw.js?v=1778054579')
-          .then(function(reg) {
-            // If a new SW is waiting, activate it immediately
-            if (reg.waiting) { reg.waiting.postMessage({type:'SKIP_WAITING'}); }
-            reg.addEventListener('updatefound', function() {
-              var nw = reg.installing;
-              if (nw) {
-                nw.addEventListener('statechange', function() {
-                  if (nw.state === 'installed' && navigator.serviceWorker.controller) {
-                    // New version available — reload to get fresh app
-                    window.location.reload(true);
-                  }
-                });
-              }
-            });
-          });
-
-        // Listen for SW telling us to reload
-        navigator.serviceWorker.addEventListener('message', function(e) {
-          if (e.data && e.data.type === 'RELOAD') { window.location.reload(true); }
+        navigator.serviceWorker.getRegistrations().then(function(regs) {
+          regs.forEach(function(r) { r.unregister(); });
         });
       }
     })();
   </script>
-  <script>
-    // Safe stubs — queue any clicks that happen before app.js module loads
-    var _authQueue = [];
-    function handleAuth()       { if(window._handleAuthReady) window._handleAuthReady(); else _authQueue.push('handleAuth'); }
-    function handleGoogleAuth() { if(window._handleGoogleAuthReady) window._handleGoogleAuthReady(); else _authQueue.push('handleGoogleAuth'); }
-    function switchAuthTab(m)   { if(window._switchAuthTabReady) window._switchAuthTabReady(m); else _authQueue.push(['switchAuthTab',m]); }
-    // When app.js loads, it will call _flushAuthQueue()
-    window._flushAuthQueue = function() {
-      _authQueue.forEach(function(a) {
-        if(a === 'handleAuth') window.handleAuth && window.handleAuth();
-        else if(a === 'handleGoogleAuth') window.handleGoogleAuth && window.handleGoogleAuth();
-        else if(Array.isArray(a) && a[0] === 'switchAuthTab') window.switchAuthTab && window.switchAuthTab(a[1]);
-      });
-      _authQueue = [];
-    };
-  </script>
+  
 
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -211,7 +171,7 @@
 <!-- NOTIFICATION -->
 <div class="notif" id="notif"><div class="notif-dot" id="notif-dot"></div><span id="notif-text">Saved</span></div>
 
-<script type="module" src="js/app.js?v=1778054579"></script>
-<script defer src="js/cut-features.js?v=1778054579"></script>
+<script type="module" src="js/app.js?v=1778054705"></script>
+<script defer src="js/cut-features.js?v=1778054705"></script>
 </body>
 </html>
