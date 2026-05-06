@@ -3538,16 +3538,9 @@ function cutTogglePlay(){
             syncCutVid();
           }
         } else {
-          // No overlays/effects — show video element directly (no canvas overhead)
-          const canv=document.getElementById('cut-trans-cvs');
-          const mv2=document.getElementById('cut-main-vid');
-          if(canv&&canv.style.display!=='none'){
-            canv.style.display='none';
-          }
-          if(mv2&&mv2.src&&mv2.style.display==='none'){
-            mv2.style.display='block';
-          }
-          if(mv2&&mv2.paused&&S.cut.playing) mv2.play().catch(()=>{});
+          // syncCutVid handles all display logic via two-canvas architecture
+          const mv2=document.getElementById("cut-main-vid");
+          if(mv2&&mv2.paused&&S.cut.playing&&!_freezeActive) mv2.play().catch(()=>{});
         }
       }
       const vidEl=$('cut-main-vid');
@@ -3810,25 +3803,31 @@ function getTransitionDur(ci){
 
 let _lastCanvasTime = 0;
 function syncCutVid(){
-  const ph = S.cut.ph;
+  const ph     = S.cut.ph;
   const screen = $('cut-screen');
   if(!screen) return;
 
-  // Find active video clip at current playhead
-  const videoClips = S.cut.clips.filter(c => c.type === 'video');
-  const active = videoClips.find(c => 
-    ph >= c.start && ph < c.start + c.dur &&
-    !S.cut.hiddenTracks?.[c.track]
-  );
-
-  // Ensure pool vids exist for all clips
-  videoClips.forEach(c => {
-    const item = S.cut.media[c.mediaIdx];
-    if(item?.url) getPoolVid(item.url);
-  });
-
-  // Get or create main video element — always inside the viewport frame
   const frame = document.getElementById('cut-viewport-frame') || screen;
+
+  // ── Layer 0: Video canvas (always visible, always drawing video) ──
+  let vcvs = $('cut-vid-cvs');
+  if(!vcvs){
+    vcvs = document.createElement('canvas');
+    vcvs.id = 'cut-vid-cvs';
+    vcvs.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;display:block;z-index:1;pointer-events:none;';
+    frame.appendChild(vcvs);
+  }
+
+  // ── Layer 1: Overlay canvas (transparent, sits on top of video canvas) ──
+  let ocvs = $('cut-trans-cvs');
+  if(!ocvs){
+    ocvs = document.createElement('canvas');
+    ocvs.id = 'cut-trans-cvs';
+    ocvs.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;display:block;z-index:2;pointer-events:none;background:transparent;';
+    frame.appendChild(ocvs);
+  }
+
+  // ── Hidden video element: always display:block so browser keeps decoding ──
   let mv = $('cut-main-vid');
   if(!mv){
     mv = document.createElement('video');
@@ -3837,8 +3836,8 @@ function syncCutVid(){
     if('preservesPitch' in mv) mv.preservesPitch = true;
     if('mozPreservesPitch' in mv) mv.mozPreservesPitch = true;
     if('webkitPreservesPitch' in mv) mv.webkitPreservesPitch = true;
-    // Position fills the frame, object-fit preserves native AR
-    mv.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;object-fit:contain;display:block;opacity:0;z-index:0;';
+    // Off-screen but display:block → browser always decodes frames
+    mv.style.cssText = 'position:fixed;left:-9999px;top:-9999px;width:1px;height:1px;display:block;opacity:0.01;';
     mv.addEventListener('timeupdate', () => {
       if(S.cut.playing) return;
       const ci = parseInt(mv.dataset.clipIdx);
@@ -3848,330 +3847,167 @@ function syncCutVid(){
       S.cut.ph = clip.start + (mv.currentTime - (clip.fileStart||0));
       updateCutPH();
     });
-    frame.appendChild(mv);
-  }
-
-  // Get or create canvas for transitions/effects — also in frame
-  let canvas = $('cut-trans-cvs');
-  if(!canvas){
-    canvas = document.createElement('canvas');
-    canvas.id = 'cut-trans-cvs';
-    canvas.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;display:none;pointer-events:none;';
-    frame.appendChild(canvas);
+    document.body.appendChild(mv);
   }
 
   const placeholder = $('cut-cvs');
+  const projW = S.proj.w || 1280;
+  const projH = S.proj.h || 720;
 
-  // Check if any overlays are active at this ph (even without video)
+  // Resize canvases if needed
+  if(vcvs.width !== projW){ vcvs.width=projW; vcvs.height=projH; }
+  if(ocvs.width !== projW){ ocvs.width=projW; ocvs.height=projH; }
+
+  const vctx = vcvs.getContext('2d');
+  const octx = ocvs.getContext('2d');
+
+  // Active video clip
+  const videoClips = S.cut.clips.filter(c => c.type === 'video');
+  const active = videoClips.find(c =>
+    ph >= c.start && ph < c.start + c.dur &&
+    !S.cut.hiddenTracks?.[c.track]
+  );
+
+  // Active overlays
   const hasActiveOverlays = (window._overlays||[]).some(o =>
     ph >= o.startTime && ph < o.endTime &&
     !(o.type==='freeze' && _playedFreezes?.has(o.id))
   );
 
+  // ── OVERLAY LAYER: always draw overlays (transparent if none) ──
+  octx.clearRect(0, 0, ocvs.width, ocvs.height);  // fully transparent
+  if(hasActiveOverlays && window.renderOverlaysOnCanvas){
+    octx.globalCompositeOperation = 'source-over';
+    window.renderOverlaysOnCanvas(octx, ocvs.width, ocvs.height, ph, _playedFreezes);
+  }
+
+  // ── NO ACTIVE VIDEO CLIP ──
   if(!active){
     if(mv && !mv.paused) mv.pause();
-    mv.style.opacity = '0';
-    if(mv && !mv.paused) mv.pause();
-
-    if(hasActiveOverlays){
-      // Show canvas with just overlays on black background
-      canvas.style.display = 'block';
-      if(placeholder) placeholder.style.display = 'none';
-      if(canvas.width !== (S.proj.w||1280)){
-        canvas.width  = S.proj.w||1280;
-        canvas.height = S.proj.h||720;
-      }
-      const ctx0 = canvas.getContext('2d');
-      ctx0.clearRect(0,0,canvas.width,canvas.height);
-      ctx0.fillStyle = '#000';
-      ctx0.fillRect(0,0,canvas.width,canvas.height);
-      if(window.renderOverlaysOnCanvas)
-        window.renderOverlaysOnCanvas(ctx0,canvas.width,canvas.height,ph,_playedFreezes);
-    } else {
-      canvas.style.display = 'none';
-      if(placeholder) placeholder.style.display = 'block';
-    }
+    // Clear video canvas to black
+    vctx.fillStyle = '#000';
+    vctx.fillRect(0, 0, vcvs.width, vcvs.height);
+    if(placeholder) placeholder.style.display = 'none';
     return;
   }
 
-  // Active clip found — always hide placeholder immediately
-  if(placeholder){ placeholder.style.display = 'none'; }
-
-  const activeCI = S.cut.clips.indexOf(active);
-  const item = S.cut.media[active.mediaIdx];
-  if(!item?.url){ return; }
-
-  // Check for transition or effects
-  const tr = getClipTransition(activeCI);
-  const hasEffects = (S.cut.effects[activeCI]||[]).filter(e => CUT_EFFECTS[e.i]?.type !== 'transition').length > 0;
-  // Always use canvas if overlays are present OR if transition/effects active
-  if(tr || hasEffects || hasActiveOverlays){
-    mv.style.opacity = '0';  // hidden but DECODING (opacity:0 keeps decoder running)
-    canvas.style.display = 'block'; canvas.style.zIndex='2'; mv.style.zIndex='0';
-    if(placeholder) placeholder.style.display = 'none'; // hide placeholder in canvas mode
-    const projW = S.proj.w||1280, projH = S.proj.h||720;
-    if(canvas.width !== projW || canvas.height !== projH){
-      canvas.width = projW; canvas.height = projH;
-    }
-
-    // ── CRITICAL: Always set up mv.src BEFORE drawing from it ──
-    if(mv.dataset.mediaIdx !== String(active.mediaIdx) || !mv.src || mv.src.includes('undefined')){
-      mv.dataset.mediaIdx = String(active.mediaIdx);
-      mv.src = item.url;
-    }
-    mv.dataset.clipIdx = String(activeCI);
-
-    // Sync position when paused or when video needs seeking
-    const targetT = (active.fileStart||0) + Math.max(0, ph - active.start);
-    if(!S.cut.playing && Math.abs(mv.currentTime - targetT) > 0.05){
-      mv.currentTime = targetT;
-    }
-
-    const ctx = canvas.getContext('2d');
-    const drawSrc = mv;
-
-    // Center-crop draw helper — preserves native video AR in any canvas size
-    function _drawVideoFrame(src, ctx, cW, cH){
-      if(!src || src.readyState < 2) return false;
-      const vW = src.videoWidth  || cW;
-      const vH = src.videoHeight || cH;
-      if(!vW || !vH) return false;
-      const canvasAR = cW / cH;
-      const videoAR  = vW / vH;
-      let sx=0, sy=0, sw=vW, sh=vH;
-      if(videoAR > canvasAR){
-        // Video wider than canvas — crop left/right (center crop horizontally)
-        sw = Math.round(vH * canvasAR);
-        sx = Math.round((vW - sw) / 2);
-      } else if(videoAR < canvasAR){
-        // Video taller than canvas — crop top/bottom (center crop vertically)
-        sh = Math.round(vW / canvasAR);
-        sy = Math.round((vH - sh) / 2);
-      }
-      try{
-        ctx.drawImage(src, sx, sy, sw, sh, 0, 0, cW, cH);
-        return true;
-      }catch(e){ return false; }
-    }
-
-    // Keep mv playing even when hidden — needed for frame decoding
-    if(S.cut.playing && mv.paused && !_freezeActive){
-      mv.play().catch(()=>{});
-    }
-    // Pre-seek when paused
-    if(!S.cut.playing){
-      const t0 = (active.fileStart||0) + Math.max(0, ph - active.start);
-      if(Math.abs(mv.currentTime - t0) > 0.05) mv.currentTime = t0;
-    }
-
-    // Don't clear first — preserve last good frame
-    if(drawSrc.readyState >= 2){
-      if(!tr || tr.mode !== 'fadein'){
-        ctx.clearRect(0,0,canvas.width,canvas.height);
-        // Center-crop: preserves native AR, no destructive scale
-        if(_drawVideoFrame(drawSrc, ctx, canvas.width, canvas.height)){
-          canvas._hasGoodFrame = true;
-        }
-      }
-    } else if(!canvas._hasGoodFrame){
-      ctx.clearRect(0,0,canvas.width,canvas.height);
-      ctx.fillStyle = '#000';
-      ctx.fillRect(0,0,canvas.width,canvas.height);
-    }
-    // else: keep last good frame — no clear
-
-    // Draw overlays on top with full alpha blending
-    if(window.renderOverlaysOnCanvas)
-      window.renderOverlaysOnCanvas(ctx, canvas.width, canvas.height, ph, _playedFreezes);
-
-    if(tr){
-      const elapsed = ph - active.start - (active.effects?.[0]?.startOffset||0);
-      const progress = Math.max(0, Math.min(1, elapsed / (tr.dur||1)));
-      ctx.save();
-      if(tr.mode==='fadein'){ ctx.globalAlpha=progress; _drawVideoFrame(drawSrc, ctx, canvas.width, canvas.height); ctx.globalAlpha=1; }
-      else if(tr.mode==='fadeout'){ ctx.globalAlpha=1-progress; _drawVideoFrame(drawSrc, ctx, canvas.width, canvas.height); ctx.globalAlpha=1; }
-      else if(tr.mode==='dissolve'){ ctx.globalAlpha=progress; _drawVideoFrame(drawSrc, ctx, canvas.width, canvas.height); ctx.globalAlpha=1; }
-      else if(tr.mode==='zoomin'){ const s=1+(1-progress)*0.3; ctx.translate(canvas.width/2,canvas.height/2); ctx.scale(s,s); ctx.translate(-canvas.width/2,-canvas.height/2); ctx.globalAlpha=Math.min(1,progress+0.1); _drawVideoFrame(drawSrc, ctx, canvas.width, canvas.height); ctx.globalAlpha=1; }
-      else if(tr.mode==='zoomout'){ const s=0.7+progress*0.3; ctx.translate(canvas.width/2,canvas.height/2); ctx.scale(s,s); ctx.translate(-canvas.width/2,-canvas.height/2); ctx.globalAlpha=progress; _drawVideoFrame(drawSrc, ctx, canvas.width, canvas.height); ctx.globalAlpha=1; }
-      else if(tr.mode==='slideleft'){ try{ctx.drawImage(drawSrc,canvas.width*(1-progress),0,canvas.width,canvas.height);}catch(e){} }
-      else if(tr.mode==='slideright'){ try{ctx.drawImage(drawSrc,-canvas.width*(1-progress),0,canvas.width,canvas.height);}catch(e){} }
-      else if(tr.mode==='wipeleft'){ _drawVideoFrame(drawSrc, ctx, canvas.width, canvas.height); ctx.clearRect(canvas.width*progress,0,canvas.width,canvas.height); }
-      else if(tr.mode==='wiperight'){ _drawVideoFrame(drawSrc, ctx, canvas.width, canvas.height); ctx.clearRect(0,0,canvas.width*(1-progress),canvas.height); }
-      else if(tr.mode==='blur'){ ctx.filter=`blur(${Math.max(0,(1-progress)*12)}px)`; ctx.globalAlpha=Math.min(1,progress+0.2); _drawVideoFrame(drawSrc, ctx, canvas.width, canvas.height); ctx.filter='none'; ctx.globalAlpha=1; }
-      else if(tr.mode==='flash'){ _drawVideoFrame(drawSrc, ctx, canvas.width, canvas.height); ctx.fillStyle=`rgba(255,255,255,${1-progress})`; ctx.fillRect(0,0,canvas.width,canvas.height); }
-      else if(tr.mode==='flashblack'){ _drawVideoFrame(drawSrc, ctx, canvas.width, canvas.height); ctx.fillStyle=`rgba(0,0,0,${1-progress})`; ctx.fillRect(0,0,canvas.width,canvas.height); }
-      else if(tr.mode==='spin'){ const angle=(1-progress)*Math.PI*2; ctx.translate(canvas.width/2,canvas.height/2); ctx.rotate(angle); ctx.translate(-canvas.width/2,-canvas.height/2); ctx.globalAlpha=progress; _drawVideoFrame(drawSrc, ctx, canvas.width, canvas.height); ctx.globalAlpha=1; }
-
-      // ── DISSOLVES ──
-      else if(tr.mode==='dip_black'){ const mid=progress<0.5?progress*2:1-(progress-0.5)*2; ctx.globalAlpha=mid; _drawVideoFrame(drawSrc, ctx, canvas.width, canvas.height); ctx.globalAlpha=1; ctx.fillStyle='#000'; ctx.globalAlpha=1-mid; ctx.fillRect(0,0,canvas.width,canvas.height); ctx.globalAlpha=1; }
-      else if(tr.mode==='dip_white'){ const mid=progress<0.5?progress*2:1-(progress-0.5)*2; ctx.globalAlpha=mid; _drawVideoFrame(drawSrc, ctx, canvas.width, canvas.height); ctx.globalAlpha=1; ctx.fillStyle='#fff'; ctx.globalAlpha=1-mid; ctx.fillRect(0,0,canvas.width,canvas.height); ctx.globalAlpha=1; }
-      else if(tr.mode==='additive'){ ctx.globalAlpha=progress; _drawVideoFrame(drawSrc, ctx, canvas.width, canvas.height); ctx.fillStyle='rgba(255,255,255,'+(1-progress)*0.3+')'; ctx.fillRect(0,0,canvas.width,canvas.height); ctx.globalAlpha=1; }
-      else if(tr.mode==='film_dissolve'){ ctx.globalAlpha=progress; _drawVideoFrame(drawSrc, ctx, canvas.width, canvas.height); ctx.globalAlpha=1; if(progress<0.5){ctx.fillStyle='rgba(0,0,0,'+(0.5-progress)+')';ctx.fillRect(0,0,canvas.width,canvas.height);} }
-      else if(tr.mode==='morph'){ ctx.filter=`blur(${(1-Math.abs(progress-0.5)*2)*6}px)`; ctx.globalAlpha=progress; _drawVideoFrame(drawSrc, ctx, canvas.width, canvas.height); ctx.filter='none'; ctx.globalAlpha=1; }
-
-      // ── WIPES ──
-      else if(tr.mode==='wipeup'){ _drawVideoFrame(drawSrc, ctx, canvas.width, canvas.height); ctx.clearRect(0,0,canvas.width,canvas.height*(1-progress)); }
-      else if(tr.mode==='wipedown'){ _drawVideoFrame(drawSrc, ctx, canvas.width, canvas.height); ctx.clearRect(0,canvas.height*progress,canvas.width,canvas.height); }
-      else if(tr.mode==='clock'){ ctx.save(); ctx.beginPath(); ctx.moveTo(canvas.width/2,canvas.height/2); ctx.arc(canvas.width/2,canvas.height/2,Math.max(canvas.width,canvas.height),-(Math.PI/2),-(Math.PI/2)+progress*Math.PI*2); ctx.closePath(); ctx.clip(); _drawVideoFrame(drawSrc, ctx, canvas.width, canvas.height); ctx.restore(); }
-      else if(tr.mode==='radial'){ const R=Math.max(canvas.width,canvas.height)*progress; ctx.save(); ctx.beginPath(); ctx.arc(canvas.width/2,canvas.height/2,R,0,Math.PI*2); ctx.clip(); _drawVideoFrame(drawSrc, ctx, canvas.width, canvas.height); ctx.restore(); }
-      else if(tr.mode==='iris_round'){ const R=Math.max(canvas.width,canvas.height)*progress; ctx.save(); ctx.beginPath(); ctx.arc(canvas.width/2,canvas.height/2,R,0,Math.PI*2); ctx.clip(); _drawVideoFrame(drawSrc, ctx, canvas.width, canvas.height); ctx.restore(); }
-      else if(tr.mode==='iris_diamond'){ const hw=canvas.width*progress,hh=canvas.height*progress; ctx.save(); ctx.beginPath(); ctx.moveTo(canvas.width/2,canvas.height/2-hh); ctx.lineTo(canvas.width/2+hw,canvas.height/2); ctx.lineTo(canvas.width/2,canvas.height/2+hh); ctx.lineTo(canvas.width/2-hw,canvas.height/2); ctx.closePath(); ctx.clip(); _drawVideoFrame(drawSrc, ctx, canvas.width, canvas.height); ctx.restore(); }
-      else if(tr.mode==='band_h'){ const bh=canvas.height/4; for(let i=0;i<4;i++){const y=i*bh; ctx.save(); ctx.beginPath(); const w2=canvas.width*progress; const x=(i%2===0)?0:canvas.width-w2; ctx.rect(x,y,w2,bh); ctx.clip(); _drawVideoFrame(drawSrc, ctx, canvas.width, canvas.height); ctx.restore();} }
-      else if(tr.mode==='band_v'){ const bw=canvas.width/4; for(let i=0;i<4;i++){const x=i*bw; ctx.save(); ctx.beginPath(); const h2=canvas.height*progress; const y=(i%2===0)?0:canvas.height-h2; ctx.rect(x,y,bw,h2); ctx.clip(); _drawVideoFrame(drawSrc, ctx, canvas.width, canvas.height); ctx.restore();} }
-
-      // ── MOTION ZOOMS ──
-      else if(tr.mode==='zoom_blur_in'){ const s=1+progress*0.5; ctx.save(); ctx.translate(canvas.width/2,canvas.height/2); ctx.scale(s,s); ctx.translate(-canvas.width/2,-canvas.height/2); ctx.filter=`blur(${(1-progress)*8}px)`; ctx.globalAlpha=progress; _drawVideoFrame(drawSrc, ctx, canvas.width, canvas.height); ctx.filter='none'; ctx.globalAlpha=1; ctx.restore(); }
-      else if(tr.mode==='zoom_blur_out'){ const s=1+(1-progress)*0.5; ctx.save(); ctx.translate(canvas.width/2,canvas.height/2); ctx.scale(s,s); ctx.translate(-canvas.width/2,-canvas.height/2); ctx.filter=`blur(${(1-progress)*8}px)`; ctx.globalAlpha=progress; _drawVideoFrame(drawSrc, ctx, canvas.width, canvas.height); ctx.filter='none'; ctx.globalAlpha=1; ctx.restore(); }
-      else if(tr.mode==='ken_burns'){ const s=1+progress*0.15; const tx=(progress-0.5)*canvas.width*0.1; ctx.save(); ctx.translate(canvas.width/2+tx,canvas.height/2); ctx.scale(s,s); ctx.translate(-canvas.width/2,-canvas.height/2); _drawVideoFrame(drawSrc, ctx, canvas.width, canvas.height); ctx.restore(); }
-      else if(tr.mode==='push_in'){ const s=0.85+progress*0.15; ctx.save(); ctx.translate(canvas.width/2,canvas.height/2); ctx.scale(s,s); ctx.translate(-canvas.width/2,-canvas.height/2); ctx.globalAlpha=Math.min(1,progress*2); _drawVideoFrame(drawSrc, ctx, canvas.width, canvas.height); ctx.globalAlpha=1; ctx.restore(); }
-      else if(tr.mode==='pull_back'){ const s=1+progress*0.2; ctx.save(); ctx.translate(canvas.width/2,canvas.height/2); ctx.scale(s,s); ctx.translate(-canvas.width/2,-canvas.height/2); ctx.globalAlpha=Math.min(1,progress*2); _drawVideoFrame(drawSrc, ctx, canvas.width, canvas.height); ctx.globalAlpha=1; ctx.restore(); }
-
-      // ── SPORT SPOTLIGHTS ──
-      else if(tr.mode==='spotlight'){
-        _drawVideoFrame(drawSrc, ctx, canvas.width, canvas.height);
-        // Dark overlay with bright circle in center
-        ctx.fillStyle='rgba(0,0,0,0.7)'; ctx.fillRect(0,0,canvas.width,canvas.height);
-        const r=Math.min(canvas.width,canvas.height)*0.35*Math.min(1,progress*2);
-        const g=ctx.createRadialGradient(canvas.width/2,canvas.height/2,0,canvas.width/2,canvas.height/2,r);
-        g.addColorStop(0,'rgba(0,0,0,0.9)'); g.addColorStop(0.7,'rgba(0,0,0,0.3)'); g.addColorStop(1,'rgba(0,0,0,0)');
-        ctx.fillStyle=g; ctx.fillRect(0,0,canvas.width,canvas.height);
-        // Redraw center bright
-        ctx.save(); ctx.beginPath(); ctx.arc(canvas.width/2,canvas.height/2,r,0,Math.PI*2); ctx.clip(); _drawVideoFrame(drawSrc, ctx, canvas.width, canvas.height); ctx.restore();
-      }
-      else if(tr.mode==='spotlight_sweep'){
-        _drawVideoFrame(drawSrc, ctx, canvas.width, canvas.height);
-        ctx.fillStyle='rgba(0,0,0,0.65)'; ctx.fillRect(0,0,canvas.width,canvas.height);
-        const sx=canvas.width*progress, sy=canvas.height/2;
-        const r2=Math.min(canvas.width,canvas.height)*0.3;
-        ctx.save(); ctx.beginPath(); ctx.arc(sx,sy,r2,0,Math.PI*2); ctx.clip(); _drawVideoFrame(drawSrc, ctx, canvas.width, canvas.height); ctx.restore();
-      }
-      else if(tr.mode==='zoom_player'){
-        // Zoom into center with vignette
-        const s=1+progress*1.2; ctx.save(); ctx.translate(canvas.width/2,canvas.height/2); ctx.scale(s,s); ctx.translate(-canvas.width/2,-canvas.height/2); _drawVideoFrame(drawSrc, ctx, canvas.width, canvas.height); ctx.restore();
-        const vig=ctx.createRadialGradient(canvas.width/2,canvas.height/2,canvas.width*0.2,canvas.width/2,canvas.height/2,canvas.width*0.7);
-        vig.addColorStop(0,'rgba(0,0,0,0)'); vig.addColorStop(1,'rgba(0,0,0,'+progress*0.7+')');
-        ctx.fillStyle=vig; ctx.fillRect(0,0,canvas.width,canvas.height);
-      }
-      else if(tr.mode==='highlight_ring'){
-        _drawVideoFrame(drawSrc, ctx, canvas.width, canvas.height);
-        const r3=Math.min(canvas.width,canvas.height)*0.25;
-        ctx.strokeStyle=`rgba(255,220,0,${Math.sin(progress*Math.PI)})`; ctx.lineWidth=6;
-        ctx.beginPath(); ctx.arc(canvas.width/2,canvas.height/2,r3,0,Math.PI*2); ctx.stroke();
-        ctx.strokeStyle=`rgba(255,255,255,${Math.sin(progress*Math.PI)*0.5})`; ctx.lineWidth=2;
-        ctx.beginPath(); ctx.arc(canvas.width/2,canvas.height/2,r3+10,0,Math.PI*2); ctx.stroke();
-      }
-
-      // ── ADVANCED ──
-      else if(tr.mode==='glitch'){
-        _drawVideoFrame(drawSrc, ctx, canvas.width, canvas.height);
-        if(Math.random()>0.4){
-          const slices=8;
-          for(let i=0;i<slices;i++){
-            const sy2=i*(canvas.height/slices);
-            const sh=canvas.height/slices;
-            const offset=(Math.random()-0.5)*40*(1-progress);
-            ctx.save(); ctx.beginPath(); ctx.rect(0,sy2,canvas.width,sh); ctx.clip();
-            try{ctx.drawImage(drawSrc,offset,0,canvas.width,canvas.height);}catch(e){}
-            ctx.restore();
-          }
-          ctx.fillStyle=`rgba(255,0,0,${(1-progress)*0.15})`; ctx.fillRect(0,0,canvas.width,canvas.height);
-        }
-      }
-      else if(tr.mode==='rgb_split'){
-        ctx.globalAlpha=progress;
-        const off=Math.round((1-progress)*15);
-        try{
-          ctx.save(); ctx.globalCompositeOperation='screen';
-          ctx.filter='url(#none)';
-          ctx.fillStyle='rgba(255,0,0,0.5)'; ctx.fillRect(0,0,1,1); // activate
-          ctx.drawImage(drawSrc,-off,0,canvas.width,canvas.height);
-          ctx.drawImage(drawSrc,off,0,canvas.width,canvas.height);
-          ctx.restore();
-          _drawVideoFrame(drawSrc,ctx,canvas.width,canvas.height);
-        }catch(e){}
-        ctx.globalAlpha=1;
-      }
-      else if(tr.mode==='vr_roll'){ ctx.save(); ctx.translate(canvas.width/2,canvas.height/2); ctx.rotate(progress*Math.PI*2); const s2=1+Math.abs(Math.sin(progress*Math.PI))*0.2; ctx.scale(s2,s2); ctx.translate(-canvas.width/2,-canvas.height/2); ctx.globalAlpha=progress; _drawVideoFrame(drawSrc, ctx, canvas.width, canvas.height); ctx.globalAlpha=1; ctx.restore(); }
-      else if(tr.mode==='vr_spin'){ ctx.save(); ctx.translate(canvas.width/2,canvas.height/2); ctx.scale(progress,1); ctx.translate(-canvas.width/2,-canvas.height/2); ctx.globalAlpha=progress; _drawVideoFrame(drawSrc, ctx, canvas.width, canvas.height); ctx.globalAlpha=1; ctx.restore(); }
-
-      else { _drawVideoFrame(drawSrc, ctx, canvas.width, canvas.height); }
-      ctx.restore();
-      // Draw overlays AFTER transition (last layer = topmost)
-      if(window.renderOverlaysOnCanvas)
-        window.renderOverlaysOnCanvas(ctx, canvas.width, canvas.height, ph, _playedFreezes);
-    } else {
-      // Effects only — apply CSS filter via canvas, then overlays on top
-      const filterStr = buildFilterStr(activeCI);
-      ctx.filter = filterStr !== 'none' ? filterStr : 'none';
-      try{ _drawVideoFrame(drawSrc,ctx,canvas.width,canvas.height); }catch(e){}
-      ctx.filter = 'none';
-      if(window.renderOverlaysOnCanvas)
-        window.renderOverlaysOnCanvas(ctx, canvas.width, canvas.height, ph, _playedFreezes);
-    }
-    return;
-  }
-
-  // NOTE: hasOverlaysNow is now handled in the canvas path above
-  // (hasActiveOverlays check). No separate path needed here.
-
-  // ── PLAIN VIDEO PATH ─────────────────────────────────────────
-  // Show video element AND draw to canvas simultaneously as fallback
   if(placeholder) placeholder.style.display = 'none';
 
-  // Always ensure src is correct
-  const wantedMediaIdx = String(active.mediaIdx);
-  if(mv.dataset.mediaIdx !== wantedMediaIdx || !mv.src || mv.src === window.location.href || mv.networkState === 3){
-    mv.dataset.mediaIdx = wantedMediaIdx;
+  const activeCI = S.cut.clips.indexOf(active);
+  const item     = S.cut.media[active.mediaIdx];
+  if(!item?.url) return;
+
+  // Set src only if changed (avoids readyState reset)
+  if(mv.dataset.mediaIdx !== String(active.mediaIdx)){
+    mv.dataset.mediaIdx = String(active.mediaIdx);
     mv.src = item.url;
     mv.load();
   }
   mv.dataset.clipIdx = String(activeCI);
 
+  // Keep video playing
+  const speed = Math.max(0.1, active.speed||1);
+  if(Math.abs(mv.playbackRate - speed) > 0.01) mv.playbackRate = speed;
+
+  if(S.cut.playing && mv.paused && !_freezeActive){
+    mv.play().catch(()=>{});
+  }
   if(!S.cut.playing){
-    const targetTime = (active.fileStart||0) + Math.max(0, ph - active.start);
-    if(Math.abs(mv.currentTime - targetTime) > 0.02) mv.currentTime = targetTime;
+    const t0 = (active.fileStart||0) + Math.max(0, ph - active.start);
+    if(Math.abs(mv.currentTime - t0) > 0.05) mv.currentTime = t0;
     if(!mv.paused) mv.pause();
   }
 
-  // Try direct video element first
-  mv.style.display = 'block';
-  mv.style.visibility = 'visible';
-  mv.style.opacity = '1';
-  mv.style.zIndex = '2';
-  canvas.style.display = 'none';
-
-  // Plain video path — no overlays, no effects
-  // Just show the video element directly for best performance
-  if(hasActiveOverlays){
-    // This shouldn't be reached (handled in canvas path above)
-    // but as safety: use canvas
-    canvas.style.display = 'block';
-    mv.style.display = 'none';
-    const projW2 = S.proj.w||1280, projH2 = S.proj.h||720;
-    if(canvas.width !== projW2){ canvas.width=projW2; canvas.height=projH2; }
-    const ctx3 = canvas.getContext('2d');
-    if(mv.readyState >= 2) try{ ctx3.drawImage(mv,0,0,canvas.width,canvas.height); }catch(e){}
-    if(window.renderOverlaysOnCanvas)
-      window.renderOverlaysOnCanvas(ctx3,canvas.width,canvas.height,ph,_playedFreezes);
-  }
-
-  // Apply filter
-  const filterStr = buildFilterStr(activeCI);
-  mv.style.filter = filterStr !== 'none' ? filterStr : '';
-  // Apply transform
-  const tr2 = active.transform;
-  if(tr2){
-    const sx=tr2.scaleX/100, sy=tr2.scaleY/100, rot=tr2.rotation, tx2=tr2.x, ty2=tr2.y;
-    mv.style.transform=`translate(${tx2}%,${ty2}%) rotate(${rot}deg) scale(${sx},${sy})`;
-    mv.style.transformOrigin='center center';
+  // Volume/fade
+  const vidGain = getClipGainAtPh(active, ph);
+  if(!_freezeActive && !S.cut.mutedTracks?.[active.track]){
+    mv.volume = Math.min(1, vidGain);
+    mv.muted  = false;
   } else {
-    mv.style.transform='';
+    mv.muted = true;
   }
-  S.cut._vid = mv;
+
+  // ── VIDEO LAYER: center-crop draw ──
+  function _drawVid(src, ctx, cW, cH){
+    if(!src || src.readyState < 2) return false;
+    const vW = src.videoWidth  || cW;
+    const vH = src.videoHeight || cH;
+    if(!vW || !vH) return false;
+    const cAR = cW/cH, vAR = vW/vH;
+    let sx=0, sy=0, sw=vW, sh=vH;
+    if(vAR > cAR){ sw = Math.round(vH*cAR); sx = Math.round((vW-sw)/2); }
+    else if(vAR < cAR){ sh = Math.round(vW/cAR); sy = Math.round((vH-sh)/2); }
+    // Apply clip transform (scale/rotation)
+    const sc  = (active.scale    ?? 100) / 100;
+    const rot = (active.rotation ?? 0) * Math.PI / 180;
+    try{
+      ctx.save();
+      if(sc !== 1 || rot !== 0){
+        ctx.translate(cW/2, cH/2);
+        ctx.rotate(rot);
+        ctx.scale(sc, sc);
+        ctx.translate(-cW/2, -cH/2);
+      }
+      ctx.drawImage(src, sx, sy, sw, sh, 0, 0, cW, cH);
+      ctx.restore();
+      return true;
+    }catch(e){ return false; }
+  }
+
+  // Apply CSS filter effects
+  const filterStr = buildFilterStr(activeCI);
+  vctx.filter = filterStr !== 'none' ? filterStr : 'none';
+
+  // Check transition
+  const tr = getClipTransition(activeCI);
+
+  if(tr){
+    // Transition: draw with compositing
+    const elapsed  = ph - active.start;
+    const progress = Math.max(0, Math.min(1, elapsed / (tr.dur||1)));
+    vctx.clearRect(0, 0, vcvs.width, vcvs.height);
+    vctx.save();
+    if(tr.mode==='fadein'){
+      vctx.globalAlpha = progress;
+      _drawVid(mv, vctx, vcvs.width, vcvs.height);
+      vctx.globalAlpha = 1;
+    } else if(tr.mode==='fadeout'){
+      vctx.globalAlpha = 1 - progress;
+      _drawVid(mv, vctx, vcvs.width, vcvs.height);
+      vctx.globalAlpha = 1;
+    } else if(tr.mode==='zoomin'){
+      const s2 = 1 + (1-progress)*0.2;
+      vctx.translate(vcvs.width/2, vcvs.height/2);
+      vctx.scale(s2, s2);
+      vctx.translate(-vcvs.width/2, -vcvs.height/2);
+      _drawVid(mv, vctx, vcvs.width, vcvs.height);
+    } else if(tr.mode==='slideleft'){
+      vctx.translate(vcvs.width*(1-progress), 0);
+      _drawVid(mv, vctx, vcvs.width, vcvs.height);
+    } else if(tr.mode==='slideright'){
+      vctx.translate(-vcvs.width*(1-progress), 0);
+      _drawVid(mv, vctx, vcvs.width, vcvs.height);
+    } else {
+      _drawVid(mv, vctx, vcvs.width, vcvs.height);
+    }
+    vctx.restore();
+  } else {
+    // Normal draw
+    if(mv.readyState >= 2){
+      vctx.clearRect(0, 0, vcvs.width, vcvs.height);
+      _drawVid(mv, vctx, vcvs.width, vcvs.height);
+      vcvs._hasGoodFrame = true;
+    } else if(!vcvs._hasGoodFrame){
+      vctx.fillStyle = '#000';
+      vctx.fillRect(0, 0, vcvs.width, vcvs.height);
+    }
+    // else: keep last good frame
+  }
+
+  vctx.filter = 'none';
 }
 
 
-// Make playhead draggable
 function setupPlayheadDrag(){
   const ph=$('cut-ph'); const scroll=$('tl-scroll'); if(!ph||!scroll) return;
   let dragging=false;
