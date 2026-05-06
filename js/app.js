@@ -1357,9 +1357,9 @@ function buildCut() {
         </div>
         <div class="cut-screen" id="cut-screen">
           <div id="cut-viewport-frame">
-            <canvas id="cut-cvs"></canvas>
-            <canvas id="cut-trans-cvs"></canvas>
-            <!-- video element injected here by syncCutVid -->
+            <canvas id="cut-cvs" style="display:none"></canvas>
+            <canvas id="cut-vid-cvs" style="position:absolute;inset:0;width:100%;height:100%;display:block;z-index:1;pointer-events:none"></canvas>
+            <canvas id="cut-trans-cvs" style="position:absolute;inset:0;width:100%;height:100%;display:block;z-index:2;pointer-events:none;background:transparent"></canvas>
           </div>
           <div class="pv-timecode" id="cut-pv-tc">00:00:00:00</div>
         </div>
