@@ -1068,13 +1068,14 @@ html, body { width: 100%; height: 100%; overflow: hidden; font-family: 'DM Sans'
 }
 #cut-main-vid {
   object-fit: contain;
-  visibility: hidden;   /* hidden but browser keeps decoding frames */
-  display: block;       /* must be block/flex for frame decoding to work */
+  display: block;        /* always block — JS uses visibility not display */
+  visibility: hidden;    /* hidden by default, JS sets visible when needed */
   z-index: 1;
 }
 #cut-trans-cvs {
-  display: none;
+  display: block;        /* always block — JS uses visibility */
   pointer-events: none;
+  visibility: hidden;
   z-index: 2;
 }
 #cut-cvs {

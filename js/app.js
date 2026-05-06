@@ -3841,7 +3841,7 @@ function syncCutVid(){
     if('mozPreservesPitch' in mv) mv.mozPreservesPitch = true;
     if('webkitPreservesPitch' in mv) mv.webkitPreservesPitch = true;
     // Position fills the frame, object-fit preserves native AR
-    mv.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;object-fit:contain;display:none;';
+    mv.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;object-fit:contain;display:block;visibility:hidden;z-index:1;';
     mv.addEventListener('timeupdate', () => {
       if(S.cut.playing) return;
       const ci = parseInt(mv.dataset.clipIdx);
@@ -3859,7 +3859,7 @@ function syncCutVid(){
   if(!canvas){
     canvas = document.createElement('canvas');
     canvas.id = 'cut-trans-cvs';
-    canvas.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;display:none;pointer-events:none;';
+    canvas.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;display:block;visibility:hidden;pointer-events:none;z-index:2;';
     frame.appendChild(canvas);
   }
 
@@ -3876,8 +3876,7 @@ function syncCutVid(){
     mv.style.visibility = 'hidden';
 
     if(hasActiveOverlays){
-      // Show canvas with just overlays on black background
-      canvas.style.display = 'block';
+      canvas.style.visibility = 'visible';
       if(placeholder) placeholder.style.display = 'none';
       if(canvas.width !== (S.proj.w||1280)){
         canvas.width  = S.proj.w||1280;
@@ -3908,14 +3907,9 @@ function syncCutVid(){
   const hasEffects = (S.cut.effects[activeCI]||[]).filter(e => CUT_EFFECTS[e.i]?.type !== 'transition').length > 0;
   // Always use canvas if overlays are present OR if transition/effects active
   if(tr || hasEffects || hasActiveOverlays){
-    // CRITICAL: Do NOT use display:none on mv — browsers stop decoding frames.
-    // Instead keep mv in the render tree but visually hidden under the canvas.
-    mv.style.position   = 'absolute';
-    mv.style.visibility = 'hidden';   // hidden but still decodes frames
-    mv.style.zIndex     = '0';
-    canvas.style.display  = 'block';
-    canvas.style.position = 'absolute';
-    canvas.style.zIndex   = '2';
+    // Keep mv PLAYING (visibility:hidden) so browser keeps decoding frames
+    mv.style.visibility     = 'hidden';
+    canvas.style.visibility = 'visible';
     if(placeholder) placeholder.style.display = 'none';
     const projW = S.proj.w||1280, projH = S.proj.h||720;
     if(canvas.width !== projW || canvas.height !== projH){
@@ -4122,13 +4116,10 @@ function syncCutVid(){
   // NOTE: hasOverlaysNow is now handled in the canvas path above
   // (hasActiveOverlays check). No separate path needed here.
 
-  // ── PLAIN VIDEO PATH ─────────────────────────────────────────
+  // ── PLAIN VIDEO PATH — no overlays/effects ──
   if(placeholder) placeholder.style.display = 'none';
-  canvas.style.display    = 'none';
-  canvas.style.zIndex     = '';
-  mv.style.visibility     = 'visible';
-  mv.style.position       = 'absolute';
-  mv.style.zIndex         = '1';
+  canvas.style.visibility = 'hidden';   // hide canvas, show video directly
+  mv.style.visibility     = 'visible';  // show video element
 
   // Always ensure src is correct
   const wantedMediaIdx = String(active.mediaIdx);
@@ -4154,18 +4145,7 @@ function syncCutVid(){
 
   // Plain video path — no overlays, no effects
   // Just show the video element directly for best performance
-  if(hasActiveOverlays){
-    // This shouldn't be reached (handled in canvas path above)
-    // but as safety: use canvas
-    canvas.style.display = 'block';
-    mv.style.display = 'none';
-    const projW2 = S.proj.w||1280, projH2 = S.proj.h||720;
-    if(canvas.width !== projW2){ canvas.width=projW2; canvas.height=projH2; }
-    const ctx3 = canvas.getContext('2d');
-    if(mv.readyState >= 2) try{ ctx3.drawImage(mv,0,0,canvas.width,canvas.height); }catch(e){}
-    if(window.renderOverlaysOnCanvas)
-      window.renderOverlaysOnCanvas(ctx3,canvas.width,canvas.height,ph,_playedFreezes);
-  }
+  // (overlays handled in canvas path above)
 
   // Apply filter
   const filterStr = buildFilterStr(activeCI);
