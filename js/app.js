@@ -4822,3 +4822,20 @@ window.showExportModal = showExportModal;
 window.startExport = startExport;
 window.openApp = openApp;
 window.$ = $;
+
+// ── WIRE ALL GLOBAL FUNCTIONS (must be at end so all are defined) ──
+window._handleAuth          = window.handleAuth;
+window._handleGoogleAuth    = window.handleGoogleAuth;
+window._switchAuthTab       = window.switchAuthTab;
+window._openApp             = window.openApp;
+window._handleLogout        = window.handleLogout;
+window._openNewProjectModal = window.openNewProjectModal;
+// Flush any queued clicks from before app.js loaded
+if(window._authPending === 'login')  { window._authPending=null; window.handleAuth && window.handleAuth(); }
+if(window._authPending === 'google') { window._authPending=null; window.handleGoogleAuth && window.handleGoogleAuth(); }
+if(window._flushAuthQueue){
+  window._handleAuthReady       = window.handleAuth;
+  window._handleGoogleAuthReady = window.handleGoogleAuth;
+  window._switchAuthTabReady    = window.switchAuthTab;
+  window._flushAuthQueue();
+}
