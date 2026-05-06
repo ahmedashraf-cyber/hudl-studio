@@ -3531,7 +3531,10 @@ function cutTogglePlay(){
           const c2=document.getElementById('cut-trans-cvs');
           if(c2) c2.style.display='none';
         } else if(trNow||hasEffNow||hasOverlays){
-          // Throttle overlay/effect canvas to 30fps during playback
+          // Ensure mv keeps playing while canvas is active (visibility:hidden still decodes)
+          const mv3=document.getElementById('cut-main-vid');
+          if(mv3&&mv3.paused&&!_freezeActive) mv3.play().catch(()=>{});
+          // Throttle canvas redraw to 30fps
           const _now4=performance.now();
           if(_now4-_lastCanvasTime>=33){
             _lastCanvasTime=_now4;
@@ -3870,7 +3873,7 @@ function syncCutVid(){
 
   if(!active){
     if(mv && !mv.paused) mv.pause();
-    mv.style.display = 'none';
+    mv.style.visibility = 'hidden';
 
     if(hasActiveOverlays){
       // Show canvas with just overlays on black background
@@ -3905,9 +3908,15 @@ function syncCutVid(){
   const hasEffects = (S.cut.effects[activeCI]||[]).filter(e => CUT_EFFECTS[e.i]?.type !== 'transition').length > 0;
   // Always use canvas if overlays are present OR if transition/effects active
   if(tr || hasEffects || hasActiveOverlays){
-    mv.style.display = 'none';
-    canvas.style.display = 'block';
-    if(placeholder) placeholder.style.display = 'none'; // hide placeholder in canvas mode
+    // CRITICAL: Do NOT use display:none on mv — browsers stop decoding frames.
+    // Instead keep mv in the render tree but visually hidden under the canvas.
+    mv.style.position   = 'absolute';
+    mv.style.visibility = 'hidden';   // hidden but still decodes frames
+    mv.style.zIndex     = '0';
+    canvas.style.display  = 'block';
+    canvas.style.position = 'absolute';
+    canvas.style.zIndex   = '2';
+    if(placeholder) placeholder.style.display = 'none';
     const projW = S.proj.w||1280, projH = S.proj.h||720;
     if(canvas.width !== projW || canvas.height !== projH){
       canvas.width = projW; canvas.height = projH;
@@ -4114,8 +4123,12 @@ function syncCutVid(){
   // (hasActiveOverlays check). No separate path needed here.
 
   // ── PLAIN VIDEO PATH ─────────────────────────────────────────
-  // Show video element AND draw to canvas simultaneously as fallback
   if(placeholder) placeholder.style.display = 'none';
+  canvas.style.display    = 'none';
+  canvas.style.zIndex     = '';
+  mv.style.visibility     = 'visible';
+  mv.style.position       = 'absolute';
+  mv.style.zIndex         = '1';
 
   // Always ensure src is correct
   const wantedMediaIdx = String(active.mediaIdx);

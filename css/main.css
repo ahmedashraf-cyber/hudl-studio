@@ -1067,8 +1067,9 @@ html, body { width: 100%; height: 100%; overflow: hidden; font-family: 'DM Sans'
   height: 100%;
 }
 #cut-main-vid {
-  object-fit: contain; /* non-destructive: preserves native AR */
-  display: none;
+  object-fit: contain;
+  visibility: hidden;   /* hidden but browser keeps decoding frames */
+  display: block;       /* must be block/flex for frame decoding to work */
   z-index: 1;
 }
 #cut-trans-cvs {
