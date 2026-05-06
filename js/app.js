@@ -3870,7 +3870,7 @@ function syncCutVid(){
 
   if(!active){
     if(mv && !mv.paused) mv.pause();
-    mv.style.display = 'none';
+    mv.style.opacity = '0';
 
     if(hasActiveOverlays){
       // Show canvas with just overlays on black background
@@ -3905,7 +3905,7 @@ function syncCutVid(){
   const hasEffects = (S.cut.effects[activeCI]||[]).filter(e => CUT_EFFECTS[e.i]?.type !== 'transition').length > 0;
   // Always use canvas if overlays are present OR if transition/effects active
   if(tr || hasEffects || hasActiveOverlays){
-    mv.style.zIndex = '0';      // keep visible for frame decoding
+    mv.style.opacity = '0';     // hidden but display:block so browser decodes
     canvas.style.display = 'block';
     canvas.style.zIndex  = '2';  // canvas covers mv visually
     if(placeholder) placeholder.style.display = 'none'; // hide placeholder in canvas mode
@@ -3980,10 +3980,7 @@ function syncCutVid(){
     }
     // else: keep last good frame — no clear
 
-    // Draw overlays on top with full alpha blending
-    if(window.renderOverlaysOnCanvas)
-      window.renderOverlaysOnCanvas(ctx, canvas.width, canvas.height, ph, _playedFreezes);
-
+    // ── Draw transitions FIRST (before overlays) ──
     if(tr){
       const elapsed = ph - active.start - (active.effects?.[0]?.startOffset||0);
       const progress = Math.max(0, Math.min(1, elapsed / (tr.dur||1)));
@@ -4134,10 +4131,9 @@ function syncCutVid(){
   }
 
   // Plain path: show mv directly, hide canvas
+  mv.style.opacity = '1';
   mv.style.display = 'block';
-  mv.style.zIndex  = '1';
   canvas.style.display = 'none';
-  canvas.style.zIndex  = '';
 
   // Plain video path — no overlays, no effects
   // Just show the video element directly for best performance
