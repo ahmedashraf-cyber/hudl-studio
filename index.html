@@ -11,7 +11,7 @@
     // Layer 3: bfcache reload
     // Together these make stale-cache login failures impossible.
     (function() {
-      var V = '1778054376';
+      var V = '1778054579';
 
       // Layer 2: localStorage version check (survives browser restarts)
       try {
@@ -29,7 +29,7 @@
 
       // Layer 1: Register Service Worker
       if ('serviceWorker' in navigator) {
-        navigator.serviceWorker.register('/sw.js?v=1778054376')
+        navigator.serviceWorker.register('/sw.js?v=1778054579')
           .then(function(reg) {
             // If a new SW is waiting, activate it immediately
             if (reg.waiting) { reg.waiting.postMessage({type:'SKIP_WAITING'}); }
@@ -52,6 +52,22 @@
         });
       }
     })();
+  </script>
+  <script>
+    // Safe stubs — queue any clicks that happen before app.js module loads
+    var _authQueue = [];
+    function handleAuth()       { if(window._handleAuthReady) window._handleAuthReady(); else _authQueue.push('handleAuth'); }
+    function handleGoogleAuth() { if(window._handleGoogleAuthReady) window._handleGoogleAuthReady(); else _authQueue.push('handleGoogleAuth'); }
+    function switchAuthTab(m)   { if(window._switchAuthTabReady) window._switchAuthTabReady(m); else _authQueue.push(['switchAuthTab',m]); }
+    // When app.js loads, it will call _flushAuthQueue()
+    window._flushAuthQueue = function() {
+      _authQueue.forEach(function(a) {
+        if(a === 'handleAuth') window.handleAuth && window.handleAuth();
+        else if(a === 'handleGoogleAuth') window.handleGoogleAuth && window.handleGoogleAuth();
+        else if(Array.isArray(a) && a[0] === 'switchAuthTab') window.switchAuthTab && window.switchAuthTab(a[1]);
+      });
+      _authQueue = [];
+    };
   </script>
 
 <meta charset="UTF-8">
@@ -195,7 +211,7 @@
 <!-- NOTIFICATION -->
 <div class="notif" id="notif"><div class="notif-dot" id="notif-dot"></div><span id="notif-text">Saved</span></div>
 
-<script type="module" src="js/app.js?v=1778054376"></script>
-<script defer src="js/cut-features.js?v=1778054376"></script>
+<script type="module" src="js/app.js?v=1778054579"></script>
+<script defer src="js/cut-features.js?v=1778054579"></script>
 </body>
 </html>

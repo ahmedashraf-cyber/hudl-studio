@@ -190,6 +190,14 @@ window.handleGoogleAuth = async function() {
     showErr(e.message && !e.code ? e.message : firebaseErrMsg(e.code));
     if (btn) { btn.style.opacity = ''; btn.style.pointerEvents = ''; }
   }
+}
+
+// Wire real functions to stubs and flush any queued clicks
+if(window._flushAuthQueue){
+  window._handleAuthReady = window.handleAuth;
+  window._handleGoogleAuthReady = window.handleGoogleAuth;
+  window._switchAuthTabReady = window.switchAuthTab;
+  window._flushAuthQueue();
 };
 
 function showErr(msg) {
