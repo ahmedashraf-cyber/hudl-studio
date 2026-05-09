@@ -1579,7 +1579,13 @@ function cutEffectsHTML() {
         </div>
         ${active?'<div style="width:8px;height:8px;border-radius:50%;background:var(--grn);flex-shrink:0"></div>':''}
       </div>
-      ${active&&e.type==='range'?`<div style="padding:0 10px 6px"><input type="range" min="${e.min}" max="${e.max}" value="${getEffectVal(i)}" style="width:100%" oninput="cutUpdateEffect(${i},this.value)" onclick="event.stopPropagation()"><div style="display:flex;justify-content:space-between;font-size:10px;color:var(--mu2)"><span>${e.min}${e.unit}</span><span id="ev-${i}">${getEffectVal(i)}${e.unit}</span><span>${e.max}${e.unit}</span></div></div>`:''}`;
+      ${active&&e.type==='range'?`<div style="padding:0 10px 6px">
+          <input type="range" min="${e.min}" max="${e.max}" value="${getEffectVal(i)}" style="width:100%;accent-color:#E8590C" oninput="cutUpdateEffect(${i},this.value)" onclick="event.stopPropagation()">
+          <div style="display:flex;justify-content:space-between;font-size:10px;color:var(--mu2)"><span>${e.min}${e.unit}</span><span id="ev-${i}" style="color:var(--tx);font-weight:600">${getEffectVal(i)}${e.unit}</span><span>${e.max}${e.unit}</span></div>
+          <div style="display:flex;gap:4px;margin-top:4px;flex-wrap:wrap">
+            ${['linear','ease-in','ease-out','cinematic'].map(eq=>`<button onclick="event.stopPropagation();cutSetEffectEasing(${i},'${eq}')" style="font-size:9px;padding:2px 6px;border-radius:4px;border:0.5px solid var(--b2);background:rgba(255,255,255,0.04);color:var(--mu);cursor:pointer">${eq}</button>`).join('')}
+          </div>
+        </div>`:''}`;
     }).join('')}
   `).join('');
 }
@@ -1703,6 +1709,12 @@ function drawTransitionMarker(effectIdx){
 }
 
 let _effUpdateTimer=null;
+function cutSetEffectEasing(i, easing){
+  const ci=S.cut.sel; if(ci===null||ci===undefined)return;
+  const e=S.cut.effects[ci]?.find(e=>e.i===i);
+  if(e){ e.easing=easing; syncCutVid(); }
+}
+
 function cutUpdateEffect(i,v){
   const ci=S.cut.sel; if(ci===null||ci===undefined)return;
   clearTimeout(_effUpdateTimer);
@@ -2041,6 +2053,36 @@ function updatePropsPanel(ci){
             oninput="S.cut.effects[${ci}][${efIdx2}].effectDur=parseFloat(this.value);this.nextElementSibling.textContent=parseFloat(this.value).toFixed(1)+'s';syncCutVid();">
           <span style="font-size:10px;color:var(--mu);min-width:36px;text-align:right">${(ef2.effectDur||1).toFixed(1)}s</span>
         </div>
+        <div class="prop-row"><span class="prop-label">Completion</span>
+          <input type="range" min="0" max="100" step="1"
+            value="${Math.round((ef2.completion||100))}"
+            style="flex:1;accent-color:#E8590C"
+            oninput="S.cut.effects[${ci}][${efIdx2}].completion=parseInt(this.value);this.nextElementSibling.textContent=this.value+'%';syncCutVid();">
+          <span style="font-size:10px;color:var(--mu);min-width:36px;text-align:right">${Math.round(ef2.completion||100)}%</span>
+        </div>
+        <div class="prop-row"><span class="prop-label">Softness</span>
+          <input type="range" min="0" max="1" step="0.05"
+            value="${(ef2.softness||0).toFixed(2)}"
+            style="flex:1;accent-color:#E8590C"
+            oninput="S.cut.effects[${ci}][${efIdx2}].softness=parseFloat(this.value);this.nextElementSibling.textContent=Math.round(this.value*100)+'%';syncCutVid();">
+          <span style="font-size:10px;color:var(--mu);min-width:36px;text-align:right">${Math.round((ef2.softness||0)*100)}%</span>
+        </div>
+        <div class="prop-row"><span class="prop-label">Easing</span>
+          <select style="flex:1;background:#161616;border:0.5px solid rgba(255,255,255,0.1);border-radius:5px;color:var(--tx);font-size:11px;padding:2px 4px"
+            onchange="S.cut.effects[${ci}][${efIdx2}].easing=this.value;syncCutVid();">
+            ${['linear','ease-in','ease-out','ease-in-out','cinematic'].map(e=>`<option value="${e}" ${(ef2.easing||'linear')===e?'selected':''}>${e.charAt(0).toUpperCase()+e.slice(1)}</option>`).join('')}
+          </select>
+        </div>
+        ${(()=>{ const trMode=CUT_EFFECTS[ef2.i]?.mode||'';
+          const isWipe=['wipeleft','wiperight','wipeup','wipedown','clock','radial','iris_round','iris_diamond','band_h','band_v'].includes(trMode);
+          if(!isWipe) return '';
+          return `<div class="prop-row"><span class="prop-label">Direction</span>
+            <select style="flex:1;background:#161616;border:0.5px solid rgba(255,255,255,0.1);border-radius:5px;color:var(--tx);font-size:11px;padding:2px 4px"
+              onchange="S.cut.effects[${ci}][${efIdx2}].direction=this.value;syncCutVid();">
+              ${['forward','reverse'].map(d=>`<option value="${d}" ${(ef2.direction||'forward')===d?'selected':''}>${d.charAt(0).toUpperCase()+d.slice(1)}</option>`).join('')}
+            </select>
+          </div>`;
+        })()}
       `;
     })()}
     <div class="prop-section">🎬 Actions</div>
@@ -3858,6 +3900,18 @@ function getTransitionDur(ci){
 }
 
 let _lastCanvasTime = 0;
+
+// ── Transition easing helper ──
+function _applyEasing(t, mode){
+  if(!mode || mode==='linear') return t;
+  if(mode==='ease-in')      return t * t;
+  if(mode==='ease-out')     return t * (2 - t);
+  if(mode==='ease-in-out')  return t < 0.5 ? 2*t*t : -1+(4-2*t)*t;
+  if(mode==='cinematic'){   // smooth S-curve (sine)
+    return (1 - Math.cos(Math.PI * t)) / 2;
+  }
+  return t;
+}
 function syncCutVid(){
   const ph = S.cut.ph;
   const screen = $('cut-screen');
@@ -4045,16 +4099,54 @@ function syncCutVid(){
     // ── Draw transitions FIRST (before overlays) ──
     if(trInWindow){
       const elapsed = ph - active.start - (tr.startOffset||0);
-      const progress = Math.max(0, Math.min(1, elapsed / (tr.effectDur||tr.dur||1)));
+      const rawProg  = Math.max(0, Math.min(1, elapsed / (tr.effectDur||tr.dur||1)));
+      // Apply completion cap (0-100%) — limits how far the transition goes
+      const compCap  = (tr.completion !== undefined ? tr.completion : 100) / 100;
+      const progress = _applyEasing(rawProg, tr.easing) * compCap;
       ctx.save();
-      if(tr.mode==='fadein'){ ctx.globalAlpha=progress; _drawVideoFrame(drawSrc, ctx, canvas.width, canvas.height); ctx.globalAlpha=1; }
-      else if(tr.mode==='fadeout'){ ctx.globalAlpha=1-progress; _drawVideoFrame(drawSrc, ctx, canvas.width, canvas.height); ctx.globalAlpha=1; }
-      else if(tr.mode==='dissolve'){ ctx.globalAlpha=progress; _drawVideoFrame(drawSrc, ctx, canvas.width, canvas.height); ctx.globalAlpha=1; }
+      if(tr.mode==='fadein'){
+        // Fade in: black → video. Canvas already cleared, draw video at increasing opacity
+        ctx.globalAlpha = progress;
+        _drawVideoFrame(drawSrc, ctx, canvas.width, canvas.height);
+        ctx.globalAlpha = 1;
+      }
+      else if(tr.mode==='fadeout'){
+        // Fade out: video → black. Base frame already drawn. Draw black overlay increasing.
+        ctx.globalAlpha = progress; // progress goes 0→1, overlay goes transparent→black
+        ctx.fillStyle = '#000';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        ctx.globalAlpha = 1;
+      }
+      else if(tr.mode==='dissolve'){
+        // Cross dissolve: video fades between same clip segments
+        // Draw video normally — softness controls the blend
+        const soft = tr.softness||0;
+        ctx.globalAlpha = soft > 0
+          ? Math.max(0, Math.min(1, (progress - soft/2) / (1 - soft)))
+          : progress;
+        _drawVideoFrame(drawSrc, ctx, canvas.width, canvas.height);
+        ctx.globalAlpha = 1;
+      }
       else if(tr.mode==='zoomin'){ const s=1+(1-progress)*0.3; ctx.translate(canvas.width/2,canvas.height/2); ctx.scale(s,s); ctx.translate(-canvas.width/2,-canvas.height/2); ctx.globalAlpha=Math.min(1,progress+0.1); _drawVideoFrame(drawSrc, ctx, canvas.width, canvas.height); ctx.globalAlpha=1; }
       else if(tr.mode==='zoomout'){ const s=0.7+progress*0.3; ctx.translate(canvas.width/2,canvas.height/2); ctx.scale(s,s); ctx.translate(-canvas.width/2,-canvas.height/2); ctx.globalAlpha=progress; _drawVideoFrame(drawSrc, ctx, canvas.width, canvas.height); ctx.globalAlpha=1; }
       else if(tr.mode==='slideleft'){ try{ctx.drawImage(drawSrc,canvas.width*(1-progress),0,canvas.width,canvas.height);}catch(e){} }
       else if(tr.mode==='slideright'){ try{ctx.drawImage(drawSrc,-canvas.width*(1-progress),0,canvas.width,canvas.height);}catch(e){} }
-      else if(tr.mode==='wipeleft'){ _drawVideoFrame(drawSrc, ctx, canvas.width, canvas.height); ctx.clearRect(canvas.width*progress,0,canvas.width,canvas.height); }
+      else if(tr.mode==='wipeleft'){
+        _drawVideoFrame(drawSrc, ctx, canvas.width, canvas.height);
+        const revDir = (tr.direction==='reverse');
+        const wipeX  = canvas.width * (revDir ? 1-progress : progress);
+        const soft   = (tr.softness||0) * canvas.width * 0.3;
+        if(soft > 1){
+          const grd = ctx.createLinearGradient(wipeX-soft,0,wipeX+soft,0);
+          grd.addColorStop(0,'rgba(0,0,0,0)'); grd.addColorStop(1,'rgba(0,0,0,1)');
+          ctx.globalCompositeOperation='destination-in';
+          ctx.fillStyle = grd;
+          ctx.fillRect(0,0,wipeX+soft,canvas.height);
+          ctx.fillStyle='rgba(0,0,0,1)';
+          ctx.fillRect(wipeX+soft,0,canvas.width,canvas.height);
+          ctx.globalCompositeOperation='source-over';
+        } else { ctx.clearRect(wipeX,0,canvas.width,canvas.height); }
+      }
       else if(tr.mode==='wiperight'){ _drawVideoFrame(drawSrc, ctx, canvas.width, canvas.height); ctx.clearRect(0,0,canvas.width*(1-progress),canvas.height); }
       else if(tr.mode==='blur'){ ctx.filter=`blur(${Math.max(0,(1-progress)*12)}px)`; ctx.globalAlpha=Math.min(1,progress+0.2); _drawVideoFrame(drawSrc, ctx, canvas.width, canvas.height); ctx.filter='none'; ctx.globalAlpha=1; }
       else if(tr.mode==='flash'){ _drawVideoFrame(drawSrc, ctx, canvas.width, canvas.height); ctx.fillStyle=`rgba(255,255,255,${1-progress})`; ctx.fillRect(0,0,canvas.width,canvas.height); }
