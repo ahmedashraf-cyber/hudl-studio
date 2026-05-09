@@ -3633,7 +3633,7 @@ function cutTogglePlay(){
             const _p=()=>{if(!S.cut.playing||_a>3)return;_a++;mv2.play().catch(e=>{if(e.name==='AbortError'&&_a<=3)setTimeout(_p,150*_a);});};
             setTimeout(_p,80);
           }
-} else if(trActive||hasEffNow||hasOverlays){
+        } else if(trActive||hasEffNow||hasOverlays){
           // Throttle overlay/effect canvas to 30fps during playback
           const _now4=performance.now();
           if(_now4-_lastCanvasTime>=33){
