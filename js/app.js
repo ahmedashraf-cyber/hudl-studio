@@ -2040,12 +2040,15 @@ function updatePropsPanel(ci){
       const maxStart = Math.max(0, c.dur - 0.1);
       const maxDur   = Math.max(0.1, c.dur - (ef2.startOffset||0));
       return `
-        <div style="border:0.5px solid rgba(255,255,255,0.08);border-radius:6px;margin:2px 0;overflow:hidden">
-          <div style="display:flex;align-items:center;padding:6px 10px;background:rgba(88,166,255,0.06);cursor:pointer;user-select:none"
+        <div style="border:0.5px solid rgba(232,89,12,0.25);border-radius:8px;margin:4px 0;overflow:hidden;background:rgba(232,89,12,0.04)">
+          <div style="display:flex;align-items:center;padding:8px 10px;cursor:pointer;user-select:none;gap:8px"
             onclick="window._trAccordion=window._trAccordion||{};window._trAccordion['${accordionId}']=!document.getElementById('${accordionId}').hidden;document.getElementById('${accordionId}').hidden=!document.getElementById('${accordionId}').hidden;this.querySelector('.tr-chevron').style.transform=document.getElementById('${accordionId}').hidden?'rotate(-90deg)':'rotate(0deg)'">
-            <span style="font-size:10px;font-weight:700;color:var(--blu);flex:1">↔ ${trName}</span>
-            <span style="font-size:11px;color:var(--mu)">⏱ ${(ef2.startOffset||0).toFixed(1)}s — ${((ef2.startOffset||0)+(ef2.effectDur||1)).toFixed(1)}s</span>
-            <span class="tr-chevron" style="margin-left:6px;font-size:10px;color:var(--mu);transition:transform 0.2s;transform:${isOpen?'rotate(0deg)':'rotate(-90deg)'}"">▼</span>
+            <div style="width:3px;height:28px;border-radius:2px;background:linear-gradient(180deg,#E8590C,#ff8c42);flex-shrink:0"></div>
+            <div style="flex:1;min-width:0">
+              <div style="font-size:11px;font-weight:700;color:#fff;letter-spacing:0.3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${trName}</div>
+              <div style="font-size:10px;color:rgba(255,255,255,0.4);margin-top:1px">${(ef2.startOffset||0).toFixed(1)}s &rarr; ${((ef2.startOffset||0)+(ef2.effectDur||1)).toFixed(1)}s &nbsp;·&nbsp; ${(ef2.effectDur||1).toFixed(1)}s</div>
+            </div>
+            <span class="tr-chevron" style="font-size:9px;color:rgba(255,255,255,0.3);transition:transform 0.2s;transform:${isOpen?'rotate(0deg)':'rotate(-90deg)'}">▼</span>
           </div>
           <div id="${accordionId}" ${isOpen?'':'hidden'} style="padding:6px 0">
           <div style="display:flex;justify-content:flex-end;padding:0 8px 4px">
