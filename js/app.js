@@ -3537,15 +3537,13 @@ function cutTogglePlay(){
             syncCutVid();
           }
         } else {
-          // No overlays/effects — show video element directly (no canvas overhead)
+          // No overlays/effects — show video element directly
           const canv=document.getElementById('cut-trans-cvs');
           const mv2=document.getElementById('cut-main-vid');
-          if(canv&&canv.style.display!=='none'){
-            canv.style.display='none';
-          }
-          if(mv2&&mv2.src&&mv2.style.display==='none'){
-            mv2.style.display='block';
-          }
+          // Hide canvas
+          if(canv) canv.style.display='none';
+          // Show mv — use opacity (not display) since mv is always display:block
+          if(mv2){ mv2.style.opacity='1'; mv2.style.display='block'; }
           if(mv2&&mv2.paused&&S.cut.playing) mv2.play().catch(()=>{});
         }
       }
