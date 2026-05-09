@@ -4129,59 +4129,132 @@ function syncCutVid(){
       const progress = _applyEasing(rawProg, tr.easing) * compCap;
       ctx.save();
       if(tr.mode==='fadein'){
-        // Fade in: black → video. Canvas already cleared, draw video at increasing opacity
+        // Fade in: 0=invisible → 1=full video
         ctx.globalAlpha = progress;
         _drawVideoFrame(drawSrc, ctx, canvas.width, canvas.height);
         ctx.globalAlpha = 1;
       }
       else if(tr.mode==='fadeout'){
-        // Fade out: draw video at full opacity, then black overlay at increasing alpha
+        // Fade out: 0=full video → 1=black
         _drawVideoFrame(drawSrc, ctx, canvas.width, canvas.height);
-        const soft2 = tr.softness||0;
-        const fa = soft2>0 ? Math.max(0,Math.min(1,(progress-soft2/2)/(1-soft2))) : progress;
-        ctx.globalAlpha = fa;
+        ctx.globalAlpha = progress;
         ctx.fillStyle = '#000';
         ctx.fillRect(0, 0, canvas.width, canvas.height);
         ctx.globalAlpha = 1;
       }
       else if(tr.mode==='dissolve'){
-        // Cross dissolve: draw video at decreasing opacity (1→0→1 bell curve)
-        const bellAlpha = Math.sin(progress * Math.PI); // 0→1→0
-        const vidAlpha = 1 - bellAlpha; // 1→0→1 (video visible → invisible → visible)
-        const soft3 = tr.softness||0;
-        const da = soft3>0
-          ? Math.max(0, Math.min(1, vidAlpha + soft3*(0.5-Math.abs(vidAlpha-0.5))))
-          : vidAlpha;
-        ctx.globalAlpha = Math.max(0.01, da); // keep at least 0.01 so video always draws
+        // Cross dissolve: 0=full video → 1=invisible
+        ctx.globalAlpha = 1 - progress;
         _drawVideoFrame(drawSrc, ctx, canvas.width, canvas.height);
         ctx.globalAlpha = 1;
       }
-      else if(tr.mode==='zoomin'){ const s=1+(1-progress)*0.3; ctx.translate(canvas.width/2,canvas.height/2); ctx.scale(s,s); ctx.translate(-canvas.width/2,-canvas.height/2); ctx.globalAlpha=Math.min(1,progress+0.1); _drawVideoFrame(drawSrc, ctx, canvas.width, canvas.height); ctx.globalAlpha=1; }
-      else if(tr.mode==='zoomout'){ const s=0.7+progress*0.3; ctx.translate(canvas.width/2,canvas.height/2); ctx.scale(s,s); ctx.translate(-canvas.width/2,-canvas.height/2); ctx.globalAlpha=progress; _drawVideoFrame(drawSrc, ctx, canvas.width, canvas.height); ctx.globalAlpha=1; }
-      else if(tr.mode==='slideleft'){ try{ctx.drawImage(drawSrc,canvas.width*(1-progress),0,canvas.width,canvas.height);}catch(e){} }
-      else if(tr.mode==='slideright'){ try{ctx.drawImage(drawSrc,-canvas.width*(1-progress),0,canvas.width,canvas.height);}catch(e){} }
-      else if(tr.mode==='wipeleft'){
+      else if(tr.mode==='zoomin'){
+        // Zoom in: starts zoomed-in fully visible, scales down to normal
+        const s = 1 + (1-progress)*0.4;
+        ctx.translate(canvas.width/2, canvas.height/2);
+        ctx.scale(s, s);
+        ctx.translate(-canvas.width/2, -canvas.height/2);
         _drawVideoFrame(drawSrc, ctx, canvas.width, canvas.height);
-        const revDir = (tr.direction==='reverse');
-        const wipeX  = canvas.width * (revDir ? 1-progress : progress);
-        const soft   = (tr.softness||0) * canvas.width * 0.3;
-        if(soft > 1){
-          const grd = ctx.createLinearGradient(wipeX-soft,0,wipeX+soft,0);
-          grd.addColorStop(0,'rgba(0,0,0,0)'); grd.addColorStop(1,'rgba(0,0,0,1)');
-          ctx.globalCompositeOperation='destination-in';
-          ctx.fillStyle = grd;
-          ctx.fillRect(0,0,wipeX+soft,canvas.height);
-          ctx.fillStyle='rgba(0,0,0,1)';
-          ctx.fillRect(wipeX+soft,0,canvas.width,canvas.height);
-          ctx.globalCompositeOperation='source-over';
-        } else { ctx.clearRect(wipeX,0,canvas.width,canvas.height); }
       }
-      else if(tr.mode==='wiperight'){ _drawVideoFrame(drawSrc, ctx, canvas.width, canvas.height); ctx.clearRect(0,0,canvas.width*(1-progress),canvas.height); }
-      else if(tr.mode==='blur'){ ctx.filter=`blur(${Math.max(0,(1-progress)*12)}px)`; ctx.globalAlpha=Math.min(1,progress+0.2); _drawVideoFrame(drawSrc, ctx, canvas.width, canvas.height); ctx.filter='none'; ctx.globalAlpha=1; }
-      else if(tr.mode==='flash'){ _drawVideoFrame(drawSrc, ctx, canvas.width, canvas.height); ctx.fillStyle=`rgba(255,255,255,${1-progress})`; ctx.fillRect(0,0,canvas.width,canvas.height); }
-      else if(tr.mode==='flashblack'){ _drawVideoFrame(drawSrc, ctx, canvas.width, canvas.height); ctx.fillStyle=`rgba(0,0,0,${1-progress})`; ctx.fillRect(0,0,canvas.width,canvas.height); }
-      else if(tr.mode==='spin'){ const angle=(1-progress)*Math.PI*2; ctx.translate(canvas.width/2,canvas.height/2); ctx.rotate(angle); ctx.translate(-canvas.width/2,-canvas.height/2); ctx.globalAlpha=progress; _drawVideoFrame(drawSrc, ctx, canvas.width, canvas.height); ctx.globalAlpha=1; }
-
+      else if(tr.mode==='zoomout'){
+        // Zoom out exit: normal → shrinks away
+        const s = 1 - progress*0.35;
+        ctx.translate(canvas.width/2, canvas.height/2);
+        ctx.scale(s, s);
+        ctx.translate(-canvas.width/2, -canvas.height/2);
+        ctx.globalAlpha = 1 - progress;
+        _drawVideoFrame(drawSrc, ctx, canvas.width, canvas.height);
+        ctx.globalAlpha = 1;
+      }
+      else if(tr.mode==='slideleft'){
+        // Slide left exit: video slides off to the left
+        const x = -canvas.width * progress;
+        try{ ctx.drawImage(drawSrc, x, 0, canvas.width, canvas.height); }catch(e){}
+      }
+      else if(tr.mode==='slideright'){
+        // Slide right exit: video slides off to the right
+        const x = canvas.width * progress;
+        try{ ctx.drawImage(drawSrc, x, 0, canvas.width, canvas.height); }catch(e){}
+      }
+      else if(tr.mode==='wipeleft'){
+        // Wipe left: video wiped away from right edge moving left
+        const wipeX = canvas.width * (1 - progress); // visible width
+        const soft  = (tr.softness||0) * 60;
+        ctx.save();
+        if(soft > 1){
+          _drawVideoFrame(drawSrc, ctx, canvas.width, canvas.height);
+          const grd = ctx.createLinearGradient(wipeX-soft, 0, wipeX+soft, 0);
+          grd.addColorStop(0, 'rgba(0,0,0,0)');
+          grd.addColorStop(1, 'rgba(0,0,0,1)');
+          ctx.globalCompositeOperation = 'destination-out';
+          ctx.fillStyle = grd;
+          ctx.fillRect(wipeX-soft, 0, soft*2, canvas.height);
+          ctx.fillStyle = 'rgba(0,0,0,1)';
+          ctx.fillRect(wipeX+soft, 0, canvas.width, canvas.height);
+          ctx.globalCompositeOperation = 'source-over';
+        } else {
+          ctx.beginPath();
+          ctx.rect(0, 0, wipeX, canvas.height);
+          ctx.clip();
+          _drawVideoFrame(drawSrc, ctx, canvas.width, canvas.height);
+        }
+        ctx.restore();
+      }
+      else if(tr.mode==='wiperight'){
+        // Wipe right: video wiped away from left edge moving right
+        const wipeX2 = canvas.width * progress; // hidden width from left
+        const soft2  = (tr.softness||0) * 60;
+        ctx.save();
+        if(soft2 > 1){
+          _drawVideoFrame(drawSrc, ctx, canvas.width, canvas.height);
+          const grd2 = ctx.createLinearGradient(wipeX2-soft2, 0, wipeX2+soft2, 0);
+          grd2.addColorStop(0, 'rgba(0,0,0,1)');
+          grd2.addColorStop(1, 'rgba(0,0,0,0)');
+          ctx.globalCompositeOperation = 'destination-out';
+          ctx.fillStyle = 'rgba(0,0,0,1)';
+          ctx.fillRect(0, 0, wipeX2-soft2, canvas.height);
+          ctx.fillStyle = grd2;
+          ctx.fillRect(wipeX2-soft2, 0, soft2*2, canvas.height);
+          ctx.globalCompositeOperation = 'source-over';
+        } else {
+          ctx.beginPath();
+          ctx.rect(wipeX2, 0, canvas.width-wipeX2, canvas.height);
+          ctx.clip();
+          _drawVideoFrame(drawSrc, ctx, canvas.width, canvas.height);
+        }
+        ctx.restore();
+      }
+      else if(tr.mode==='blur'){
+        // Blur out: 0=sharp → 1=blurry+faded
+        ctx.filter = `blur(${Math.round(progress*18)}px)`;
+        ctx.globalAlpha = 1 - progress*0.6;
+        _drawVideoFrame(drawSrc, ctx, canvas.width, canvas.height);
+        ctx.filter = 'none'; ctx.globalAlpha = 1;
+      }
+      else if(tr.mode==='flash'){
+        // Flash white: video → white flash → video
+        _drawVideoFrame(drawSrc, ctx, canvas.width, canvas.height);
+        const fa = progress < 0.5 ? progress*2 : (1-progress)*2;
+        ctx.fillStyle = `rgba(255,255,255,${fa})`;
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+      }
+      else if(tr.mode==='flashblack'){
+        // Flash black: video → black flash → video
+        _drawVideoFrame(drawSrc, ctx, canvas.width, canvas.height);
+        const fb = progress < 0.5 ? progress*2 : (1-progress)*2;
+        ctx.fillStyle = `rgba(0,0,0,${fb})`;
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+      }
+      else if(tr.mode==='spin'){
+        // Spin out: video spins and fades away
+        const angle = progress * Math.PI * 2;
+        ctx.translate(canvas.width/2, canvas.height/2);
+        ctx.rotate(angle);
+        ctx.translate(-canvas.width/2, -canvas.height/2);
+        ctx.globalAlpha = 1 - progress;
+        _drawVideoFrame(drawSrc, ctx, canvas.width, canvas.height);
+        ctx.globalAlpha = 1;
+      }
       // ── DISSOLVES ──
       else if(tr.mode==='dip_black'){ const mid=progress<0.5?progress*2:1-(progress-0.5)*2; ctx.globalAlpha=mid; _drawVideoFrame(drawSrc, ctx, canvas.width, canvas.height); ctx.globalAlpha=1; ctx.fillStyle='#000'; ctx.globalAlpha=1-mid; ctx.fillRect(0,0,canvas.width,canvas.height); ctx.globalAlpha=1; }
       else if(tr.mode==='dip_white'){ const mid=progress<0.5?progress*2:1-(progress-0.5)*2; ctx.globalAlpha=mid; _drawVideoFrame(drawSrc, ctx, canvas.width, canvas.height); ctx.globalAlpha=1; ctx.fillStyle='#fff'; ctx.globalAlpha=1-mid; ctx.fillRect(0,0,canvas.width,canvas.height); ctx.globalAlpha=1; }
