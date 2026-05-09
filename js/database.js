@@ -1,46 +1,35 @@
-import {
-  collection, doc, addDoc, updateDoc, deleteDoc,
-  getDocs, getDoc, query, where, orderBy, serverTimestamp
-} from "https://www.gstatic.com/firebasejs/11.6.0/firebase-firestore.js";
+// Database functions using Firebase compat SDK (window.db is set in firebase-config.js)
 
-async function createProject(userId, projectData) {
-  const ref = await addDoc(collection(db, 'projects'), {
-    userId,
-    name: projectData.name,
-    appType: projectData.appType,
-    width: projectData.width,
-    height: projectData.height,
-    fps: projectData.fps,
-    duration: projectData.duration,
-    createdAt: serverTimestamp(),
-    updatedAt: serverTimestamp(),
-    state: {}
+async function createProject(userId, name, type) {
+  const ref = await db.collection('projects').add({
+    userId, name, type,
+    createdAt: firebase.firestore.FieldValue.serverTimestamp(),
+    updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
   });
   return ref.id;
 }
 
 async function getUserProjects(userId) {
-  const q = query(
-    collection(db, 'projects'),
-    where('userId', '==', userId),
-    orderBy('updatedAt', 'desc')
-  );
-  const snap = await getDocs(q);
+  const snap = await db.collection('projects')
+    .where('userId','==',userId)
+    .orderBy('updatedAt','desc')
+    .get();
   return snap.docs.map(d => ({ id: d.id, ...d.data() }));
 }
 
 async function saveProjectState(projectId, state) {
-  const ref = doc(db, 'projects', projectId);
-  await updateDoc(ref, { state, updatedAt: serverTimestamp() });
+  await db.collection('projects').doc(projectId).update({
+    state: JSON.stringify(state),
+    updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
+  });
 }
 
 async function loadProject(projectId) {
-  const ref = doc(db, 'projects', projectId);
-  const snap = await getDoc(ref);
-  if (snap.exists()) return { id: snap.id, ...snap.data() };
-  return null;
+  const snap = await db.collection('projects').doc(projectId).get();
+  if (!snap.exists) return null;
+  return { id: snap.id, ...snap.data() };
 }
 
 async function deleteProject(projectId) {
-  await deleteDoc(doc(db, 'projects', projectId));
+  await db.collection('projects').doc(projectId).delete();
 }

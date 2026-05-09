@@ -1,32 +1,29 @@
-import {
-  ref, uploadBytesResumable, getDownloadURL, deleteObject, listAll
-} from "https://www.gstatic.com/firebasejs/11.6.0/firebase-storage.js";
+// Storage functions using Firebase compat SDK (window.storage is set in firebase-config.js)
 
 function uploadMedia(userId, projectId, file, onProgress) {
   return new Promise((resolve, reject) => {
-    const path = `users/${userId}/projects/${projectId}/media/${Date.now()}_${file.name}`;
-    const storageRef = ref(storage, path);
-    const task = uploadBytesResumable(storageRef, file);
+    const storageRef = storage.ref('projects/' + userId + '/' + projectId + '/' + file.name);
+    const task = storageRef.put(file);
     task.on('state_changed',
-      (snap) => {
-        const pct = Math.round((snap.bytesTransferred / snap.totalBytes) * 100);
-        if (onProgress) onProgress(pct);
-      },
-      (err) => reject(err),
-      async () => {
-        const url = await getDownloadURL(task.snapshot.ref);
-        resolve({ url, path, name: file.name });
-      }
+      snap => { if(onProgress) onProgress(snap.bytesTransferred / snap.totalBytes * 100); },
+      err  => reject(err),
+      ()   => task.snapshot.ref.getDownloadURL().then(resolve).catch(reject)
     );
   });
 }
 
-async function deleteMedia(path) {
-  await deleteObject(ref(storage, path));
+async function getMediaFiles(userId, projectId) {
+  try {
+    const listRef = storage.ref('projects/' + userId + '/' + projectId);
+    const result  = await listRef.listAll();
+    return await Promise.all(result.items.map(async item => ({
+      name: item.name,
+      url:  await item.getDownloadURL(),
+      ref:  item.fullPath,
+    })));
+  } catch(e) { return []; }
 }
 
-async function listProjectMedia(userId, projectId) {
-  const listRef = ref(storage, `users/${userId}/projects/${projectId}/media`);
-  const res = await listAll(listRef);
-  return Promise.all(res.items.map(item => getDownloadURL(item)));
+async function deleteMediaFile(filePath) {
+  await storage.ref(filePath).delete();
 }
