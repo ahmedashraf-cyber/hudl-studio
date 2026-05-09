@@ -3428,6 +3428,7 @@ let _audioOnlyLastTime=null;   // for audio-only clock-driven playback
 const _playedFreezes=new Set();// freeze overlay ids already played — skip re-triggering
 let _justExitedFreeze=false;   // flag to resync video after freeze ends
 let _freezeExitTime=0;         // timestamp of freeze exit — skip canvas for 500ms after
+let _freezeSavedVideoTime=0;   // video.currentTime saved when freeze started
 function cutTogglePlay(){
   if(!S.cut.playing) _playedFreezes.clear(); // fresh start — allow all freezes to play
   S.cut.playing=!S.cut.playing;
@@ -3496,7 +3497,10 @@ function cutTogglePlay(){
             _freezeActive=true;
             _freezeLastTime=performance.now();
             _freezeStartPh=phNow; // remember timeline position where freeze started
-            if(mv2&&!mv2.paused) mv2.pause();
+            if(mv2){
+              _freezeSavedVideoTime = mv2.currentTime; // save exact video position
+              if(!mv2.paused) mv2.pause();
+            }
             stopAudioPlayback();
           }
           // Advance ph via real clock (not video element)
@@ -3530,37 +3534,36 @@ function cutTogglePlay(){
           });
 
           const mv2 = $('cut-main-vid');
-          if(mv2 && _resumeClip){
-            const ci2 = S.cut.clips.indexOf(_resumeClip);
-            mv2.dataset.clipIdx = String(ci2);
-            // Seek to the exact file time at the freeze start position
-            const correctFileTime = Math.max(0,
-              (_resumeClip.fileStart||0) + (_resumePh - _resumeClip.start)
-            );
-            S.cut.ph = _resumePh;
-            updateCutPH();
-            // Show mv immediately before seek completes
-            mv2.style.opacity  = '1';
-            mv2.style.display  = 'block';
-            _freezeExitTime    = performance.now();
-            const c2e = document.getElementById('cut-trans-cvs');
-            if(c2e){ c2e.style.display='none'; }
-            // Seek then play
-            mv2.currentTime = correctFileTime;
-            // Play immediately — don't wait for seeked event
-            if(S.cut.playing){
-              mv2.play().catch(()=>{
-                // If play fails, retry once after brief delay
-                setTimeout(()=>{ if(S.cut.playing && mv2.paused) mv2.play().catch(()=>{}); }, 100);
-              });
+
+          // Restore visual state FIRST
+          _freezeExitTime = performance.now();
+          if(mv2){
+            mv2.style.opacity = '1';
+            mv2.style.display = 'block';
+          }
+          const c2e = document.getElementById('cut-trans-cvs');
+          if(c2e) c2e.style.display = 'none';
+
+          // Restore timeline position to where freeze started
+          S.cut.ph = _resumePh;
+          updateCutPH();
+
+          // Resume video from exactly where it was when freeze started
+          // Use the saved currentTime — no seeking needed, video was paused there
+          if(mv2){
+            // Restore the saved video position (it was paused here)
+            if(_freezeSavedVideoTime > 0){
+              mv2.currentTime = _freezeSavedVideoTime;
             }
-          } else {
-            // No clip found — just restore visual state and continue
-            _freezeExitTime = performance.now();
-            const mv2b = $('cut-main-vid');
-            if(mv2b){ mv2b.style.opacity='1'; mv2b.style.display='block'; }
-            const c2b = document.getElementById('cut-trans-cvs');
-            if(c2b){ c2b.style.display='none'; }
+            _freezeSavedVideoTime = 0;
+
+            // Wait for seeked then play — with fallback
+            const _doPlay = () => {
+              if(S.cut.playing && mv2.paused) mv2.play().catch(()=>{});
+            };
+            // Small delay to let currentTime assignment settle
+            setTimeout(_doPlay, 50);
+            setTimeout(_doPlay, 200); // second attempt as insurance
           }
 
           startAudioPlayback();
