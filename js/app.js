@@ -1652,6 +1652,7 @@ function cutToggleEffect(i){
   const p=$('cut-p-effects'); if(p) p.innerHTML=cutEffectsHTML();
   renderCutTimeline(); // redraw timeline to show effect bars
   syncCutVid();        // update canvas with new effect immediately
+  if(ci !== null && ci !== undefined) updatePropsPanel(ci); // refresh props so transition sliders appear
   scheduleSave();
 }
 
@@ -3960,7 +3961,12 @@ function syncCutVid(){
   }).length > 0;
   // Always use canvas if overlays are present OR if transition/effects active
   // Skip canvas mode for 500ms after freeze exit — let video resume cleanly
-  if((tr || hasEffects || hasActiveOverlays) && (performance.now()-(_freezeExitTime||0)) > 500){
+  const trInWindow = tr && (()=>{
+    const _ts = active.start + (tr.startOffset||0);
+    const _te = _ts + (tr.effectDur||tr.dur||1);
+    return ph >= _ts && ph < _te;
+  })();
+  if((trInWindow || hasEffects || hasActiveOverlays) && (performance.now()-(_freezeExitTime||0)) > 500){
     mv.style.opacity = '0';     // hidden but display:block so browser decodes
     canvas.style.display = 'block';
     canvas.style.zIndex  = '2';  // canvas covers mv visually
@@ -4037,9 +4043,9 @@ function syncCutVid(){
     // else: keep last good frame — no clear
 
     // ── Draw transitions FIRST (before overlays) ──
-    if(tr){
+    if(trInWindow){
       const elapsed = ph - active.start - (tr.startOffset||0);
-      const progress = Math.max(0, Math.min(1, elapsed / (tr.dur||1)));
+      const progress = Math.max(0, Math.min(1, elapsed / (tr.effectDur||tr.dur||1)));
       ctx.save();
       if(tr.mode==='fadein'){ ctx.globalAlpha=progress; _drawVideoFrame(drawSrc, ctx, canvas.width, canvas.height); ctx.globalAlpha=1; }
       else if(tr.mode==='fadeout'){ ctx.globalAlpha=1-progress; _drawVideoFrame(drawSrc, ctx, canvas.width, canvas.height); ctx.globalAlpha=1; }
