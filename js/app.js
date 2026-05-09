@@ -1954,6 +1954,7 @@ function updatePropsPanel(ci){
   const body=$('cut-props-body'); if(!body) return;
   if(ci===null||ci===undefined){
     body.innerHTML='<div style="padding:20px 8px;text-align:center;color:var(--mu2);font-size:11px">Select a clip or overlay</div>';
+    const oldBox=document.getElementById('cut-bbox'); if(oldBox) oldBox.remove();
     return;
   }
   const c=S.cut.clips[ci]; if(!c){body.innerHTML='';return;}
@@ -1999,8 +2000,50 @@ function updatePropsPanel(ci){
       <button onclick="showAudioEnhanceDialog(${ci})" style="width:100%;padding:6px;background:rgba(232,89,12,0.12);border:0.5px solid rgba(232,89,12,0.35);border-radius:6px;color:#E8590C;font-size:11px;font-weight:600;cursor:pointer;font-family:'DM Sans',sans-serif">🎵 Audio Enhancement…</button>
     </div>` : '';
 
+  // Ensure clip has transform object
+  if(!c.transform) c.transform = {x:0, y:0, scaleX:100, scaleY:100, rotation:0};
+  const tf = c.transform;
+
   body.innerHTML=`
     <div class="prop-section">${c.type==='video'?'📹 Video':c.type==='audio'?'🎵 Audio':'📎'} Clip</div>
+    ${c.type==='video' ? `
+    <div class="prop-section" style="color:rgba(232,89,12,0.8)">⊞ Transform</div>
+    <div class="prop-row"><span class="prop-label">X</span>
+      <input type="range" min="-100" max="100" step="0.5" value="${tf.x||0}"
+        style="flex:1;accent-color:#E8590C"
+        oninput="const c2=S.cut.clips[${ci}];if(!c2.transform)c2.transform={x:0,y:0,scaleX:100,scaleY:100,rotation:0};c2.transform.x=parseFloat(this.value);this.nextElementSibling.textContent=parseFloat(this.value).toFixed(1)+'%';syncCutVid();renderBoundingBox(${ci});">
+      <span style="font-size:10px;color:var(--mu);min-width:36px;text-align:right">${(tf.x||0).toFixed(1)}%</span>
+    </div>
+    <div class="prop-row"><span class="prop-label">Y</span>
+      <input type="range" min="-100" max="100" step="0.5" value="${tf.y||0}"
+        style="flex:1;accent-color:#E8590C"
+        oninput="const c2=S.cut.clips[${ci}];if(!c2.transform)c2.transform={x:0,y:0,scaleX:100,scaleY:100,rotation:0};c2.transform.y=parseFloat(this.value);this.nextElementSibling.textContent=parseFloat(this.value).toFixed(1)+'%';syncCutVid();renderBoundingBox(${ci});">
+      <span style="font-size:10px;color:var(--mu);min-width:36px;text-align:right">${(tf.y||0).toFixed(1)}%</span>
+    </div>
+    <div class="prop-row"><span class="prop-label">Scale X</span>
+      <input type="range" min="10" max="300" step="1" value="${tf.scaleX||100}"
+        style="flex:1;accent-color:#E8590C"
+        oninput="const c2=S.cut.clips[${ci}];if(!c2.transform)c2.transform={x:0,y:0,scaleX:100,scaleY:100,rotation:0};c2.transform.scaleX=parseInt(this.value);this.nextElementSibling.textContent=this.value+'%';syncCutVid();renderBoundingBox(${ci});">
+      <span style="font-size:10px;color:var(--mu);min-width:36px;text-align:right">${tf.scaleX||100}%</span>
+    </div>
+    <div class="prop-row"><span class="prop-label">Scale Y</span>
+      <input type="range" min="10" max="300" step="1" value="${tf.scaleY||100}"
+        style="flex:1;accent-color:#E8590C"
+        oninput="const c2=S.cut.clips[${ci}];if(!c2.transform)c2.transform={x:0,y:0,scaleX:100,scaleY:100,rotation:0};c2.transform.scaleY=parseInt(this.value);this.nextElementSibling.textContent=this.value+'%';syncCutVid();renderBoundingBox(${ci});">
+      <span style="font-size:10px;color:var(--mu);min-width:36px;text-align:right">${tf.scaleY||100}%</span>
+    </div>
+    <div class="prop-row"><span class="prop-label">Rotation</span>
+      <input type="range" min="-180" max="180" step="1" value="${tf.rotation||0}"
+        style="flex:1;accent-color:#E8590C"
+        oninput="const c2=S.cut.clips[${ci}];if(!c2.transform)c2.transform={x:0,y:0,scaleX:100,scaleY:100,rotation:0};c2.transform.rotation=parseInt(this.value);this.nextElementSibling.textContent=this.value+'°';syncCutVid();renderBoundingBox(${ci});">
+      <span style="font-size:10px;color:var(--mu);min-width:36px;text-align:right">${tf.rotation||0}°</span>
+    </div>
+    <div class="prop-row" style="padding-top:4px">
+      <button onclick="const c2=S.cut.clips[${ci}];c2.transform={x:0,y:0,scaleX:100,scaleY:100,rotation:0};updatePropsPanel(${ci});syncCutVid();renderBoundingBox(${ci});"
+        style="flex:1;padding:4px;background:rgba(255,255,255,0.04);border:0.5px solid rgba(255,255,255,0.08);border-radius:5px;color:rgba(255,255,255,0.4);font-size:10px;cursor:pointer;font-family:'DM Sans',sans-serif">
+        Reset Transform
+      </button>
+    </div>` : ''}
     <div class="prop-row"><span class="prop-label">Name</span><span class="prop-val" title="${c.name||''}" style="font-size:10px">${(c.name||'').substring(0,16)}</span></div>
     <div class="prop-row"><span class="prop-label">Track</span><span class="prop-val">${c.type==='video'?'V':'A'}${c.track+1}</span></div>
     <div class="prop-section">⏱ Timing</div>
@@ -2996,6 +3039,8 @@ function _selectClip(ci){
   updatePropsPanel(ci);
   // Refresh effects panel
   setTimeout(refreshEffectsPanel, 50);
+  // Show bounding box handles
+  if(typeof renderBoundingBox === 'function') renderBoundingBox(ci);
 }
 window._selectClip = _selectClip;
 
@@ -4433,14 +4478,18 @@ function syncCutVid(){
   mv.style.filter = filterStr !== 'none' ? filterStr : '';
   // Apply transform
   const tr2 = active.transform;
-  if(tr2){
-    const sx=tr2.scaleX/100, sy=tr2.scaleY/100, rot=tr2.rotation, tx2=tr2.x, ty2=tr2.y;
+  if(tr2 && (tr2.x||tr2.y||tr2.scaleX!==100||tr2.scaleY!==100||tr2.rotation)){
+    const sx=tr2.scaleX/100, sy=tr2.scaleY/100, rot=tr2.rotation||0, tx2=tr2.x||0, ty2=tr2.y||0;
     mv.style.transform=`translate(${tx2}%,${ty2}%) rotate(${rot}deg) scale(${sx},${sy})`;
     mv.style.transformOrigin='center center';
   } else {
     mv.style.transform='';
   }
   S.cut._vid = mv;
+  // Refresh bounding box handles
+  if(typeof renderBoundingBox==="function"&&S.cut.sel!==null&&S.cut.sel!==undefined){
+    requestAnimationFrame(()=>renderBoundingBox(S.cut.sel));
+  }
 }
 
 
@@ -5203,6 +5252,170 @@ window.refreshEffectsPanel = refreshEffectsPanel;
 window.cutBinDragStart = cutBinDragStart;
 window.cutSelMedia = cutSelMedia;
 window.cutAddToTL = cutAddToTL;
+
+// ── BOUNDING BOX / TRANSFORM HANDLES ──────────────────────────
+// Shows interactive handles on the selected clip in the preview
+
+function renderBoundingBox(ci){
+  // Remove existing bounding box
+  const old = document.getElementById('cut-bbox');
+  if(old) old.remove();
+
+  const frame = document.getElementById('cut-viewport-frame');
+  if(!frame) return;
+
+  // Only show for video clips
+  const clip = ci !== null && ci !== undefined ? S.cut.clips[ci] : null;
+  if(!clip || clip.type !== 'video') return;
+
+  // Only show when clip is active at current ph
+  const ph = S.cut.ph;
+  if(ph < clip.start || ph >= clip.start + clip.dur) return;
+
+  const tf = clip.transform || {x:0, y:0, scaleX:100, scaleY:100, rotation:0};
+  const fW = frame.offsetWidth;
+  const fH = frame.offsetHeight;
+
+  // Bounding box overlay (sits on top of video in the frame)
+  const box = document.createElement('div');
+  box.id = 'cut-bbox';
+  box.style.cssText = `
+    position:absolute; inset:0;
+    pointer-events:none;
+    z-index:10;
+    overflow:visible;
+  `;
+
+  // Calculate box dimensions based on scale
+  const sx = (tf.scaleX||100)/100;
+  const sy = (tf.scaleY||100)/100;
+  const rot = tf.rotation||0;
+  const tx = (tf.x||0)/100 * fW;
+  const ty = (tf.y||0)/100 * fH;
+
+  // Box is centered in the frame, then scaled and translated
+  const bW = fW * sx;
+  const bH = fH * sy;
+  const bLeft = (fW - bW)/2 + tx;
+  const bTop  = (fH - bH)/2 + ty;
+
+  // SVG for the bounding box outline + handles
+  const svg = document.createElementNS('http://www.w3.org/2000/svg','svg');
+  svg.style.cssText = `position:absolute;inset:0;width:100%;height:100%;overflow:visible;pointer-events:none;`;
+
+  // Ghost border (dashed white outline around the clip area)
+  const rect = document.createElementNS('http://www.w3.org/2000/svg','rect');
+  const cx = fW/2 + tx, cy = fH/2 + ty;
+  rect.setAttribute('x', cx - bW/2);
+  rect.setAttribute('y', cy - bH/2);
+  rect.setAttribute('width', bW);
+  rect.setAttribute('height', bH);
+  rect.setAttribute('fill','none');
+  rect.setAttribute('stroke','rgba(232,89,12,0.8)');
+  rect.setAttribute('stroke-width','1');
+  rect.setAttribute('stroke-dasharray','6,3');
+  rect.setAttribute('transform', `rotate(${rot},${cx},${cy})`);
+  svg.appendChild(rect);
+
+  // Corner handles
+  const corners = [
+    [cx - bW/2, cy - bH/2],
+    [cx + bW/2, cy - bH/2],
+    [cx + bW/2, cy + bH/2],
+    [cx - bW/2, cy + bH/2],
+  ];
+  // Midpoint handles
+  const mids = [
+    [cx, cy - bH/2],
+    [cx + bW/2, cy],
+    [cx, cy + bH/2],
+    [cx - bW/2, cy],
+  ];
+
+  // Draw corner handles (larger, square)
+  corners.forEach(([hx, hy]) => {
+    const g = document.createElementNS('http://www.w3.org/2000/svg','g');
+    g.setAttribute('transform', `rotate(${rot},${cx},${cy})`);
+    const r = document.createElementNS('http://www.w3.org/2000/svg','rect');
+    r.setAttribute('x', hx-4); r.setAttribute('y', hy-4);
+    r.setAttribute('width', 8); r.setAttribute('height', 8);
+    r.setAttribute('rx', 2);
+    r.setAttribute('fill','#fff'); r.setAttribute('stroke','#E8590C'); r.setAttribute('stroke-width','1.5');
+    g.appendChild(r); svg.appendChild(g);
+  });
+
+  // Draw midpoint handles (smaller, circle)
+  mids.forEach(([hx, hy]) => {
+    const g = document.createElementNS('http://www.w3.org/2000/svg','g');
+    g.setAttribute('transform', `rotate(${rot},${cx},${cy})`);
+    const c2 = document.createElementNS('http://www.w3.org/2000/svg','circle');
+    c2.setAttribute('cx', hx); c2.setAttribute('cy', hy);
+    c2.setAttribute('r', 4);
+    c2.setAttribute('fill','#fff'); c2.setAttribute('stroke','#E8590C'); c2.setAttribute('stroke-width','1.5');
+    g.appendChild(c2); svg.appendChild(g);
+  });
+
+  // Center crosshair
+  [[cx-6,cy,cx+6,cy],[cx,cy-6,cx,cy+6]].forEach(([x1,y1,x2,y2]) => {
+    const l = document.createElementNS('http://www.w3.org/2000/svg','line');
+    l.setAttribute('x1',x1); l.setAttribute('y1',y1);
+    l.setAttribute('x2',x2); l.setAttribute('y2',y2);
+    l.setAttribute('stroke','rgba(232,89,12,0.9)'); l.setAttribute('stroke-width','1.5');
+    svg.appendChild(l);
+  });
+
+  box.appendChild(svg);
+  frame.appendChild(box);
+
+  // ── Drag to move ────────────────────────────────────────────
+  // Make the viewport frame draggable for the selected clip
+  if(!frame._bboxDrag){
+    frame._bboxDrag = true;
+    let _dragging = false, _startX, _startY, _origTX, _origTY;
+
+    frame.addEventListener('mousedown', e => {
+      if(S.cut.sel === null || S.cut.sel === undefined) return;
+      const cl = S.cut.clips[S.cut.sel];
+      if(!cl || cl.type !== 'video') return;
+      // Only drag if not on a handle (handles have pointer-events:none but we check distance)
+      _dragging = true;
+      _startX = e.clientX; _startY = e.clientY;
+      if(!cl.transform) cl.transform = {x:0,y:0,scaleX:100,scaleY:100,rotation:0};
+      _origTX = cl.transform.x||0;
+      _origTY = cl.transform.y||0;
+      e.preventDefault();
+    });
+
+    window.addEventListener('mousemove', e => {
+      if(!_dragging) return;
+      const ci2 = S.cut.sel;
+      if(ci2 === null || ci2 === undefined) return;
+      const cl = S.cut.clips[ci2];
+      if(!cl || !cl.transform) return;
+      const fr = document.getElementById('cut-viewport-frame');
+      if(!fr) return;
+      const dx = (e.clientX - _startX) / fr.offsetWidth  * 100;
+      const dy = (e.clientY - _startY) / fr.offsetHeight * 100;
+      cl.transform.x = Math.max(-100, Math.min(100, _origTX + dx));
+      cl.transform.y = Math.max(-100, Math.min(100, _origTY + dy));
+      syncCutVid();
+      renderBoundingBox(ci2);
+      // Live-update props sliders
+      const xSlider = document.querySelector('#cut-props-body input[oninput*=".x="]');
+      const ySlider = document.querySelector('#cut-props-body input[oninput*=".y="]');
+      if(xSlider){ xSlider.value=cl.transform.x.toFixed(1); xSlider.nextElementSibling.textContent=cl.transform.x.toFixed(1)+'%'; }
+      if(ySlider){ ySlider.value=cl.transform.y.toFixed(1); ySlider.nextElementSibling.textContent=cl.transform.y.toFixed(1)+'%'; }
+    });
+
+    window.addEventListener('mouseup', () => { _dragging = false; });
+  }
+}
+window.renderBoundingBox = renderBoundingBox;
+
+// Auto-show/hide bounding box when selection changes
+const _origCutSelectClip = window.cutSelectClip;
+// Hook into updatePropsPanel to render bbox after panel updates
+const _origUpdateProps = window.updatePropsPanel;
 window.cutTogglePlay = cutTogglePlay;
 window.syncCutVid = syncCutVid;
 window.cutSplit          = cutSplit;
