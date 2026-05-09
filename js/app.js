@@ -1768,14 +1768,39 @@ function buildFilterStr(ci){
   const ph=S.cut.ph;
   const parts=[];
   effects.forEach(ef=>{
-    if(ef.visible===false) return; // user toggled off
+    if(ef.visible===false) return;
     const e=CUT_EFFECTS[ef.i]; if(!e||e.type==="transition")return;
-    // Respect effect segment timing (startOffset + effectDur on clip timeline)
     if(clip){
       const effStart=clip.start+(ef.startOffset||0);
       const effEnd=effStart+(ef.effectDur!==undefined?ef.effectDur:clip.dur);
-      if(ph<effStart||ph>=effEnd) return; // outside effect window
+      if(ph<effStart||ph>=effEnd) return;
+
+      // ── Linear fade ramp ──
+      // ramp = 0→1 during fadeIn window, 1 during body, 1→0 during fadeOut window
+      const fadeIn  = Math.max(0, ef.fadeIn  || 0);
+      const fadeOut = Math.max(0, ef.fadeOut || 0);
+      const elapsed  = ph - effStart;
+      const remain   = effEnd - ph;
+      let ramp = 1;
+      if(fadeIn  > 0 && elapsed < fadeIn)  ramp = Math.min(ramp, elapsed / fadeIn);
+      if(fadeOut > 0 && remain  < fadeOut) ramp = Math.min(ramp, remain  / fadeOut);
+      ramp = Math.max(0, Math.min(1, ramp));
+
+      if(e.type==='range'){
+        // Interpolate between default (no effect) and target value
+        const neutral = e.default !== undefined ? e.default : (e.unit==='%'?100:0);
+        const target  = ef.v !== undefined ? ef.v : neutral;
+        const val     = neutral + (target - neutral) * ramp;
+        parts.push(e.prop+'('+val.toFixed(2)+e.unit+')');
+      } else if(e.type==='toggle'){
+        // For toggle: apply at full strength only during body, fade via opacity wrapper
+        if(ramp >= 0.99) parts.push(e.filter);
+        // partial: blend using opacity — not perfect but functional
+        else if(ramp > 0) parts.push(e.filter + ' opacity('+ramp.toFixed(2)+')');
+      }
+      return; // handled above
     }
+    // No clip context fallback
     if(e.type==='range') parts.push(e.prop+'('+ef.v+e.unit+')');
     else if(e.type==='toggle') parts.push(e.filter);
   });
@@ -3007,23 +3032,101 @@ function renderCutTimeline() {
         lh.style.cssText = 'width:5px;height:100%;cursor:ew-resize;background:rgba(255,255,255,0.4);flex-shrink:0;border-radius:2px 0 0 2px;pointer-events:all;';
         bar.appendChild(lh);
 
+        // ── Fade-In handle (diamond at left inner edge) ──
+        const fih = document.createElement('div');
+        const fiW = Math.min(Math.round((ef.fadeIn||0) * PPS), effectDurPx - 6);
+        fih.style.cssText = [
+          'position:absolute', 'left:5px', 'top:0', 'height:100%',
+          `width:${Math.max(0,fiW)}px`,
+          'background:rgba(255,255,255,0.18)',
+          'pointer-events:none',
+          'border-right:2px solid rgba(255,255,255,0.7)',
+          'border-radius:0',
+          'z-index:1',
+        ].join(';');
+        fih.title = 'Fade In: '+(ef.fadeIn||0).toFixed(1)+'s';
+        bar.appendChild(fih);
+
         // ── Label ──
         const lbl = document.createElement('span');
-        lbl.style.cssText = 'font-size:8px;font-weight:700;color:#fff;padding:0 3px;pointer-events:none;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;flex:1;text-shadow:0 1px 2px rgba(0,0,0,0.6);letter-spacing:0.2px';
+        lbl.style.cssText = 'font-size:8px;font-weight:700;color:#fff;padding:0 3px;pointer-events:none;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;flex:1;text-shadow:0 1px 2px rgba(0,0,0,0.6);letter-spacing:0.2px;position:relative;z-index:2';
         lbl.textContent = eff.name;
         bar.appendChild(lbl);
 
+        // ── Fade-Out handle (diamond at right inner edge) ──
+        const foh = document.createElement('div');
+        const foW = Math.min(Math.round((ef.fadeOut||0) * PPS), effectDurPx - 6);
+        foh.style.cssText = [
+          'position:absolute', 'right:5px', 'top:0', 'height:100%',
+          `width:${Math.max(0,foW)}px`,
+          'background:rgba(255,255,255,0.18)',
+          'pointer-events:none',
+          'border-left:2px solid rgba(255,255,255,0.7)',
+          'border-radius:0',
+          'z-index:1',
+        ].join(';');
+        foh.title = 'Fade Out: '+(ef.fadeOut||0).toFixed(1)+'s';
+        bar.appendChild(foh);
+
         // ── Right drag handle ──
         const rh = document.createElement('div');
-        rh.style.cssText = 'width:5px;height:100%;cursor:ew-resize;background:rgba(255,255,255,0.4);flex-shrink:0;border-radius:0 2px 2px 0;pointer-events:all;';
+        rh.style.cssText = 'width:5px;height:100%;cursor:ew-resize;background:rgba(255,255,255,0.4);flex-shrink:0;border-radius:0 2px 2px 0;pointer-events:all;position:relative;z-index:3';
         bar.appendChild(rh);
 
-        // ── Click → select clip + show effect props ──
+        // ── Click → select clip + show effect-specific props ──
         bar.addEventListener('click', e => {
           e.stopPropagation();
           e._effectBarHandled = true;
           _selectClip(ci);
-          updatePropsPanel(ci);
+          // Show effect-specific props panel with Fade Control
+          const body = document.getElementById('cut-props-body');
+          if(body){
+            const iStyle = 'width:56px;background:#161616;border:0.5px solid rgba(255,255,255,0.1);border-radius:5px;color:var(--tx);font-size:11px;padding:2px 5px;outline:none;font-family:DM Sans,sans-serif';
+            const rangeRow = eff.type==='range'
+              ? '<div class="prop-row"><span class="prop-label">Value</span>'
+                + '<input type="range" min="'+eff.min+'" max="'+eff.max+'" value="'+(ef.v||eff.default||100)+'" style="flex:1;accent-color:#E8590C"'
+                + ' oninput="S.cut.effects['+ci+']['+efIdx+'].v=parseFloat(this.value);applyVideoEffects();syncCutVid()"></div>'
+              : '';
+            body.innerHTML =
+              '<div style="padding:6px 8px 2px;display:flex;align-items:center;gap:6px">'
+              +'<div style="width:3px;height:18px;border-radius:2px;background:'+eff.color+'"></div>'
+              +'<span style="font-size:11px;font-weight:700;color:#fff">'+eff.name+'</span>'
+              +'</div>'
+              +'<div style="border:0.5px solid rgba(88,166,255,0.2);border-radius:8px;margin:4px 0;overflow:hidden;background:rgba(88,166,255,0.03)">'
+              +'<div style="display:flex;align-items:center;padding:7px 10px;gap:8px">'
+              +'<div style="width:3px;height:22px;border-radius:2px;background:linear-gradient(180deg,#58a6ff,#79c0ff)"></div>'
+              +'<div style="font-size:11px;font-weight:700;color:#fff">⏱ Timing</div></div>'
+              +'<div style="padding:0 6px 8px">'
+              +'<div class="prop-row"><span class="prop-label">Start</span>'
+              +'<input type="number" value="'+(ef.startOffset||0).toFixed(2)+'" step="0.1" min="0" style="'+iStyle+'"'
+              +' onchange="S.cut.effects['+ci+']['+efIdx+'].startOffset=Math.max(0,parseFloat(this.value));renderCutTimeline()">'
+              +'<span style="font-size:10px;color:var(--mu)">s</span></div>'
+              +'<div class="prop-row"><span class="prop-label">Duration</span>'
+              +'<input type="number" value="'+(ef.effectDur||2).toFixed(2)+'" step="0.1" min="0.1" style="'+iStyle+'"'
+              +' onchange="S.cut.effects['+ci+']['+efIdx+'].effectDur=Math.max(0.1,parseFloat(this.value));renderCutTimeline();syncCutVid()">'
+              +'<span style="font-size:10px;color:var(--mu)">s</span></div>'
+              +'</div></div>'
+              +'<div style="border:0.5px solid rgba(255,255,255,0.12);border-radius:8px;margin:4px 0;overflow:hidden;background:rgba(255,255,255,0.02)">'
+              +'<div style="display:flex;align-items:center;padding:7px 10px;gap:8px">'
+              +'<div style="width:3px;height:22px;border-radius:2px;background:linear-gradient(180deg,rgba(255,255,255,0.5),rgba(255,255,255,0.2))"></div>'
+              +'<div style="font-size:11px;font-weight:700;color:#fff">◈ Fade Control</div></div>'
+              +'<div style="padding:0 6px 8px">'
+              +'<div class="prop-row"><span class="prop-label" style="color:rgba(255,255,255,0.6)">Fade In</span>'
+              +'<input id="eff-fi-'+ci+'-'+efIdx+'" type="number" value="'+(ef.fadeIn||0).toFixed(2)+'" step="0.05" min="0" style="'+iStyle+'"'
+              +' onchange="const ef2=S.cut.effects['+ci+']['+efIdx+'];ef2.fadeIn=Math.max(0,Math.min(parseFloat(this.value),(ef2.effectDur||1)-(ef2.fadeOut||0)-0.05));renderCutTimeline();syncCutVid()">'
+              +'<span style="font-size:10px;color:var(--mu)">s</span></div>'
+              +'<div class="prop-row"><span class="prop-label" style="color:rgba(255,255,255,0.6)">Fade Out</span>'
+              +'<input id="eff-fo-'+ci+'-'+efIdx+'" type="number" value="'+(ef.fadeOut||0).toFixed(2)+'" step="0.05" min="0" style="'+iStyle+'"'
+              +' onchange="const ef2=S.cut.effects['+ci+']['+efIdx+'];ef2.fadeOut=Math.max(0,Math.min(parseFloat(this.value),(ef2.effectDur||1)-(ef2.fadeIn||0)-0.05));renderCutTimeline();syncCutVid()">'
+              +'<span style="font-size:10px;color:var(--mu)">s</span></div>'
+              +'<div style="font-size:9px;color:rgba(255,255,255,0.25);padding:4px 4px 0">Drag the white markers on the bar · or type values above.</div>'
+              +'</div></div>'
+              +(rangeRow ? '<div style="border:0.5px solid rgba(232,89,12,0.2);border-radius:8px;margin:4px 0;overflow:hidden;background:rgba(232,89,12,0.03)"><div style="display:flex;align-items:center;padding:7px 10px;gap:8px"><div style="width:3px;height:22px;border-radius:2px;background:linear-gradient(180deg,#E8590C,#ff8c42)"></div><div style="font-size:11px;font-weight:700;color:#fff">⚙ Value</div></div><div style="padding:0 6px 8px">'+rangeRow+'</div></div>' : '')
+              +'<div style="padding:4px 6px 6px">'
+              +'<button onclick="cutSaveHistory(&quot;remove_effect&quot;);S.cut.effects['+ci+'].splice('+efIdx+',1);renderCutTimeline();updatePropsPanel('+ci+');notify(&quot;Effect removed&quot;)"'
+              +' style="width:100%;padding:5px;background:rgba(255,69,58,0.08);border:0.5px solid rgba(255,69,58,0.2);border-radius:6px;color:#ff453a;font-size:10px;cursor:pointer;font-family:DM Sans,sans-serif;font-weight:600">🗑 Delete Effect</button>'
+              +'</div>';
+          }
         });
 
         // ── Left handle drag: trim start, keep end fixed ──
@@ -3082,6 +3185,72 @@ function renderCutTimeline() {
             cutSaveHistory('effect_trim');
             renderCutTimeline();
             syncCutVid();
+          };
+          document.addEventListener('mousemove', onMove);
+          document.addEventListener('mouseup', onUp);
+        });
+
+        // ── Fade-In inner handle drag (click on left ~30px of bar body) ──
+        // We use a dedicated invisible overlay for precise hit area
+        const fiDrag = document.createElement('div');
+        fiDrag.style.cssText = 'position:absolute;left:5px;top:0;width:14px;height:100%;cursor:col-resize;z-index:5;';
+        fiDrag.title = 'Drag to set Fade In duration';
+        bar.appendChild(fiDrag);
+
+        fiDrag.addEventListener('mousedown', e => {
+          e.stopPropagation(); e.preventDefault();
+          const sx      = e.clientX;
+          const origFI  = ef.fadeIn || 0;
+          const maxFade = Math.max(0, (ef.effectDur||1) - (ef.fadeOut||0) - 0.05);
+          bar.style.opacity = '0.8';
+          const onMove = mv => {
+            const dx = (mv.clientX - sx) / PPS;
+            ef.fadeIn = Math.max(0, Math.min(origFI + dx, maxFade));
+            // Update visual
+            const fw = Math.max(0, Math.round(ef.fadeIn * PPS));
+            if(fih) { fih.style.width = fw+'px'; fih.title='Fade In: '+ef.fadeIn.toFixed(1)+'s'; }
+            syncCutVid();
+            // Update props panel inputs live
+            const fiInput = document.getElementById('eff-fi-'+ci+'-'+efIdx);
+            if(fiInput) fiInput.value = ef.fadeIn.toFixed(2);
+          };
+          const onUp = () => {
+            document.removeEventListener('mousemove', onMove);
+            document.removeEventListener('mouseup', onUp);
+            bar.style.opacity = '1';
+            cutSaveHistory('effect_fade');
+          };
+          document.addEventListener('mousemove', onMove);
+          document.addEventListener('mouseup', onUp);
+        });
+
+        // ── Fade-Out inner handle drag (right ~30px of bar body) ──
+        const foDrag = document.createElement('div');
+        foDrag.style.cssText = 'position:absolute;right:5px;top:0;width:14px;height:100%;cursor:col-resize;z-index:5;';
+        foDrag.title = 'Drag to set Fade Out duration';
+        bar.appendChild(foDrag);
+
+        foDrag.addEventListener('mousedown', e => {
+          e.stopPropagation(); e.preventDefault();
+          const sx      = e.clientX;
+          const origFO  = ef.fadeOut || 0;
+          const maxFade = Math.max(0, (ef.effectDur||1) - (ef.fadeIn||0) - 0.05);
+          bar.style.opacity = '0.8';
+          const onMove = mv => {
+            const dx = (mv.clientX - sx) / PPS;
+            // dragging LEFT increases fadeOut (right boundary moves left)
+            ef.fadeOut = Math.max(0, Math.min(origFO - dx, maxFade));
+            const fw = Math.max(0, Math.round(ef.fadeOut * PPS));
+            if(foh) { foh.style.width = fw+'px'; foh.title='Fade Out: '+ef.fadeOut.toFixed(1)+'s'; }
+            syncCutVid();
+            const foInput = document.getElementById('eff-fo-'+ci+'-'+efIdx);
+            if(foInput) foInput.value = ef.fadeOut.toFixed(2);
+          };
+          const onUp = () => {
+            document.removeEventListener('mousemove', onMove);
+            document.removeEventListener('mouseup', onUp);
+            bar.style.opacity = '1';
+            cutSaveHistory('effect_fade');
           };
           document.addEventListener('mousemove', onMove);
           document.addEventListener('mouseup', onUp);
