@@ -3510,56 +3510,60 @@ function cutTogglePlay(){
           // ── FREEZE JUST ENDED ──
           _freezeActive   = false;
           _freezeLastTime = null;
-          const _resumePh = _freezeStartPh || S.cut.ph;
+          // _freezeStartPh = where the freeze began on the timeline
+          // After freeze, we resume video from that same point
+          const _resumePh = _freezeStartPh !== null ? _freezeStartPh : S.cut.ph;
           _freezeStartPh  = null;
 
-          // Mark ALL freezes that have ended as played
-          // (safe null check — won't get stuck if no freeze found)
+          // Mark this freeze as played (use endTime to find which one just ended)
           if(window._overlays){
             window._overlays
               .filter(o => o.type==='freeze' && S.cut.ph >= o.endTime)
               .forEach(o => _playedFreezes.add(o.id));
           }
 
-          // Find the active clip RIGHT NOW (fresh lookup, not stale activeNow)
-          const _resumeClip = S.cut.clips.filter(c=>c.type==='video').find(c=>
-            _resumePh >= c.start && _resumePh < c.start + c.dur
-          );
+          // Find clip at resume position — use tolerance so boundary clips are found
+          const _resumeClip = S.cut.clips.filter(c=>c.type==='video').find(c=>{
+            const inClip = _resumePh >= c.start && _resumePh < c.start + c.dur;
+            const atEnd  = Math.abs(_resumePh - (c.start + c.dur)) < 0.05;
+            return inClip || atEnd;
+          });
 
           const mv2 = $('cut-main-vid');
-          if(mv2 && mv2.src && _resumeClip){
+          if(mv2 && _resumeClip){
             const ci2 = S.cut.clips.indexOf(_resumeClip);
             mv2.dataset.clipIdx = String(ci2);
-            // Seek to the correct position in the source file
-            const correctFileTime = (_resumeClip.fileStart||0) +
-              Math.max(0, _resumePh - _resumeClip.start);
+            // Seek to the exact file time at the freeze start position
+            const correctFileTime = Math.max(0,
+              (_resumeClip.fileStart||0) + (_resumePh - _resumeClip.start)
+            );
             S.cut.ph = _resumePh;
             updateCutPH();
-            // Remove any old seeked listener before adding new one
-            if(mv2._freezeSeekFn){ mv2.removeEventListener('seeked', mv2._freezeSeekFn); }
-            mv2._freezeSeekFn = function(){
-              mv2.removeEventListener('seeked', mv2._freezeSeekFn);
-              mv2._freezeSeekFn = null;
-              if(S.cut.playing && mv2.paused) mv2.play().catch(()=>{});
-            };
-            mv2.addEventListener('seeked', mv2._freezeSeekFn);
+            // Show mv immediately before seek completes
+            mv2.style.opacity  = '1';
+            mv2.style.display  = 'block';
+            _freezeExitTime    = performance.now();
+            const c2e = document.getElementById('cut-trans-cvs');
+            if(c2e){ c2e.style.display='none'; }
+            // Seek then play
             mv2.currentTime = correctFileTime;
-            // Fallback in case seeked never fires
-            setTimeout(()=>{
-              if(mv2._freezeSeekFn){
-                mv2.removeEventListener('seeked', mv2._freezeSeekFn);
-                mv2._freezeSeekFn = null;
-              }
-              if(S.cut.playing && mv2.paused) mv2.play().catch(()=>{});
-            }, 400);
+            // Play immediately — don't wait for seeked event
+            if(S.cut.playing){
+              mv2.play().catch(()=>{
+                // If play fails, retry once after brief delay
+                setTimeout(()=>{ if(S.cut.playing && mv2.paused) mv2.play().catch(()=>{}); }, 100);
+              });
+            }
+          } else {
+            // No clip found — just restore visual state and continue
+            _freezeExitTime = performance.now();
+            const mv2b = $('cut-main-vid');
+            if(mv2b){ mv2b.style.opacity='1'; mv2b.style.display='block'; }
+            const c2b = document.getElementById('cut-trans-cvs');
+            if(c2b){ c2b.style.display='none'; }
           }
 
           startAudioPlayback();
-          // Restore visual state
-          _freezeExitTime = performance.now(); // suppress canvas mode for 500ms
-          if(mv2){ mv2.style.opacity='1'; mv2.style.display='block'; }
-          const c2 = document.getElementById('cut-trans-cvs');
-          if(c2){ c2.style.display='none'; c2.style.opacity=''; }
         } else if(trNow||hasEffNow||hasOverlays){
           // Throttle overlay/effect canvas to 30fps during playback
           const _now4=performance.now();
