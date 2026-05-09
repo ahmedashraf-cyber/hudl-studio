@@ -3574,10 +3574,11 @@ function cutTogglePlay(){
         const ciNow2=S.cut.clips.indexOf(activeNow);
         const trNow=getClipTransition(ciNow2);
         // Only count transition as active if playhead is within its window
-        const trActive = trNow && (()=>{
+        const trActive = (()=>{
+          if(!trNow) return null;
           const trStart = activeNow.start + (trNow.startOffset||0);
           const trEnd   = trStart + (trNow.effectDur||trNow.dur||1);
-          return phNow >= trStart && phNow < trEnd;
+          return (phNow >= trStart && phNow < trEnd) ? trNow : null;
         })();
         const hasEffNow=(S.cut.effects[ciNow2]||[]).filter(e=>CUT_EFFECTS[e.i]?.type!=='transition').length>0;
         const activeFreezeNow=window._overlays&&window._overlays.find(o=>o.type==='freeze'&&phNow>=o.startTime&&phNow<o.endTime&&!_playedFreezes.has(o.id));
@@ -4031,10 +4032,12 @@ function syncCutVid(){
   }).length > 0;
   // Always use canvas if overlays are present OR if transition/effects active
   // Skip canvas mode for 500ms after freeze exit — let video resume cleanly
-  const trInWindow = tr && (()=>{
+  // trInWindow is the tr object when inside the transition window, null otherwise
+  const trInWindow = (()=>{
+    if(!tr) return null;
     const _ts = active.start + (tr.startOffset||0);
     const _te = _ts + (tr.effectDur||tr.dur||1);
-    return ph >= _ts && ph < _te;
+    return (ph >= _ts && ph < _te) ? tr : null;
   })();
   if((trInWindow || hasEffects || hasActiveOverlays) && (performance.now()-(_freezeExitTime||0)) > 500){
     mv.style.opacity = '0';     // hidden but display:block so browser decodes
