@@ -4117,10 +4117,11 @@ function syncCutVid(){
 
   // Always ensure src is correct
   const wantedMediaIdx = String(active.mediaIdx);
-  if(mv.dataset.mediaIdx !== wantedMediaIdx || !mv.src || mv.src === window.location.href || mv.networkState === 3){
+  if(mv.dataset.mediaIdx !== wantedMediaIdx || !mv.src || mv.src === window.location.href){
     mv.dataset.mediaIdx = wantedMediaIdx;
     mv.src = item.url;
-    mv.load();
+    // Do NOT call mv.load() — it resets readyState causing black frames
+    // The browser auto-loads when src changes
   }
   mv.dataset.clipIdx = String(activeCI);
 
