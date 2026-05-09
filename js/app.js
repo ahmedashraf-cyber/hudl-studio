@@ -3895,20 +3895,38 @@ function getPoolVid(url){
 }
 
 function getClipTransition(ci){
-  // Returns merged {template + stored} for the transition effect on clip ci
+  // Returns the transition whose window contains current ph — or first if none match
   const effs=S.cut.effects[ci]||[];
+  const ph=S.cut.ph;
+  const clip=S.cut.clips[ci];
+  const allTr=[];
   for(const ef of effs){
     const e=CUT_EFFECTS[ef.i];
     if(e&&e.type==='transition'){
-      // Merge template with stored values so startOffset/effectDur are accessible
-      return Object.assign({}, e, {
-        startOffset: ef.startOffset||0,
-        effectDur:   ef.effectDur||e.dur||1,
-        _efIdx:      effs.indexOf(ef),  // index back into S.cut.effects[ci]
+      const merged=Object.assign({},e,{
+        startOffset:ef.startOffset||0,
+        effectDur:ef.effectDur||e.dur||1,
+        softness:ef.softness,
+        completion:ef.completion,
+        easing:ef.easing,
+        direction:ef.direction,
+        _efIdx:effs.indexOf(ef),
       });
+      allTr.push(merged);
     }
   }
-  return null;
+  if(!allTr.length) return null;
+  // Return the transition whose window contains current ph
+  if(clip){
+    const active=allTr.find(tr=>{
+      const ts=clip.start+(tr.startOffset||0);
+      const te=ts+(tr.effectDur||tr.dur||1);
+      return ph>=ts&&ph<te;
+    });
+    if(active) return active;
+  }
+  // Fallback: return first transition
+  return allTr[0];
 }
 
 function getTransitionDur(ci){
