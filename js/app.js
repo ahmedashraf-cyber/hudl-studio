@@ -3427,6 +3427,7 @@ let _freezeStartPh=null;       // timeline ph at the moment freeze started
 let _audioOnlyLastTime=null;   // for audio-only clock-driven playback
 const _playedFreezes=new Set();// freeze overlay ids already played — skip re-triggering
 let _justExitedFreeze=false;   // flag to resync video after freeze ends
+let _freezeExitTime=0;         // timestamp of freeze exit — skip canvas for 500ms after
 function cutTogglePlay(){
   if(!S.cut.playing) _playedFreezes.clear(); // fresh start — allow all freezes to play
   S.cut.playing=!S.cut.playing;
@@ -3554,7 +3555,8 @@ function cutTogglePlay(){
           }
 
           startAudioPlayback();
-          // Restore visual state using opacity (consistent with our render model)
+          // Restore visual state
+          _freezeExitTime = performance.now(); // suppress canvas mode for 500ms
           if(mv2){ mv2.style.opacity='1'; mv2.style.display='block'; }
           const c2 = document.getElementById('cut-trans-cvs');
           if(c2){ c2.style.display='none'; c2.style.opacity=''; }
@@ -3932,7 +3934,8 @@ function syncCutVid(){
   const tr = getClipTransition(activeCI);
   const hasEffects = (S.cut.effects[activeCI]||[]).filter(e => CUT_EFFECTS[e.i]?.type !== 'transition').length > 0;
   // Always use canvas if overlays are present OR if transition/effects active
-  if(tr || hasEffects || hasActiveOverlays){
+  // Skip canvas mode for 500ms after freeze exit — let video resume cleanly
+  if((tr || hasEffects || hasActiveOverlays) && (performance.now()-(_freezeExitTime||0)) > 500){
     mv.style.opacity = '0';     // hidden but display:block so browser decodes
     canvas.style.display = 'block';
     canvas.style.zIndex  = '2';  // canvas covers mv visually
