@@ -2028,15 +2028,29 @@ function updatePropsPanel(ci){
     </div>
     ${audioSection}
     ${(()=>{
-      // Show transition timing controls for ALL transitions on this clip
+      // Show collapsible transition controls for ALL transitions on this clip
       const efArr = S.cut.effects[ci]||[];
       const trIdxs = efArr.map((e,i)=>i).filter(i=>CUT_EFFECTS[efArr[i].i]?.type==='transition');
       if(!trIdxs.length) return '';
       return trIdxs.map(efIdx2=>{
       const ef2 = efArr[efIdx2];
+      const trName = CUT_EFFECTS[ef2.i]?.name||'Transition';
+      const accordionId = 'tr-acc-'+ci+'-'+efIdx2;
+      const isOpen = window._trAccordion?.[accordionId] !== false; // default open
       const maxStart = Math.max(0, c.dur - 0.1);
       const maxDur   = Math.max(0.1, c.dur - (ef2.startOffset||0));
       return `
+        <div style="border:0.5px solid rgba(255,255,255,0.08);border-radius:6px;margin:2px 0;overflow:hidden">
+          <div style="display:flex;align-items:center;padding:6px 10px;background:rgba(88,166,255,0.06);cursor:pointer;user-select:none"
+            onclick="window._trAccordion=window._trAccordion||{};window._trAccordion['${accordionId}']=!document.getElementById('${accordionId}').hidden;document.getElementById('${accordionId}').hidden=!document.getElementById('${accordionId}').hidden;this.querySelector('.tr-chevron').style.transform=document.getElementById('${accordionId}').hidden?'rotate(-90deg)':'rotate(0deg)'">
+            <span style="font-size:10px;font-weight:700;color:var(--blu);flex:1">↔ ${trName}</span>
+            <span style="font-size:11px;color:var(--mu)">⏱ ${(ef2.startOffset||0).toFixed(1)}s — ${((ef2.startOffset||0)+(ef2.effectDur||1)).toFixed(1)}s</span>
+            <span class="tr-chevron" style="margin-left:6px;font-size:10px;color:var(--mu);transition:transform 0.2s;transform:${isOpen?'rotate(0deg)':'rotate(-90deg)'}"">▼</span>
+          </div>
+          <div id="${accordionId}" ${isOpen?'':'hidden'} style="padding:6px 0">
+          <div style="display:flex;justify-content:flex-end;padding:0 8px 4px">
+            <button onclick="event.stopPropagation();const e=S.cut.effects[${ci}][${efIdx2}];e&&(S.cut.effects[${ci}].splice(${efIdx2},1),renderCutTimeline(),updatePropsPanel(${ci}),syncCutVid(),scheduleSave())" style="font-size:9px;padding:2px 6px;border-radius:4px;border:0.5px solid rgba(255,69,58,0.3);background:rgba(255,69,58,0.08);color:#ff453a;cursor:pointer">✕ Remove</button>
+          </div>
         <div class="prop-section">↔ Transition: ${CUT_EFFECTS[ef2.i]?.name||'Transition'}</div>
         <div class="prop-row"><span class="prop-label">Start</span>
           <input type="range" min="0" max="${maxStart.toFixed(1)}" step="0.1"
@@ -2082,6 +2096,8 @@ function updatePropsPanel(ci){
             </select>
           </div>`;
         })()}
+          </div>
+        </div>
       `;
       }).join('');
     })()}
@@ -4120,9 +4136,15 @@ function syncCutVid(){
         ctx.globalAlpha = 1;
       }
       else if(tr.mode==='dissolve'){
-        // Cross dissolve: fade video out (dissolve to black). Base already drawn.
+        // Cross dissolve: video opacity follows bell curve (full → transparent → full)
+        // Creates the classic film dissolve - video briefly becomes transparent at midpoint
         const soft3 = tr.softness||0;
-        const da = soft3>0 ? Math.max(0,Math.min(1,(progress-soft3/2)/(1-soft3))) : progress;
+        // Bell curve: sin(progress * PI) gives 0→1→0
+        // We want video alpha to go 1→0→1, so overlay alpha is sin(progress * PI)
+        const bellAlpha = Math.sin(progress * Math.PI);
+        const da = soft3 > 0
+          ? Math.max(0, Math.min(1, bellAlpha * (1 + soft3) - soft3/2))
+          : bellAlpha;
         ctx.globalAlpha = da;
         ctx.fillStyle = '#000';
         ctx.fillRect(0, 0, canvas.width, canvas.height);
