@@ -3478,96 +3478,57 @@ function cutTogglePlay(){
         const trNow=getClipTransition(ciNow2);
         const hasEffNow=(S.cut.effects[ciNow2]||[]).filter(e=>CUT_EFFECTS[e.i]?.type!=='transition').length>0;
         const activeFreezeNow=window._overlays&&window._overlays.find(o=>o.type==='freeze'&&phNow>=o.startTime&&phNow<o.endTime&&!_playedFreezes.has(o.id));
-        // Safety: if _freezeActive but no active freeze found, force-exit freeze state
-        if(_freezeActive && !activeFreezeNow){
-          _freezeActive=false; _freezeLastTime=null;
-          const mv2s=$('cut-main-vid');
-          if(mv2s){ mv2s.style.opacity='1'; mv2s.style.display='block'; }
-          if(S.cut.playing){ const mv2ss=$('cut-main-vid'); if(mv2ss&&mv2ss.paused) mv2ss.play().catch(()=>{}); }
-        }
         const hasOverlays=window._overlays&&window._overlays.some(o=>phNow>=o.startTime&&phNow<o.endTime&&!(o.type==='freeze'&&_playedFreezes.has(o.id)));
-        const canv=document.getElementById('cut-trans-cvs');
-        const mv2Ref=document.getElementById('cut-main-vid');
         if(activeFreezeNow){
           // ── FREEZE ACTIVE ──
-          // Strategy: pause video+audio, advance ph via real clock.
-          // When freeze ends, resume video from where it was (no rewind).
           const mv2=$('cut-main-vid');
           if(!_freezeActive){
-            // First frame of freeze — pause everything
             _freezeActive=true;
             _freezeLastTime=performance.now();
-            _freezeStartPh=phNow; // remember timeline position where freeze started
-            if(mv2){
-              _freezeSavedVideoTime = mv2.currentTime; // save exact video position
-              if(!mv2.paused) mv2.pause();
-            }
+            _freezeStartPh=phNow;
+            _freezeSavedVideoTime=(mv2&&mv2.currentTime)||0;
+            if(mv2&&!mv2.paused) mv2.pause();
             stopAudioPlayback();
           }
-          // Advance ph via real clock (not video element)
           const now2=performance.now();
-          const dt=Math.min((now2-(_freezeLastTime||now2))/1000, 0.05);
+          const dt=Math.min((now2-(_freezeLastTime||now2))/1000,0.05);
           _freezeLastTime=now2;
           S.cut.ph=Math.min(phNow+dt, activeFreezeNow.endTime);
           updateCutPH();
-          syncCutVid(); // draws the frozen frame on canvas
-                } else if(_freezeActive){
+          syncCutVid();
+        } else if(_freezeActive){
           // ── FREEZE JUST ENDED ──
-          // 1. Capture ph before resetting (it's at freeze endTime right now)
-          const _freezeEndPh = S.cut.ph;
-          const _resumePh    = _freezeStartPh !== null ? _freezeStartPh : S.cut.ph;
-
-          // 2. Mark freeze as played NOW (before any ph changes)
+          // Mark as played FIRST, before any state reset
           if(window._overlays){
             window._overlays
-              .filter(o => o.type==='freeze' && _freezeEndPh >= o.endTime)
-              .forEach(o => _playedFreezes.add(o.id));
-            window._overlays
-              .filter(o => o.type==='freeze' && _resumePh >= o.startTime && _resumePh < o.endTime)
-              .forEach(o => _playedFreezes.add(o.id));
-          }
-
-          // 3. Reset freeze state
-          _freezeActive       = false;
-          _freezeLastTime     = null;
-          _freezeStartPh      = null;
-          _freezeExitTime     = performance.now();
-
-          // 4. Restore timeline ph to where freeze started
-          S.cut.ph = _resumePh;
-          updateCutPH();
-
-          // 5. Restore video element visibility
-          const mv2 = $('cut-main-vid');
-          const c2e = document.getElementById('cut-trans-cvs');
-          if(mv2){ mv2.style.opacity='1'; mv2.style.display='block'; }
-          if(c2e){ c2e.style.display='none'; }
-
-          // 6. Seek to saved position and play
-          if(mv2){
-            if(_freezeSavedVideoTime > 0){
-              mv2.currentTime = _freezeSavedVideoTime;
+              .filter(o=>o.type==='freeze'&&phNow>=o.endTime)
+              .forEach(o=>_playedFreezes.add(o.id));
+            // Also catch by start position
+            if(_freezeStartPh!==null){
+              window._overlays
+                .filter(o=>o.type==='freeze'&&_freezeStartPh>=o.startTime&&_freezeStartPh<o.endTime)
+                .forEach(o=>_playedFreezes.add(o.id));
             }
-            _freezeSavedVideoTime = 0;
           }
-
-          // 7. Resume audio
+          _freezeActive=false;
+          _freezeLastTime=null;
+          const _resumePh=_freezeStartPh!==null?_freezeStartPh:S.cut.ph;
+          _freezeStartPh=null;
+          _freezeExitTime=performance.now();
+          S.cut.ph=_resumePh;
+          updateCutPH();
+          const mv2=$('cut-main-vid');
+          const c2e=document.getElementById('cut-trans-cvs');
+          if(mv2){mv2.style.opacity='1';mv2.style.display='block';}
+          if(c2e){c2e.style.display='none';}
+          if(mv2&&_freezeSavedVideoTime>0) mv2.currentTime=_freezeSavedVideoTime;
+          _freezeSavedVideoTime=0;
           startAudioPlayback();
-
-          // 8. Play video — retry up to 3x if AbortError
-          if(mv2){
-            let _att = 0;
-            const _tryPlay = () => {
-              if(!S.cut.playing || _att > 3) return;
-              _att++;
-              mv2.play().catch(e => {
-                if(e.name === 'AbortError' && _att <= 3)
-                  setTimeout(_tryPlay, 150 * _att);
-              });
-            };
-            setTimeout(_tryPlay, 50);
+          if(mv2&&S.cut.playing){
+            let _a=0;
+            const _p=()=>{if(!S.cut.playing||_a>3)return;_a++;mv2.play().catch(e=>{if(e.name==='AbortError'&&_a<=3)setTimeout(_p,150*_a);});};
+            setTimeout(_p,80);
           }
-
 } else if(trNow||hasEffNow||hasOverlays){
           // Throttle overlay/effect canvas to 30fps during playback
           const _now4=performance.now();
