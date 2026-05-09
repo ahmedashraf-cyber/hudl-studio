@@ -3891,6 +3891,7 @@ function cutTogglePlay(){
       // Redraw canvas overlays every frame
       const phNow=S.cut.ph;
       const activeNow=S.cut.clips.find(c=>c.type==='video'&&phNow>=c.start&&phNow<c.start+c.dur);
+        // Hidden track: delegate entirely to syncCutVid which shows the hidden indicator
       if(activeNow){
         const ciNow2=S.cut.clips.indexOf(activeNow);
         const trNow=getClipTransition(ciNow2);
@@ -3962,14 +3963,18 @@ function cutTogglePlay(){
             syncCutVid();
           }
         } else {
-          // No overlays/effects — show video element directly
-          const canv=document.getElementById('cut-trans-cvs');
-          const mv2=document.getElementById('cut-main-vid');
-          // Hide canvas
-          if(canv) canv.style.display='none';
-          // Show mv — use opacity (not display) since mv is always display:block
-          if(mv2){ mv2.style.opacity='1'; mv2.style.display='block'; }
-          if(mv2&&mv2.paused&&S.cut.playing) mv2.play().catch(()=>{});
+          // Check if track is hidden — if so, show hidden indicator via syncCutVid
+          const activeHidden2 = activeNow && !!S.cut.hiddenTracks?.[activeNow.track];
+          if(activeHidden2){
+            syncCutVid();
+          } else {
+            // No overlays/effects — show video element directly
+            const canv=document.getElementById('cut-trans-cvs');
+            const mv2=document.getElementById('cut-main-vid');
+            if(canv) canv.style.display='none';
+            if(mv2){ mv2.style.opacity='1'; mv2.style.display='block'; }
+            if(mv2&&mv2.paused&&S.cut.playing) mv2.play().catch(()=>{});
+          }
         }
       }
       const vidEl=$('cut-main-vid');
@@ -4274,11 +4279,12 @@ function syncCutVid(){
   if(!screen) return;
 
   // Find active video clip at current playhead
+  // NOTE: we find active regardless of hidden state — hidden only affects rendering
   const videoClips = S.cut.clips.filter(c => c.type === 'video');
-  const active = videoClips.find(c => 
-    ph >= c.start && ph < c.start + c.dur &&
-    !S.cut.hiddenTracks?.[c.track]
+  const active = videoClips.find(c =>
+    ph >= c.start && ph < c.start + c.dur
   );
+  const activeIsHidden = active && !!S.cut.hiddenTracks?.[active.track];
 
   // Ensure pool vids exist for all clips
   videoClips.forEach(c => {
@@ -4378,6 +4384,40 @@ function syncCutVid(){
     const _te = _ts + (tr.effectDur||tr.dur||1);
     return (ph >= _ts && ph < _te) ? tr : null;
   })();
+  if(activeIsHidden){
+    // Track is hidden: keep video element loaded/seeking, but hide output
+    // Show a subtle "hidden" indicator instead of black screen
+    mv.style.opacity = '0';
+    canvas.style.display = 'block';
+    canvas.style.zIndex  = '2';
+    if(placeholder) placeholder.style.display = 'none';
+    const projWh = S.proj.w||1280, projHh = S.proj.h||720;
+    if(canvas.width !== projWh){ canvas.width=projWh; canvas.height=projHh; }
+    const ctxH = canvas.getContext('2d');
+    ctxH.clearRect(0,0,canvas.width,canvas.height);
+    // Draw a semi-transparent dark overlay with eye-slash indicator
+    ctxH.fillStyle = 'rgba(0,0,0,0.85)';
+    ctxH.fillRect(0,0,canvas.width,canvas.height);
+    ctxH.fillStyle = 'rgba(255,255,255,0.15)';
+    ctxH.font = 'bold 18px DM Sans, sans-serif';
+    ctxH.textAlign = 'center';
+    ctxH.fillText('👁 Track Hidden', canvas.width/2, canvas.height/2);
+    ctxH.font = '13px DM Sans, sans-serif';
+    ctxH.fillStyle = 'rgba(255,255,255,0.08)';
+    ctxH.fillText('Click the eye icon on the track label to show', canvas.width/2, canvas.height/2+28);
+    // Still load the video src so seeking works
+    const itemH = S.cut.media[active.mediaIdx];
+    if(itemH?.url && mv.dataset.mediaIdx !== String(active.mediaIdx)){
+      mv.dataset.mediaIdx = String(active.mediaIdx);
+      mv.src = itemH.url;
+    }
+    if(!S.cut.playing){
+      const tgtH = (active.fileStart||0)+Math.max(0,ph-active.start);
+      if(Math.abs(mv.currentTime-tgtH)>0.02) mv.currentTime=tgtH;
+    }
+    return;
+  }
+
   if((trInWindow || hasEffects || hasActiveOverlays) && (performance.now()-(_freezeExitTime||0)) > 500){
     mv.style.opacity = '0';     // hidden but display:block so browser decodes
     canvas.style.display = 'block';
