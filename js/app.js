@@ -1646,6 +1646,9 @@ function cutToggleEffect(i){
   applyVideoEffects();
   showEffectIndicator(i,idx<0);
   const p=$('cut-p-effects'); if(p) p.innerHTML=cutEffectsHTML();
+  renderCutTimeline(); // redraw timeline to show effect bars
+  syncCutVid();        // update canvas with new effect immediately
+  scheduleSave();
 }
 
 function showEffectIndicator(effectIdx,adding){
@@ -1704,6 +1707,7 @@ function cutUpdateEffect(i,v){
   if(e) e.v=parseFloat(v);
   const lbl=$('ev-'+i); if(lbl) lbl.textContent=v+CUT_EFFECTS[i].unit;
   applyVideoEffects();
+  syncCutVid(); // update canvas filter in real time
 }
 
 function applyVideoEffects(){
@@ -1733,6 +1737,8 @@ function applyVideoEffects(){
       overlay.innerHTML=html;
     }
   } else if(overlay){overlay.innerHTML='';}
+  // Trigger canvas re-render with new filter
+  if(typeof syncCutVid === 'function') syncCutVid();
 }
 
 function buildFilterStr(ci){
