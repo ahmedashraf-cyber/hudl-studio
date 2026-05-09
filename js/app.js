@@ -1968,13 +1968,24 @@ function updatePropsPanel(ci){
   const vol     = c.volume  !== undefined ? c.volume : 1;
   const fx = c.audioFx || {};
   const audioSection = c.type==='audio'||c.linkedToVideo ? `
-    <div class="prop-section">🔊 Audio</div>
+    <div style="border:0.5px solid rgba(210,153,34,0.25);border-radius:8px;margin:4px 0;overflow:hidden;background:rgba(210,153,34,0.04)">
+      <div style="display:flex;align-items:center;padding:8px 10px;cursor:pointer;user-select:none;gap:8px"
+        onclick="const el=document.getElementById('acc-au-${ci}');el.hidden=!el.hidden;this.querySelector('.acc-chv').style.transform=el.hidden?'rotate(-90deg)':'rotate(0deg)'">
+        <div style="width:3px;height:28px;border-radius:2px;background:linear-gradient(180deg,#d29922,#e3b341);flex-shrink:0"></div>
+        <div style="flex:1;min-width:0">
+          <div style="font-size:11px;font-weight:700;color:#fff;letter-spacing:0.3px">🔊 Audio</div>
+          <div style="font-size:10px;color:rgba(255,255,255,0.4);margin-top:1px">Vol: ${Math.round(vol*100)}%${fadeIn||fadeOut?' · Fade '+fadeIn.toFixed(1)+'s / '+fadeOut.toFixed(1)+'s':''}</div>
+        </div>
+        <span class="acc-chv" style="font-size:9px;color:rgba(255,255,255,0.3);transition:transform 0.2s">▼</span>
+      </div>
+      <div id="acc-au-${ci}" style="padding:0 6px 8px">
+
     <div class="prop-row"><span class="prop-label">Volume</span>
       <input type="range" id="vol-val-${ci}-input" min="0" max="200" value="${Math.round(vol*100)}" style="flex:1;accent-color:#E8590C"
         oninput="S.cut.clips[${ci}].volume=this.value/100;if(!S.cut.clips[${ci}].audioFx)S.cut.clips[${ci}].audioFx={};S.cut.clips[${ci}].audioFx.volume=parseInt(this.value);document.getElementById('vol-pct-${ci}').textContent=this.value+'%'">
       <span id="vol-pct-${ci}" style="font-size:10px;color:var(--mu);min-width:32px;text-align:right">${Math.round(vol*100)}%</span>
     </div>
-    <div class="prop-section" style="color:rgba(255,220,80,0.9)">🎚 Fade</div>
+    <div class="prop-section" style="padding-top:6px" style="color:rgba(255,220,80,0.9)">🎚 Fade</div>
     <div class="prop-row">
       <span class="prop-label" style="color:rgba(255,220,80,0.8)">Fade In</span>
       <input type="number" id="fade-in-val-${ci}" value="${fadeIn.toFixed(2)}" min="0" step="0.1"
@@ -1990,7 +2001,7 @@ function updatePropsPanel(ci){
       <span style="font-size:10px;color:var(--mu)">s</span>
     </div>
     ${fx.bass!==undefined||fx.treble!==undefined||fx.preset ? `
-    <div class="prop-section" style="color:rgba(255,180,50,0.85)">🎛 EQ (applied)</div>
+    <div class="prop-section" style="padding-top:6px" style="color:rgba(255,180,50,0.85)">🎛 EQ (applied)</div>
     <div class="prop-row"><span class="prop-label">Bass</span><span class="prop-val">${fx.bass||0} dB</span></div>
     <div class="prop-row"><span class="prop-label">Mid</span><span class="prop-val">${fx.mid||0} dB</span></div>
     <div class="prop-row"><span class="prop-label">Treble</span><span class="prop-val">${fx.treble||0} dB</span></div>
@@ -1998,80 +2009,121 @@ function updatePropsPanel(ci){
     ` : ''}
     <div class="prop-row" style="padding:4px 0">
       <button onclick="showAudioEnhanceDialog(${ci})" style="width:100%;padding:6px;background:rgba(232,89,12,0.12);border:0.5px solid rgba(232,89,12,0.35);border-radius:6px;color:#E8590C;font-size:11px;font-weight:600;cursor:pointer;font-family:'DM Sans',sans-serif">🎵 Audio Enhancement…</button>
+    </div>
+      </div>
     </div>` : '';
+
 
   // Ensure clip has transform object
   if(!c.transform) c.transform = {x:0, y:0, scaleX:100, scaleY:100, rotation:0};
   const tf = c.transform;
 
   body.innerHTML=`
-    <div class="prop-section">${c.type==='video'?'📹 Video':c.type==='audio'?'🎵 Audio':'📎'} Clip</div>
+    <div style="padding:6px 8px 2px;display:flex;align-items:center;gap:6px">
+      <div style="width:3px;height:18px;border-radius:2px;background:linear-gradient(180deg,#E8590C,#ff8c42)"></div>
+      <span style="font-size:11px;font-weight:700;color:rgba(255,255,255,0.85)">${c.type==='video'?'Video Clip':c.type==='audio'?'Audio Clip':'Clip'}</span>
+      <span style="font-size:10px;color:rgba(255,255,255,0.25);flex:1;text-align:right;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${item.name||''}</span>
+    </div>
+
     ${c.type==='video' ? `
-    <div class="prop-section" style="color:rgba(232,89,12,0.8)">⊞ Transform</div>
-    <div class="prop-row"><span class="prop-label">X</span>
-      <input type="range" min="-100" max="100" step="0.5" value="${tf.x||0}"
-        style="flex:1;accent-color:#E8590C"
-        oninput="const c2=S.cut.clips[${ci}];if(!c2.transform)c2.transform={x:0,y:0,scaleX:100,scaleY:100,rotation:0};c2.transform.x=parseFloat(this.value);this.nextElementSibling.textContent=parseFloat(this.value).toFixed(1)+'%';syncCutVid();renderBoundingBox(${ci});">
-      <span style="font-size:10px;color:var(--mu);min-width:36px;text-align:right">${(tf.x||0).toFixed(1)}%</span>
-    </div>
-    <div class="prop-row"><span class="prop-label">Y</span>
-      <input type="range" min="-100" max="100" step="0.5" value="${tf.y||0}"
-        style="flex:1;accent-color:#E8590C"
-        oninput="const c2=S.cut.clips[${ci}];if(!c2.transform)c2.transform={x:0,y:0,scaleX:100,scaleY:100,rotation:0};c2.transform.y=parseFloat(this.value);this.nextElementSibling.textContent=parseFloat(this.value).toFixed(1)+'%';syncCutVid();renderBoundingBox(${ci});">
-      <span style="font-size:10px;color:var(--mu);min-width:36px;text-align:right">${(tf.y||0).toFixed(1)}%</span>
-    </div>
-    <div class="prop-row"><span class="prop-label">Scale X</span>
-      <input type="range" min="10" max="300" step="1" value="${tf.scaleX||100}"
-        style="flex:1;accent-color:#E8590C"
-        oninput="const c2=S.cut.clips[${ci}];if(!c2.transform)c2.transform={x:0,y:0,scaleX:100,scaleY:100,rotation:0};c2.transform.scaleX=parseInt(this.value);this.nextElementSibling.textContent=this.value+'%';syncCutVid();renderBoundingBox(${ci});">
-      <span style="font-size:10px;color:var(--mu);min-width:36px;text-align:right">${tf.scaleX||100}%</span>
-    </div>
-    <div class="prop-row"><span class="prop-label">Scale Y</span>
-      <input type="range" min="10" max="300" step="1" value="${tf.scaleY||100}"
-        style="flex:1;accent-color:#E8590C"
-        oninput="const c2=S.cut.clips[${ci}];if(!c2.transform)c2.transform={x:0,y:0,scaleX:100,scaleY:100,rotation:0};c2.transform.scaleY=parseInt(this.value);this.nextElementSibling.textContent=this.value+'%';syncCutVid();renderBoundingBox(${ci});">
-      <span style="font-size:10px;color:var(--mu);min-width:36px;text-align:right">${tf.scaleY||100}%</span>
-    </div>
-    <div class="prop-row"><span class="prop-label">Rotation</span>
-      <input type="range" min="-180" max="180" step="1" value="${tf.rotation||0}"
-        style="flex:1;accent-color:#E8590C"
-        oninput="const c2=S.cut.clips[${ci}];if(!c2.transform)c2.transform={x:0,y:0,scaleX:100,scaleY:100,rotation:0};c2.transform.rotation=parseInt(this.value);this.nextElementSibling.textContent=this.value+'°';syncCutVid();renderBoundingBox(${ci});">
-      <span style="font-size:10px;color:var(--mu);min-width:36px;text-align:right">${tf.rotation||0}°</span>
-    </div>
-    <div class="prop-row" style="padding-top:4px">
-      <button onclick="const c2=S.cut.clips[${ci}];c2.transform={x:0,y:0,scaleX:100,scaleY:100,rotation:0};updatePropsPanel(${ci});syncCutVid();renderBoundingBox(${ci});"
-        style="flex:1;padding:4px;background:rgba(255,255,255,0.04);border:0.5px solid rgba(255,255,255,0.08);border-radius:5px;color:rgba(255,255,255,0.4);font-size:10px;cursor:pointer;font-family:'DM Sans',sans-serif">
-        Reset Transform
-      </button>
+    <div style="border:0.5px solid rgba(232,89,12,0.25);border-radius:8px;margin:4px 0;overflow:hidden;background:rgba(232,89,12,0.04)">
+      <div style="display:flex;align-items:center;padding:8px 10px;cursor:pointer;user-select:none;gap:8px"
+        onclick="const el=document.getElementById('acc-tf-${ci}');el.hidden=!el.hidden;this.querySelector('.acc-chv').style.transform=el.hidden?'rotate(-90deg)':'rotate(0deg)'">
+        <div style="width:3px;height:28px;border-radius:2px;background:linear-gradient(180deg,#E8590C,#ff8c42);flex-shrink:0"></div>
+        <div style="flex:1;min-width:0">
+          <div style="font-size:11px;font-weight:700;color:#fff;letter-spacing:0.3px">⊞ Transform</div>
+          <div style="font-size:10px;color:rgba(255,255,255,0.4);margin-top:1px">${(tf.x||tf.y||(tf.scaleX&&tf.scaleX!==100)||(tf.scaleY&&tf.scaleY!==100)||tf.rotation)?`x:${(tf.x||0).toFixed(0)}% y:${(tf.y||0).toFixed(0)}% s:${tf.scaleX||100}%`:'No transform applied'}</div>
+        </div>
+        <span class="acc-chv" style="font-size:9px;color:rgba(255,255,255,0.3);transition:transform 0.2s">▼</span>
+      </div>
+      <div id="acc-tf-${ci}" style="padding:0 6px 8px">
+        <div class="prop-row"><span class="prop-label">X</span>
+          <input type="range" min="-100" max="100" step="0.5" value="${tf.x||0}" style="flex:1;accent-color:#E8590C"
+            oninput="const c2=S.cut.clips[${ci}];if(!c2.transform)c2.transform={x:0,y:0,scaleX:100,scaleY:100,rotation:0};c2.transform.x=parseFloat(this.value);this.nextElementSibling.textContent=parseFloat(this.value).toFixed(1)+'%';syncCutVid();renderBoundingBox(${ci});">
+          <span style="font-size:10px;color:var(--mu);min-width:36px;text-align:right">${(tf.x||0).toFixed(1)}%</span>
+        </div>
+        <div class="prop-row"><span class="prop-label">Y</span>
+          <input type="range" min="-100" max="100" step="0.5" value="${tf.y||0}" style="flex:1;accent-color:#E8590C"
+            oninput="const c2=S.cut.clips[${ci}];if(!c2.transform)c2.transform={x:0,y:0,scaleX:100,scaleY:100,rotation:0};c2.transform.y=parseFloat(this.value);this.nextElementSibling.textContent=parseFloat(this.value).toFixed(1)+'%';syncCutVid();renderBoundingBox(${ci});">
+          <span style="font-size:10px;color:var(--mu);min-width:36px;text-align:right">${(tf.y||0).toFixed(1)}%</span>
+        </div>
+        <div class="prop-row"><span class="prop-label">Scale X</span>
+          <input type="range" min="10" max="300" step="1" value="${tf.scaleX||100}" style="flex:1;accent-color:#E8590C"
+            oninput="const c2=S.cut.clips[${ci}];if(!c2.transform)c2.transform={x:0,y:0,scaleX:100,scaleY:100,rotation:0};c2.transform.scaleX=parseInt(this.value);this.nextElementSibling.textContent=this.value+'%';syncCutVid();renderBoundingBox(${ci});">
+          <span style="font-size:10px;color:var(--mu);min-width:36px;text-align:right">${tf.scaleX||100}%</span>
+        </div>
+        <div class="prop-row"><span class="prop-label">Scale Y</span>
+          <input type="range" min="10" max="300" step="1" value="${tf.scaleY||100}" style="flex:1;accent-color:#E8590C"
+            oninput="const c2=S.cut.clips[${ci}];if(!c2.transform)c2.transform={x:0,y:0,scaleX:100,scaleY:100,rotation:0};c2.transform.scaleY=parseInt(this.value);this.nextElementSibling.textContent=this.value+'%';syncCutVid();renderBoundingBox(${ci});">
+          <span style="font-size:10px;color:var(--mu);min-width:36px;text-align:right">${tf.scaleY||100}%</span>
+        </div>
+        <div class="prop-row"><span class="prop-label">Rotation</span>
+          <input type="range" min="-180" max="180" step="1" value="${tf.rotation||0}" style="flex:1;accent-color:#E8590C"
+            oninput="const c2=S.cut.clips[${ci}];if(!c2.transform)c2.transform={x:0,y:0,scaleX:100,scaleY:100,rotation:0};c2.transform.rotation=parseInt(this.value);this.nextElementSibling.textContent=this.value+'°';syncCutVid();renderBoundingBox(${ci});">
+          <span style="font-size:10px;color:var(--mu);min-width:36px;text-align:right">${tf.rotation||0}°</span>
+        </div>
+        <div class="prop-row" style="padding-top:4px">
+          <button onclick="const c2=S.cut.clips[${ci}];c2.transform={x:0,y:0,scaleX:100,scaleY:100,rotation:0};updatePropsPanel(${ci});syncCutVid();renderBoundingBox(${ci});"
+            style="flex:1;padding:4px;background:rgba(255,255,255,0.04);border:0.5px solid rgba(255,255,255,0.08);border-radius:5px;color:rgba(255,255,255,0.4);font-size:10px;cursor:pointer;font-family:'DM Sans',sans-serif">
+            Reset Transform
+          </button>
+        </div>
+      </div>
     </div>` : ''}
-    <div class="prop-row"><span class="prop-label">Name</span><span class="prop-val" title="${c.name||''}" style="font-size:10px">${(c.name||'').substring(0,16)}</span></div>
-    <div class="prop-row"><span class="prop-label">Track</span><span class="prop-val">${c.type==='video'?'V':'A'}${c.track+1}</span></div>
-    <div class="prop-section">⏱ Timing</div>
-    <div class="prop-row"><span class="prop-label">Start</span>
-      ${inp('ps-start',fmtN(c.start),0.1,0,`S.cut.clips[${ci}].start=parseFloat(this.value)||0;renderCutTimeline()`)}
+
+    <div style="border:0.5px solid rgba(88,166,255,0.2);border-radius:8px;margin:4px 0;overflow:hidden;background:rgba(88,166,255,0.03)">
+      <div style="display:flex;align-items:center;padding:8px 10px;cursor:pointer;user-select:none;gap:8px"
+        onclick="const el=document.getElementById('acc-tm-${ci}');el.hidden=!el.hidden;this.querySelector('.acc-chv').style.transform=el.hidden?'rotate(-90deg)':'rotate(0deg)'">
+        <div style="width:3px;height:28px;border-radius:2px;background:linear-gradient(180deg,#58a6ff,#79c0ff);flex-shrink:0"></div>
+        <div style="flex:1;min-width:0">
+          <div style="font-size:11px;font-weight:700;color:#fff;letter-spacing:0.3px">⏱ Timing</div>
+          <div style="font-size:10px;color:rgba(255,255,255,0.4);margin-top:1px">${fmtN(c.start)}s → ${fmtN(c.start+c.dur)}s · ${fmtN(c.dur)}s</div>
+        </div>
+        <span class="acc-chv" style="font-size:9px;color:rgba(255,255,255,0.3);transition:transform 0.2s">▼</span>
+      </div>
+      <div id="acc-tm-${ci}" style="padding:0 6px 8px">
+        <div class="prop-row"><span class="prop-label">Start</span>
+          ${inp('ps-start',fmtN(c.start),0.1,0,`S.cut.clips[${ci}].start=parseFloat(this.value)||0;renderCutTimeline();cutSaveHistory('prop_edit')`)}
+          <span style="font-size:10px;color:var(--mu)">s</span>
+        </div>
+        <div class="prop-row"><span class="prop-label">Duration</span>
+          ${inp('ps-dur',fmtN(c.dur),0.1,0.1,`S.cut.clips[${ci}].dur=Math.max(0.1,parseFloat(this.value)||0.1);renderCutTimeline();cutSaveHistory('prop_edit')`)}
+          <span style="font-size:10px;color:var(--mu)">s</span>
+        </div>
+        <div class="prop-row"><span class="prop-label">End</span><span class="prop-val">${fmtN(c.start+c.dur)}s</span></div>
+        <div class="prop-row"><span class="prop-label">Track</span><span class="prop-val">${c.type==='video'?'V':'A'}${c.track+1}</span></div>
+      </div>
     </div>
-    <div class="prop-row"><span class="prop-label">Duration</span>
-      ${inp('ps-dur',fmtN(c.dur),0.1,0.1,`S.cut.clips[${ci}].dur=Math.max(0.1,parseFloat(this.value)||0.1);renderCutTimeline()`)}
+
+    <div style="border:0.5px solid rgba(232,89,12,0.2);border-radius:8px;margin:4px 0;overflow:hidden;background:rgba(232,89,12,0.03)">
+      <div style="display:flex;align-items:center;padding:8px 10px;cursor:pointer;user-select:none;gap:8px"
+        onclick="const el=document.getElementById('acc-sp-${ci}');el.hidden=!el.hidden;this.querySelector('.acc-chv').style.transform=el.hidden?'rotate(-90deg)':'rotate(0deg)'">
+        <div style="width:3px;height:28px;border-radius:2px;background:linear-gradient(180deg,#E8590C,#ff8c42);flex-shrink:0"></div>
+        <div style="flex:1;min-width:0">
+          <div style="font-size:11px;font-weight:700;color:#fff;letter-spacing:0.3px">⚡ Speed</div>
+          <div style="font-size:10px;color:rgba(255,255,255,0.4);margin-top:1px">${Math.round(speed*100)}% · ${fmtN(c.dur)}s</div>
+        </div>
+        <span class="acc-chv" style="font-size:9px;color:rgba(255,255,255,0.3);transition:transform 0.2s">▼</span>
+      </div>
+      <div id="acc-sp-${ci}" style="padding:0 6px 8px">
+        <div class="prop-row">
+          <span class="prop-label">Speed %</span>
+          <input type="number" id="spd-pct-panel-${ci}" value="${Math.round(speed*100)}" min="10" max="800" step="1"
+            style="width:58px;background:#161616;border:0.5px solid rgba(255,255,255,0.1);border-radius:5px;color:var(--tx);font-size:11px;font-family:'DM Sans',sans-serif;padding:3px 6px;outline:none"
+            onchange="applyClipSpeed(${ci},parseFloat(this.value)||100,false);updatePropsPanel(${ci})">
+          <span style="font-size:10px;color:var(--mu)">%</span>
+        </div>
+        <div class="prop-row">
+          <button onclick="showSpeedDialog(${ci})" style="flex:1;padding:5px;background:rgba(232,89,12,0.08);border:0.5px solid rgba(232,89,12,0.2);border-radius:6px;color:#E8590C;font-size:10px;cursor:pointer;font-family:'DM Sans',sans-serif;font-weight:600">
+            ⚡ Speed / Duration…
+          </button>
+        </div>
+      </div>
     </div>
-    <div class="prop-row"><span class="prop-label">End</span><span class="prop-val">${fmtN(c.start+c.dur)}s</span></div>
-    <div class="prop-section">⚡ Speed</div>
-    <div class="prop-row">
-      <span class="prop-label">Speed %</span>
-      <input type="number" id="spd-pct-panel-${ci}" value="${Math.round(speed*100)}" min="10" max="800" step="5"
-        style="width:58px;background:#161616;border:0.5px solid rgba(255,255,255,0.1);border-radius:5px;color:var(--tx);font-size:11px;padding:2px 5px;outline:none"
-        onchange="applyClipSpeed(${ci},parseFloat(this.value)||100,false);updatePropsPanel(${ci})">
-      <span style="font-size:10px;color:var(--mu);">%</span>
-    </div>
-    <div class="prop-row">
-      <span class="prop-label">Duration</span>
-      <span class="prop-val" style="color:#E8590C">${fmtN(c.dur)}s</span>
-    </div>
-    <div class="prop-row" style="padding:2px 0">
-      <button onclick="showSpeedDialog(${ci})" style="width:100%;padding:5px;background:rgba(232,89,12,0.1);border:0.5px solid rgba(232,89,12,0.3);border-radius:6px;color:#E8590C;font-size:10px;cursor:pointer;font-family:'DM Sans',sans-serif">⚡ Speed / Duration…</button>
-    </div>
+
     ${audioSection}
+
     ${(()=>{
-      // Show collapsible transition controls for ALL transitions on this clip
       const efArr = S.cut.effects[ci]||[];
       const trIdxs = efArr.map((e,i)=>i).filter(i=>CUT_EFFECTS[efArr[i].i]?.type==='transition');
       if(!trIdxs.length) return '';
@@ -2079,7 +2131,7 @@ function updatePropsPanel(ci){
       const ef2 = efArr[efIdx2];
       const trName = CUT_EFFECTS[ef2.i]?.name||'Transition';
       const accordionId = 'tr-acc-'+ci+'-'+efIdx2;
-      const isOpen = window._trAccordion?.[accordionId] !== false; // default open
+      const isOpen = window._trAccordion?.[accordionId] !== false;
       const maxStart = Math.max(0, c.dur - 0.1);
       const maxDur   = Math.max(0.1, c.dur - (ef2.startOffset||0));
       return `
@@ -2093,11 +2145,10 @@ function updatePropsPanel(ci){
             </div>
             <span class="tr-chevron" style="font-size:9px;color:rgba(255,255,255,0.3);transition:transform 0.2s;transform:${isOpen?'rotate(0deg)':'rotate(-90deg)'}">▼</span>
           </div>
-          <div id="${accordionId}" ${isOpen?'':'hidden'} style="padding:6px 0">
-          <div style="display:flex;justify-content:flex-end;padding:0 8px 4px">
+          <div id="${accordionId}" ${isOpen?'':'hidden'} style="padding:0 6px 8px">
+          <div style="display:flex;justify-content:flex-end;padding:0 0 4px">
             <button onclick="event.stopPropagation();const e=S.cut.effects[${ci}][${efIdx2}];e&&(S.cut.effects[${ci}].splice(${efIdx2},1),renderCutTimeline(),updatePropsPanel(${ci}),syncCutVid(),scheduleSave())" style="font-size:9px;padding:2px 6px;border-radius:4px;border:0.5px solid rgba(255,69,58,0.3);background:rgba(255,69,58,0.08);color:#ff453a;cursor:pointer">✕ Remove</button>
           </div>
-        <div class="prop-section">↔ Transition: ${CUT_EFFECTS[ef2.i]?.name||'Transition'}</div>
         <div class="prop-row"><span class="prop-label">Start</span>
           <input type="range" min="0" max="${maxStart.toFixed(1)}" step="0.1"
             value="${(ef2.startOffset||0).toFixed(1)}"
@@ -2147,26 +2198,53 @@ function updatePropsPanel(ci){
       `;
       }).join('');
     })()}
-    <div class="prop-section">🎬 Actions</div>
-    <div style="display:flex;gap:4px;flex-wrap:wrap;padding:2px 0">
-      <button onclick="deleteSelected()" style="flex:1;padding:5px;background:rgba(255,69,58,0.1);border:0.5px solid rgba(255,69,58,0.2);border-radius:6px;color:#ff453a;font-size:10px;cursor:pointer;font-family:'DM Sans',sans-serif">🗑 Delete</button>
-      <button onclick="cutSplit()" style="flex:1;padding:5px;background:rgba(255,255,255,0.04);border:0.5px solid rgba(255,255,255,0.1);border-radius:6px;color:var(--tx2);font-size:10px;cursor:pointer;font-family:'DM Sans',sans-serif">✂ Split</button>
-      <button onclick="cutDuplicate(${ci})" style="flex:1;padding:5px;background:rgba(255,255,255,0.04);border:0.5px solid rgba(255,255,255,0.1);border-radius:6px;color:var(--tx2);font-size:10px;cursor:pointer;font-family:'DM Sans',sans-serif">⧉ Dupe</button>
+
+    <div style="border:0.5px solid rgba(163,113,247,0.2);border-radius:8px;margin:4px 0;overflow:hidden;background:rgba(163,113,247,0.03)">
+      <div style="display:flex;align-items:center;padding:8px 10px;cursor:pointer;user-select:none;gap:8px"
+        onclick="const el=document.getElementById('acc-ac-${ci}');el.hidden=!el.hidden;this.querySelector('.acc-chv').style.transform=el.hidden?'rotate(-90deg)':'rotate(0deg)'">
+        <div style="width:3px;height:28px;border-radius:2px;background:linear-gradient(180deg,#a371f7,#bc8cff);flex-shrink:0"></div>
+        <div style="flex:1;min-width:0">
+          <div style="font-size:11px;font-weight:700;color:#fff;letter-spacing:0.3px">🎬 Actions</div>
+          <div style="font-size:10px;color:rgba(255,255,255,0.4);margin-top:1px">Delete · Split · Duplicate</div>
+        </div>
+        <span class="acc-chv" style="font-size:9px;color:rgba(255,255,255,0.3);transition:transform 0.2s">▼</span>
+      </div>
+      <div id="acc-ac-${ci}" style="padding:0 6px 8px">
+        <div style="display:flex;gap:4px;flex-wrap:wrap;padding:2px 0">
+          <button onclick="deleteSelected()" style="flex:1;padding:5px;background:rgba(255,69,58,0.08);border:0.5px solid rgba(255,69,58,0.2);border-radius:6px;color:#ff453a;font-size:10px;cursor:pointer;font-family:'DM Sans',sans-serif;font-weight:600">🗑 Delete</button>
+          <button onclick="cutSplit()" style="flex:1;padding:5px;background:rgba(255,255,255,0.04);border:0.5px solid rgba(255,255,255,0.08);border-radius:6px;color:var(--tx);font-size:10px;cursor:pointer;font-family:'DM Sans',sans-serif;font-weight:600">✂️ Split</button>
+          <button onclick="cutDuplicate(${ci})" style="flex:1;padding:5px;background:rgba(255,255,255,0.04);border:0.5px solid rgba(255,255,255,0.08);border-radius:6px;color:var(--tx);font-size:10px;cursor:pointer;font-family:'DM Sans',sans-serif;font-weight:600">⧉ Dupe</button>
+        </div>
+      </div>
     </div>
+
     ${(S.cut.effects[ci]||[]).length>0?`
-    <div class="prop-section">🎛 Effects Stack</div>
-    <div style="display:flex;flex-direction:column;gap:3px">
-      ${(S.cut.effects[ci]||[]).map((ef,efIdx)=>{
-        const eff=CUT_EFFECTS[ef.i]||{name:'Effect',color:'#888'};
-        const isVisible=ef.visible!==false;
-        return '<div style="display:flex;align-items:center;gap:4px;padding:4px 6px;background:'+(isVisible?'rgba(255,255,255,0.04)':'rgba(255,255,255,0.01)')+';border:0.5px solid rgba(255,255,255,'+(isVisible?'0.08':'0.03')+');border-radius:6px">'
-          +'<div style="width:8px;height:8px;border-radius:50%;background:'+eff.color+';flex-shrink:0"></div>'
-          +'<span style="flex:1;font-size:10px;color:'+(isVisible?'var(--tx)':'var(--mu2)')+';overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+eff.name+'</span>'
-          +'<button onclick="S.cut.effects['+ci+']['+efIdx+'].visible=S.cut.effects['+ci+']['+efIdx+'].visible===false;applyVideoEffects();syncCutVid();updatePropsPanel('+ci+')" title="Toggle visibility" style="background:none;border:none;cursor:pointer;color:'+(isVisible?'rgba(255,255,255,0.6)':'rgba(255,100,100,0.5)')+';font-size:11px;padding:0 2px;line-height:1">'+(isVisible?'👁':'👁̶')+'</button>'
-          +'<button onclick="cutSaveHistory();S.cut.effects['+ci+'].splice('+efIdx+',1);applyVideoEffects();renderCutTimeline();updatePropsPanel('+ci+')" title="Remove effect" style="background:none;border:none;cursor:pointer;color:#ff453a;font-size:11px;padding:0 2px;line-height:1">×</button>'
-          +'</div>';
-      }).join('')}
-    </div>`:''}`;
+    <div style="border:0.5px solid rgba(163,113,247,0.2);border-radius:8px;margin:4px 0;overflow:hidden;background:rgba(163,113,247,0.03)">
+      <div style="display:flex;align-items:center;padding:8px 10px;cursor:pointer;user-select:none;gap:8px"
+        onclick="const el=document.getElementById('acc-ef-${ci}');el.hidden=!el.hidden;this.querySelector('.acc-chv').style.transform=el.hidden?'rotate(-90deg)':'rotate(0deg)'">
+        <div style="width:3px;height:28px;border-radius:2px;background:linear-gradient(180deg,#a371f7,#bc8cff);flex-shrink:0"></div>
+        <div style="flex:1;min-width:0">
+          <div style="font-size:11px;font-weight:700;color:#fff;letter-spacing:0.3px">🎛 Effects</div>
+          <div style="font-size:10px;color:rgba(255,255,255,0.4);margin-top:1px">${(S.cut.effects[ci]||[]).length} applied</div>
+        </div>
+        <span class="acc-chv" style="font-size:9px;color:rgba(255,255,255,0.3);transition:transform 0.2s">▼</span>
+      </div>
+      <div id="acc-ef-${ci}" style="padding:0 6px 8px">
+        <div style="display:flex;flex-direction:column;gap:3px">
+          ${(S.cut.effects[ci]||[]).map((ef,efIdx)=>{
+            const eff=CUT_EFFECTS[ef.i]||{name:'Effect',color:'#888'};
+            const isVisible=ef.visible!==false;
+            return '<div style="display:flex;align-items:center;gap:4px;padding:4px 6px;background:'+(isVisible?'rgba(255,255,255,0.03)':'rgba(255,255,255,0.01)')+';border-radius:5px;border:0.5px solid rgba(255,255,255,0.05)">'
+              +'<div style="width:8px;height:8px;border-radius:50%;background:'+eff.color+';flex-shrink:0"></div>'
+              +'<span style="flex:1;font-size:10px;color:'+(isVisible?'var(--tx)':'var(--mu2)')+';overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+eff.name+'</span>'
+              +'<button onclick="S.cut.effects['+ci+']['+efIdx+'].visible=S.cut.effects['+ci+']['+efIdx+'].visible===false?true:false;applyVideoEffects();updatePropsPanel('+ci+')" style="font-size:9px;padding:1px 5px;border-radius:3px;border:0.5px solid rgba(255,255,255,0.1);background:rgba(255,255,255,0.04);color:var(--mu);cursor:pointer">'+(isVisible?'Hide':'Show')+'</button>'
+              +'<button onclick="cutSaveHistory();S.cut.effects['+ci+'].splice('+efIdx+',1);applyVideoEffects();updatePropsPanel('+ci+')" style="font-size:9px;padding:1px 5px;border-radius:3px;border:0.5px solid rgba(255,69,58,0.2);background:rgba(255,69,58,0.06);color:#ff453a;cursor:pointer">✕</button>'
+              +'</div>';
+          }).join('')}
+        </div>
+      </div>
+    </div>`:''}
+  `;
 
   // _origDur is set in applyClipSpeed, not here
 }
