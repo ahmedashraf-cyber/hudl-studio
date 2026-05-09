@@ -4099,14 +4099,19 @@ function syncCutVid(){
       if(Math.abs(mv.currentTime - t0) > 0.05) mv.currentTime = t0;
     }
 
-    // Don't clear first — preserve last good frame
+    // Base draw: if NO active transition, draw video normally
+    // If transition IS active, skip base draw — each transition draws its own video
     if(drawSrc.readyState >= 2){
-      if(!trInWindow || trInWindow.mode !== 'fadein'){
+      if(!trInWindow){
+        // No transition: draw video at full opacity
         ctx.clearRect(0,0,canvas.width,canvas.height);
-        // Center-crop: preserves native AR, no destructive scale
         if(_drawVideoFrame(drawSrc, ctx, canvas.width, canvas.height)){
           canvas._hasGoodFrame = true;
         }
+      }
+      // else: transition active — clear canvas, let transition draw everything
+      else {
+        ctx.clearRect(0,0,canvas.width,canvas.height);
       }
     } else if(!canvas._hasGoodFrame){
       ctx.clearRect(0,0,canvas.width,canvas.height);
@@ -4130,7 +4135,8 @@ function syncCutVid(){
         ctx.globalAlpha = 1;
       }
       else if(tr.mode==='fadeout'){
-        // Fade out: video → black. Base already drawn at full. Overlay black increasing.
+        // Fade out: draw video at full opacity, then black overlay at increasing alpha
+        _drawVideoFrame(drawSrc, ctx, canvas.width, canvas.height);
         const soft2 = tr.softness||0;
         const fa = soft2>0 ? Math.max(0,Math.min(1,(progress-soft2/2)/(1-soft2))) : progress;
         ctx.globalAlpha = fa;
@@ -4139,18 +4145,15 @@ function syncCutVid(){
         ctx.globalAlpha = 1;
       }
       else if(tr.mode==='dissolve'){
-        // Cross dissolve: video opacity follows bell curve (full → transparent → full)
-        // Creates the classic film dissolve - video briefly becomes transparent at midpoint
+        // Cross dissolve: draw video at decreasing opacity (1→0→1 bell curve)
+        const bellAlpha = Math.sin(progress * Math.PI); // 0→1→0
+        const vidAlpha = 1 - bellAlpha; // 1→0→1 (video visible → invisible → visible)
         const soft3 = tr.softness||0;
-        // Bell curve: sin(progress * PI) gives 0→1→0
-        // We want video alpha to go 1→0→1, so overlay alpha is sin(progress * PI)
-        const bellAlpha = Math.sin(progress * Math.PI);
-        const da = soft3 > 0
-          ? Math.max(0, Math.min(1, bellAlpha * (1 + soft3) - soft3/2))
-          : bellAlpha;
-        ctx.globalAlpha = da;
-        ctx.fillStyle = '#000';
-        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        const da = soft3>0
+          ? Math.max(0, Math.min(1, vidAlpha + soft3*(0.5-Math.abs(vidAlpha-0.5))))
+          : vidAlpha;
+        ctx.globalAlpha = Math.max(0.01, da); // keep at least 0.01 so video always draws
+        _drawVideoFrame(drawSrc, ctx, canvas.width, canvas.height);
         ctx.globalAlpha = 1;
       }
       else if(tr.mode==='zoomin'){ const s=1+(1-progress)*0.3; ctx.translate(canvas.width/2,canvas.height/2); ctx.scale(s,s); ctx.translate(-canvas.width/2,-canvas.height/2); ctx.globalAlpha=Math.min(1,progress+0.1); _drawVideoFrame(drawSrc, ctx, canvas.width, canvas.height); ctx.globalAlpha=1; }
