@@ -3557,13 +3557,18 @@ function cutTogglePlay(){
             }
             _freezeSavedVideoTime = 0;
 
-            // Wait for seeked then play — with fallback
+            // Play after seek settles — with proper error handling
             const _doPlay = () => {
-              if(S.cut.playing && mv2.paused) mv2.play().catch(()=>{});
+              if(!S.cut.playing || !mv2.paused) return;
+              mv2.play().catch(e => {
+                // AbortError means a pause() interrupted us — retry once
+                if(e.name === 'AbortError') {
+                  setTimeout(()=>{ if(S.cut.playing && mv2.paused) mv2.play().catch(()=>{}); }, 150);
+                }
+              });
             };
-            // Small delay to let currentTime assignment settle
-            setTimeout(_doPlay, 50);
-            setTimeout(_doPlay, 200); // second attempt as insurance
+            setTimeout(_doPlay, 80);   // let currentTime settle
+            setTimeout(_doPlay, 300);  // insurance
           }
 
           startAudioPlayback();

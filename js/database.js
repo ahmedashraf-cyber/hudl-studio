@@ -12,9 +12,15 @@ async function createProject(userId, name, type) {
 async function getUserProjects(userId) {
   const snap = await db.collection('projects')
     .where('userId','==',userId)
-    .orderBy('updatedAt','desc')
     .get();
-  return snap.docs.map(d => ({ id: d.id, ...d.data() }));
+  // Sort client-side to avoid needing a composite Firestore index
+  const docs = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+  docs.sort((a,b) => {
+    const ta = a.updatedAt?.seconds || a.updatedAt?.toDate?.()?.getTime()/1000 || 0;
+    const tb = b.updatedAt?.seconds || b.updatedAt?.toDate?.()?.getTime()/1000 || 0;
+    return tb - ta;
+  });
+  return docs;
 }
 
 async function saveProjectState(projectId, state) {

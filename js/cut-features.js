@@ -798,7 +798,7 @@ function applyAudioFx(){
 // ── OVERLAY RENDERING ENGINE ──
 // ── Overlay transition engine ──
 // Returns {alpha, scaleX, scaleY, tx, ty} given overlay + current time
-function computeOverlayTransition(ov, currentTime){
+function computeOverlayTransition(ov, currentTime, W, H){
   const dur      = ov.endTime - ov.startTime;
   const elapsed  = currentTime - ov.startTime;
   const remaining = ov.endTime - currentTime;
@@ -848,7 +848,7 @@ function renderOverlaysOnCanvas(ctx, W, H, currentTime, playedFreezes){
 
   overlays.forEach(ov=>{
     const progress = (currentTime-ov.startTime)/(ov.endTime-ov.startTime);
-    const tr = computeOverlayTransition(ov, currentTime);
+    const tr = computeOverlayTransition(ov, currentTime, W, H);
 
     // Skip invisible overlays early (saves all drawing work)
     if(tr.alpha < 0.01) return;
