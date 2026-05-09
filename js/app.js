@@ -2028,12 +2028,11 @@ function updatePropsPanel(ci){
     </div>
     ${audioSection}
     ${(()=>{
-      // Show transition timing controls if a transition is active on this clip
-      const tr2 = getClipTransition(ci);
-      if(!tr2) return '';
+      // Show transition timing controls for ALL transitions on this clip
       const efArr = S.cut.effects[ci]||[];
-      const efIdx2 = efArr.findIndex(e=>CUT_EFFECTS[e.i]?.type==='transition');
-      if(efIdx2<0) return '';
+      const trIdxs = efArr.map((e,i)=>i).filter(i=>CUT_EFFECTS[efArr[i].i]?.type==='transition');
+      if(!trIdxs.length) return '';
+      return trIdxs.map(efIdx2=>{
       const ef2 = efArr[efIdx2];
       const maxStart = Math.max(0, c.dur - 0.1);
       const maxDur   = Math.max(0.1, c.dur - (ef2.startOffset||0));
@@ -2084,6 +2083,7 @@ function updatePropsPanel(ci){
           </div>`;
         })()}
       `;
+      }).join('');
     })()}
     <div class="prop-section">🎬 Actions</div>
     <div style="display:flex;gap:4px;flex-wrap:wrap;padding:2px 0">
@@ -4082,7 +4082,7 @@ function syncCutVid(){
 
     // Don't clear first — preserve last good frame
     if(drawSrc.readyState >= 2){
-      if(!tr || tr.mode !== 'fadein'){
+      if(!trInWindow || trInWindow.mode !== 'fadein'){
         ctx.clearRect(0,0,canvas.width,canvas.height);
         // Center-crop: preserves native AR, no destructive scale
         if(_drawVideoFrame(drawSrc, ctx, canvas.width, canvas.height)){
@@ -4111,20 +4111,21 @@ function syncCutVid(){
         ctx.globalAlpha = 1;
       }
       else if(tr.mode==='fadeout'){
-        // Fade out: video → black. Base frame already drawn. Draw black overlay increasing.
-        ctx.globalAlpha = progress; // progress goes 0→1, overlay goes transparent→black
+        // Fade out: video → black. Base already drawn at full. Overlay black increasing.
+        const soft2 = tr.softness||0;
+        const fa = soft2>0 ? Math.max(0,Math.min(1,(progress-soft2/2)/(1-soft2))) : progress;
+        ctx.globalAlpha = fa;
         ctx.fillStyle = '#000';
         ctx.fillRect(0, 0, canvas.width, canvas.height);
         ctx.globalAlpha = 1;
       }
       else if(tr.mode==='dissolve'){
-        // Cross dissolve: video fades between same clip segments
-        // Draw video normally — softness controls the blend
-        const soft = tr.softness||0;
-        ctx.globalAlpha = soft > 0
-          ? Math.max(0, Math.min(1, (progress - soft/2) / (1 - soft)))
-          : progress;
-        _drawVideoFrame(drawSrc, ctx, canvas.width, canvas.height);
+        // Cross dissolve: fade video out (dissolve to black). Base already drawn.
+        const soft3 = tr.softness||0;
+        const da = soft3>0 ? Math.max(0,Math.min(1,(progress-soft3/2)/(1-soft3))) : progress;
+        ctx.globalAlpha = da;
+        ctx.fillStyle = '#000';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
         ctx.globalAlpha = 1;
       }
       else if(tr.mode==='zoomin'){ const s=1+(1-progress)*0.3; ctx.translate(canvas.width/2,canvas.height/2); ctx.scale(s,s); ctx.translate(-canvas.width/2,-canvas.height/2); ctx.globalAlpha=Math.min(1,progress+0.1); _drawVideoFrame(drawSrc, ctx, canvas.width, canvas.height); ctx.globalAlpha=1; }
