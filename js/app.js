@@ -1378,10 +1378,10 @@ function buildCut() {
           <input type="file" id="cut-fi" style="display:none" multiple accept="video/*,audio/*,image/*,.mp3,.aac,.wav,.ogg,.m4a,.flac,.opus,.wma,.aiff,.mp4,.mov,.avi,.mkv,.webm">
           <input type="file" id="cut-fi-audio" style="display:none" multiple accept="audio/*,.mp3,.aac,.wav,.ogg,.m4a,.flac,.opus,.wma,.aiff">
           <div style="padding:6px 10px 0">
-            <button onclick="$('cut-fi-audio').click()" style="width:100%;padding:7px;background:rgba(210,153,34,0.08);border:0.5px solid rgba(210,153,34,0.2);border-radius:9px;color:#d29922;font-size:11px;font-weight:600;font-family:'DM Sans',sans-serif;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:6px;transition:all .15s"
-              onmouseover="this.style.background='rgba(210,153,34,0.15)'" onmouseout="this.style.background='rgba(210,153,34,0.08)'">
-              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg>
-              Import Audio Track
+            <button onclick="$('cut-fi-audio').click()" style="width:100%;padding:7px 10px;background:rgba(210,153,34,0.06);border:0.5px solid rgba(210,153,34,0.15);border-radius:7px;color:rgba(210,153,34,0.85);font-size:10px;font-weight:700;font-family:'DM Sans',sans-serif;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:6px;transition:all .15s;letter-spacing:0.03em;text-transform:uppercase"
+              onmouseover="this.style.background='rgba(210,153,34,0.12)'" onmouseout="this.style.background='rgba(210,153,34,0.06)'">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg>
+              Import Audio
             </button>
           </div>
           <div style="flex:1;overflow-y:auto;padding:4px" id="cut-bin"></div>
@@ -1936,7 +1936,7 @@ function handleCutFiles(files) {
 
 function buildBinList() {
   const el=$('cut-bin'); if(!el) return;
-  if (!S.cut.media.length) { el.innerHTML='<div style="padding:10px;font-size:11px;color:var(--mu2);text-align:center">No media yet</div>'; return; }
+  if (!S.cut.media.length) { el.innerHTML='<div style="padding:24px 12px;text-align:center"><div style="font-size:22px;opacity:0.25;margin-bottom:8px">📂</div><div style="font-size:11px;color:rgba(255,255,255,0.25);font-weight:500">No media yet</div><div style="font-size:10px;color:rgba(255,255,255,0.15);margin-top:3px">Drop files or click above</div></div>'; return; }
   el.innerHTML = S.cut.media.map((item,i)=>{
     const icon=item.type==='video'?'🎬':item.type==='audio'?'🎵':'🖼️';
     return `<div class="mbin-item${S.cut.selMedia===i?' sel':''}" id="mbi-${i}" draggable="true"
