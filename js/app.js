@@ -1635,11 +1635,15 @@ function cutToggleEffect(i){
     const clip=S.cut.clips[ci];
     const offsetInClip=Math.max(0,S.cut.ph-clip.start);
     const clipDur = S.cut.clips[ci]?.dur || 2;
+    const defaultStartOffset = eff.type==='transition'
+      ? Math.max(0, S.cut.ph - clip.start)  // transition starts at current playhead
+      : 0;                                   // filters start at clip beginning
     S.cut.effects[ci].push({
       i,
       v: eff.default||0,
-      startOffset: 0,                  // starts at clip beginning by default
-      effectDur: eff.type==='transition' ? Math.min(eff.dur||1, clipDur*0.5) : clipDur, // full clip for filters
+      startOffset: defaultStartOffset,
+      effectDur: eff.type==='transition' ? Math.min(eff.dur||1, clipDur*0.5) : clipDur,
+      visible: true,
     });
     notify(eff.name+' applied at '+fmtTC(offsetInClip)+' into clip','#3fb950');
   }
@@ -2010,6 +2014,34 @@ function updatePropsPanel(ci){
       <button onclick="showSpeedDialog(${ci})" style="width:100%;padding:5px;background:rgba(232,89,12,0.1);border:0.5px solid rgba(232,89,12,0.3);border-radius:6px;color:#E8590C;font-size:10px;cursor:pointer;font-family:'DM Sans',sans-serif">⚡ Speed / Duration…</button>
     </div>
     ${audioSection}
+    ${(()=>{
+      // Show transition timing controls if a transition is active on this clip
+      const tr2 = getClipTransition(ci);
+      if(!tr2) return '';
+      const efArr = S.cut.effects[ci]||[];
+      const efIdx2 = efArr.findIndex(e=>CUT_EFFECTS[e.i]?.type==='transition');
+      if(efIdx2<0) return '';
+      const ef2 = efArr[efIdx2];
+      const maxStart = Math.max(0, c.dur - 0.1);
+      const maxDur   = Math.max(0.1, c.dur - (ef2.startOffset||0));
+      return `
+        <div class="prop-section">↔ Transition: ${CUT_EFFECTS[ef2.i]?.name||'Transition'}</div>
+        <div class="prop-row"><span class="prop-label">Start</span>
+          <input type="range" min="0" max="${maxStart.toFixed(1)}" step="0.1"
+            value="${(ef2.startOffset||0).toFixed(1)}"
+            style="flex:1;accent-color:#E8590C"
+            oninput="S.cut.effects[${ci}][${efIdx2}].startOffset=parseFloat(this.value);this.nextElementSibling.textContent=parseFloat(this.value).toFixed(1)+'s';syncCutVid();">
+          <span style="font-size:10px;color:var(--mu);min-width:36px;text-align:right">${(ef2.startOffset||0).toFixed(1)}s</span>
+        </div>
+        <div class="prop-row"><span class="prop-label">Duration</span>
+          <input type="range" min="0.1" max="${maxDur.toFixed(1)}" step="0.1"
+            value="${(ef2.effectDur||1).toFixed(1)}"
+            style="flex:1;accent-color:#E8590C"
+            oninput="S.cut.effects[${ci}][${efIdx2}].effectDur=parseFloat(this.value);this.nextElementSibling.textContent=parseFloat(this.value).toFixed(1)+'s';syncCutVid();">
+          <span style="font-size:10px;color:var(--mu);min-width:36px;text-align:right">${(ef2.effectDur||1).toFixed(1)}s</span>
+        </div>
+      `;
+    })()}
     <div class="prop-section">🎬 Actions</div>
     <div style="display:flex;gap:4px;flex-wrap:wrap;padding:2px 0">
       <button onclick="deleteSelected()" style="flex:1;padding:5px;background:rgba(255,69,58,0.1);border:0.5px solid rgba(255,69,58,0.2);border-radius:6px;color:#ff453a;font-size:10px;cursor:pointer;font-family:'DM Sans',sans-serif">🗑 Delete</button>
@@ -3482,6 +3514,12 @@ function cutTogglePlay(){
       if(activeNow){
         const ciNow2=S.cut.clips.indexOf(activeNow);
         const trNow=getClipTransition(ciNow2);
+        // Only count transition as active if playhead is within its window
+        const trActive = trNow && (()=>{
+          const trStart = activeNow.start + (trNow.startOffset||0);
+          const trEnd   = trStart + (trNow.effectDur||trNow.dur||1);
+          return phNow >= trStart && phNow < trEnd;
+        })();
         const hasEffNow=(S.cut.effects[ciNow2]||[]).filter(e=>CUT_EFFECTS[e.i]?.type!=='transition').length>0;
         const activeFreezeNow=window._overlays&&window._overlays.find(o=>o.type==='freeze'&&phNow>=o.startTime&&phNow<o.endTime&&!_playedFreezes.has(o.id));
         const hasOverlays=window._overlays&&window._overlays.some(o=>phNow>=o.startTime&&phNow<o.endTime&&!(o.type==='freeze'&&_playedFreezes.has(o.id)));
@@ -3535,7 +3573,7 @@ function cutTogglePlay(){
             const _p=()=>{if(!S.cut.playing||_a>3)return;_a++;mv2.play().catch(e=>{if(e.name==='AbortError'&&_a<=3)setTimeout(_p,150*_a);});};
             setTimeout(_p,80);
           }
-} else if(trNow||hasEffNow||hasOverlays){
+} else if(trActive||hasEffNow||hasOverlays){
           // Throttle overlay/effect canvas to 30fps during playback
           const _now4=performance.now();
           if(_now4-_lastCanvasTime>=33){
@@ -3797,11 +3835,18 @@ function getPoolVid(url){
 }
 
 function getClipTransition(ci){
-  // Returns transition effect applied to clip ci, if any
+  // Returns merged {template + stored} for the transition effect on clip ci
   const effs=S.cut.effects[ci]||[];
   for(const ef of effs){
     const e=CUT_EFFECTS[ef.i];
-    if(e&&e.type==='transition') return e;
+    if(e&&e.type==='transition'){
+      // Merge template with stored values so startOffset/effectDur are accessible
+      return Object.assign({}, e, {
+        startOffset: ef.startOffset||0,
+        effectDur:   ef.effectDur||e.dur||1,
+        _efIdx:      effs.indexOf(ef),  // index back into S.cut.effects[ci]
+      });
+    }
   }
   return null;
 }
@@ -3905,7 +3950,14 @@ function syncCutVid(){
 
   // Check for transition or effects
   const tr = getClipTransition(activeCI);
-  const hasEffects = (S.cut.effects[activeCI]||[]).filter(e => CUT_EFFECTS[e.i]?.type !== 'transition').length > 0;
+  const hasEffects = (S.cut.effects[activeCI]||[]).filter(e => {
+    if(CUT_EFFECTS[e.i]?.type === 'transition') return false; // handled separately as tr
+    if(e.visible===false) return false;
+    // Check if effect is active at current ph
+    const effStart = active.start + (e.startOffset||0);
+    const effEnd   = effStart + (e.effectDur||active.dur);
+    return ph >= effStart && ph < effEnd;
+  }).length > 0;
   // Always use canvas if overlays are present OR if transition/effects active
   // Skip canvas mode for 500ms after freeze exit — let video resume cleanly
   if((tr || hasEffects || hasActiveOverlays) && (performance.now()-(_freezeExitTime||0)) > 500){
@@ -3986,7 +4038,7 @@ function syncCutVid(){
 
     // ── Draw transitions FIRST (before overlays) ──
     if(tr){
-      const elapsed = ph - active.start - (active.effects?.[0]?.startOffset||0);
+      const elapsed = ph - active.start - (tr.startOffset||0);
       const progress = Math.max(0, Math.min(1, elapsed / (tr.dur||1)));
       ctx.save();
       if(tr.mode==='fadein'){ ctx.globalAlpha=progress; _drawVideoFrame(drawSrc, ctx, canvas.width, canvas.height); ctx.globalAlpha=1; }
