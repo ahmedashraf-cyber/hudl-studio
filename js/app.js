@@ -3430,7 +3430,8 @@ let _justExitedFreeze=false;   // flag to resync video after freeze ends
 let _freezeExitTime=0;         // timestamp of freeze exit — skip canvas for 500ms after
 let _freezeSavedVideoTime=0;   // video.currentTime saved when freeze started
 function cutTogglePlay(){
-  if(!S.cut.playing) _playedFreezes.clear(); // fresh start — allow all freezes to play
+  // Only clear played freezes when starting from near the beginning
+  if(!S.cut.playing && S.cut.ph < 0.5) _playedFreezes.clear();
   S.cut.playing=!S.cut.playing;
   const pp=$('cut-play-path'),tp=$('cut-tl-path');
   if(S.cut.playing){
@@ -3519,11 +3520,19 @@ function cutTogglePlay(){
           const _resumePh = _freezeStartPh !== null ? _freezeStartPh : S.cut.ph;
           _freezeStartPh  = null;
 
-          // Mark this freeze as played (use endTime to find which one just ended)
+          // Mark this freeze as played
+          // S.cut.ph is currently at the freeze's endTime (it advanced there during freeze)
+          // So any freeze overlay where ph >= endTime has just finished
           if(window._overlays){
             window._overlays
               .filter(o => o.type==='freeze' && S.cut.ph >= o.endTime)
               .forEach(o => _playedFreezes.add(o.id));
+            // Also mark by start position (in case ph was reset)
+            if(_resumePh !== null && _resumePh !== undefined){
+              window._overlays
+                .filter(o => o.type==='freeze' && _resumePh >= o.startTime && _resumePh <= o.endTime)
+                .forEach(o => _playedFreezes.add(o.id));
+            }
           }
 
           // Find clip at resume position — use tolerance so boundary clips are found
@@ -3558,17 +3567,17 @@ function cutTogglePlay(){
             _freezeSavedVideoTime = 0;
 
             // Play after seek settles — with proper error handling
+            let _playAttempts = 0;
             const _doPlay = () => {
-              if(!S.cut.playing || !mv2.paused) return;
+              if(!S.cut.playing || !mv2.paused || _playAttempts > 3) return;
+              _playAttempts++;
               mv2.play().catch(e => {
-                // AbortError means a pause() interrupted us — retry once
-                if(e.name === 'AbortError') {
-                  setTimeout(()=>{ if(S.cut.playing && mv2.paused) mv2.play().catch(()=>{}); }, 150);
+                if(e.name === 'AbortError' && _playAttempts <= 3){
+                  setTimeout(_doPlay, 100 * _playAttempts);
                 }
               });
             };
-            setTimeout(_doPlay, 80);   // let currentTime settle
-            setTimeout(_doPlay, 300);  // insurance
+            setTimeout(_doPlay, 80);
           }
 
           startAudioPlayback();
