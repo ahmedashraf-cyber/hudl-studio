@@ -864,17 +864,19 @@ function renderOverlaysOnCanvas(ctx, W, H, currentTime, playedFreezes){
     }
     ctx.globalAlpha = Math.max(0, Math.min(1, tr.alpha));
     if(ov.type==='freeze'){
-      // Freeze: draw captured frame — fills entire canvas replacing video
+      // Freeze: draw captured frame ON TOP of video (no clearRect — preserve video layer)
       if(ov._img && ov._img.complete){
-        ctx.clearRect(0,0,W,H);
-        ctx.drawImage(ov._img,0,0,W,H);
+        ctx.globalAlpha = 1;
+        ctx.drawImage(ov._img, 0, 0, W, H);
       } else if(!ov._img){
-        // Frame not captured yet — show dark overlay with message
-        ctx.fillStyle='rgba(0,0,0,0.8)';
-        ctx.fillRect(0,0,W,H);
-        ctx.fillStyle='#fff';
-        ctx.font='24px DM Sans,sans-serif';
-        ctx.textAlign='center';
+        // Frame not captured yet — show translucent overlay with message
+        ctx.globalAlpha = 1;
+        ctx.fillStyle = 'rgba(0,0,0,0.6)';
+        ctx.fillRect(0, 0, W, H);
+        ctx.fillStyle = '#fff';
+        ctx.font = '20px DM Sans,sans-serif';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
         ctx.fillText('Capturing freeze frame...', W/2, H/2);
       }
     } else if(ov.type==='text'){
