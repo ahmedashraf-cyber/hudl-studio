@@ -872,8 +872,14 @@ async function startExport(){
         fhNow._img = new Image(); fhNow._img.src = fhNow._imgData;
       }
       ctx.fillStyle='#000'; ctx.fillRect(0,0,W,H);
+      // 1. Draw frozen frame
       if(fhNow._img && fhNow._img.complete) ctx.drawImage(fhNow._img,0,0,W,H);
       if(lastActiveVid && !lastActiveVid.paused) lastActiveVid.pause();
+      // 2. Render overlays on top of frozen frame during export
+      const fhActiveOvs = (window._overlays||[]).filter(o => t>=o.startTime && t<o.endTime);
+      if(fhActiveOvs.length && window.renderOverlaysOnCanvas){
+        window.renderOverlaysOnCanvas(ctx, W, H, t, new Set());
+      }
       const pct2=Math.min(98,Math.round((t/totalDur)*100));
       bar.style.width=pct2+'%';
       status.textContent='Rendering: '+pct2+'% (Frame Hold)';
@@ -912,6 +918,10 @@ async function startExport(){
       ctx.fillStyle = '#000';
       ctx.fillRect(0, 0, W, H);
       try{ ctx.drawImage(vid, 0, 0, W, H); }catch(e){}
+      // Render overlays on top of video frame (text, shapes, etc.)
+      if((window._overlays||[]).some(o=>t>=o.startTime&&t<o.endTime) && window.renderOverlaysOnCanvas){
+        window.renderOverlaysOnCanvas(ctx, W, H, t, new Set());
+      }
 
     } else {
       ctx.fillStyle = '#000';
@@ -4351,17 +4361,27 @@ function syncCutVid(){
       active._img = new Image();
       active._img.src = active._imgData;
     }
-    if(active._img && (active._img.complete || active._imgData)){
-      canvas.style.display = 'block';
-      canvas.style.zIndex  = '2';
-      mv.style.opacity = '0';
-      if(placeholder) placeholder.style.display = 'none';
-      const projWfh = S.proj.w||1280, projHfh = S.proj.h||720;
-      if(canvas.width!==projWfh){ canvas.width=projWfh; canvas.height=projHfh; }
-      const ctxFH = canvas.getContext('2d');
-      ctxFH.clearRect(0,0,canvas.width,canvas.height);
+    // Always use canvas for frame_hold so overlays/effects can composite on top
+    canvas.style.display = 'block';
+    canvas.style.zIndex  = '2';
+    mv.style.opacity = '0';
+    if(placeholder) placeholder.style.display = 'none';
+    const projWfh = S.proj.w||1280, projHfh = S.proj.h||720;
+    if(canvas.width!==projWfh){ canvas.width=projWfh; canvas.height=projHfh; }
+    const ctxFH = canvas.getContext('2d');
+    ctxFH.clearRect(0,0,canvas.width,canvas.height);
+    // 1. Draw frozen frame
+    if(active._img && active._img.complete){
       ctxFH.drawImage(active._img, 0, 0, canvas.width, canvas.height);
+    } else {
+      ctxFH.fillStyle='#000'; ctxFH.fillRect(0,0,canvas.width,canvas.height);
     }
+    // 2. Apply effects (color grade, filters) on top of frozen frame
+    const fhFilterStr = buildFilterStr(activeCI);
+    canvas.style.filter = fhFilterStr !== 'none' ? fhFilterStr : '';
+    // 3. Render overlays on top of frozen frame (text, shapes, freeze overlays)
+    if(window.renderOverlaysOnCanvas)
+      window.renderOverlaysOnCanvas(ctxFH, canvas.width, canvas.height, ph, _playedFreezes);
     return;
   }
 
