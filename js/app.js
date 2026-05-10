@@ -694,7 +694,8 @@ function showExportModal(){
       <div style="margin-bottom:14px">
         <label style="font-size:10px;font-weight:700;color:#8b949e;text-transform:uppercase;letter-spacing:.7px;display:block;margin-bottom:6px">Format</label>
         <select id="exp-format" style="width:100%;padding:9px 11px;background:#252d3d;border:1px solid rgba(255,255,255,0.11);border-radius:8px;color:#f0f2f5;font-size:13px;outline:none">
-          <option value="webm" selected>WebM (VP9) — plays in Chrome/VLC</option>
+          <option value="mp4" selected>MP4 — best compatibility</option>
+          <option value="webm">WebM (VP9) — open format</option>
         </select>
       </div>
       <div style="font-size:11px;color:#8b949e;background:rgba(88,166,255,0.07);border:1px solid rgba(88,166,255,0.15);border-radius:6px;padding:8px 10px;margin-bottom:18px">
@@ -792,9 +793,19 @@ async function startExport(){
     finalStream=new MediaStream([...videoStream.getVideoTracks(),...audioDest.stream.getAudioTracks()]);
   }
 
-  // Pick best supported codec with audio
-  const mimeTypes=['video/webm;codecs=vp9,opus','video/webm;codecs=vp8,opus','video/webm;codecs=h264,mp4a.40.2','video/webm'];
-  const mimeType=mimeTypes.find(m=>MediaRecorder.isTypeSupported(m))||'video/webm';
+  // Choose codec: prefer H264/AAC (MP4-compatible) if browser supports it
+  const fmt = document.getElementById('exp-format')?.value || 'webm';
+  let mimeType;
+  if(fmt === 'mp4'){
+    // Try H264+AAC for true MP4 content — supported in Chrome
+    const mp4Types = ['video/mp4;codecs=avc1.42E01E,mp4a.40.2','video/mp4;codecs=h264,aac','video/mp4'];
+    mimeType = mp4Types.find(m=>MediaRecorder.isTypeSupported(m));
+  }
+  if(!mimeType){
+    // Fallback: VP9+Opus WebM
+    const webmTypes = ['video/webm;codecs=vp9,opus','video/webm;codecs=vp8,opus','video/webm'];
+    mimeType = webmTypes.find(m=>MediaRecorder.isTypeSupported(m)) || 'video/webm';
+  }
   const recorder=new MediaRecorder(finalStream,{mimeType,videoBitsPerSecond:BR,audioBitsPerSecond:192000});
   const chunks=[];
   recorder.ondataavailable=e=>{if(e.data&&e.data.size>0)chunks.push(e.data);};
@@ -812,12 +823,12 @@ async function startExport(){
     const a=document.createElement('a');
     a.href=url;
     const fname=(S.currentProject?.name||'export').replace(/[^\w\s-]/g,'').trim().replace(/\s+/g,'_');
-    a.download=fname+'_'+W+'x'+H+'_'+fps+'fps.webm';
-    // Note: to get MP4, open in VLC → Media → Convert/Save
+    const ext = mimeType.includes('mp4') ? 'mp4' : 'webm';
+    a.download = fname+'_'+W+'x'+H+'_'+fps+'fps.'+ext;
     document.body.appendChild(a); a.click(); document.body.removeChild(a);
     setTimeout(()=>URL.revokeObjectURL(url),30000);
     document.getElementById('export-modal')?.remove();
-    notify('✓ Export downloaded — '+fname+'.webm','#3fb950');
+    notify('✓ Export downloaded — '+fname+' ('+(mimeType.includes('mp4')?'MP4':'WebM')+')','#3fb950');
   };
 
   recorder.start(500); // collect every 500ms for stable chunks
@@ -828,72 +839,80 @@ async function startExport(){
   let lastActiveVid=null;
   const startTs=Date.now();
 
+  // ── Smooth render: let video play naturally, capture frames at real-time rate ──
+  // Seek once to start, then just drawImage() each frame — no per-frame seeks
+  let lastClipIdx = -1;
+
   async function renderFrame(){
-    if(t>totalDur+dt*2){
-      // Stop active video audio
-      if(lastActiveVid){lastActiveVid.pause();}
-      await new Promise(r=>setTimeout(r,600)); // flush audio buffer
+    if(t > totalDur + dt){
+      if(lastActiveVid){ lastActiveVid.pause(); lastActiveVid.muted = true; }
+      Object.values(audioEls).forEach(a=>{ try{a.pause();}catch(e){} });
+      await new Promise(r=>setTimeout(r,400)); // flush audio buffer
       recorder.stop();
       return;
     }
 
-    const clip=videoClips.find(c=>t>=c.start&&t<c.start+c.dur);
-    ctx.fillStyle='#000';
-    ctx.fillRect(0,0,W,H);
+    const clip = videoClips.find(c => t >= c.start && t < c.start + c.dur);
 
     if(clip){
-      const vid=vidEls[clip.mediaIdx];
-      if(vid){
-        const fileTime=(clip.fileStart||0)+Math.max(0,t-clip.start);
-        // Switch clip: seek, wait for decode, then play
-        if(lastActiveVid!==vid){
-          if(lastActiveVid){lastActiveVid.pause(); lastActiveVid.muted=true;}
-          lastActiveVid=vid;
-          vid.muted=false;
-          vid.currentTime=fileTime;
-          // Wait for video to decode the seek target frame
-          await new Promise(r=>{
-            const h=()=>{ vid.removeEventListener('seeked',h); r(); };
-            vid.addEventListener('seeked',h);
-            setTimeout(r,800); // fallback
-          });
-          try{ await vid.play(); }catch(e){}
-        } else {
-          // Keep audio playing; re-sync if drifted more than 0.5s
-          if(Math.abs(vid.currentTime-fileTime)>0.5){
-            vid.currentTime=fileTime;
-            await new Promise(r=>{ const h=()=>{vid.removeEventListener('seeked',h);r();}; vid.addEventListener('seeked',h); setTimeout(r,400); });
-          }
+      const vid = vidEls[clip.mediaIdx];
+      const clipIdx = videoClips.indexOf(clip);
+
+      if(clipIdx !== lastClipIdx){
+        // ── New clip: seek once, wait for decode, then start playing ──
+        if(lastActiveVid && lastActiveVid !== vid){
+          lastActiveVid.pause();
+          lastActiveVid.muted = true;
         }
-        try{ ctx.drawImage(vid,0,0,W,H); }catch(e){}
+        lastActiveVid = vid;
+        lastClipIdx = clipIdx;
+        const fileTime = (clip.fileStart||0) + Math.max(0, t - clip.start);
+        vid.muted = false;
+        vid.currentTime = fileTime;
+        // Wait for seek to complete
+        await new Promise(r=>{
+          const h = ()=>{ vid.removeEventListener('seeked',h); r(); };
+          vid.addEventListener('seeked', h);
+          setTimeout(r, 1000);
+        });
+        try{ await vid.play(); }catch(e){}
       }
+
+      // ── Draw current frame — video is playing, drawImage is instant ──
+      ctx.fillStyle = '#000';
+      ctx.fillRect(0, 0, W, H);
+      try{ ctx.drawImage(vid, 0, 0, W, H); }catch(e){}
+
     } else {
-      if(lastActiveVid){lastActiveVid.pause();lastActiveVid=null;}
+      ctx.fillStyle = '#000';
+      ctx.fillRect(0, 0, W, H);
+      if(lastActiveVid){ lastActiveVid.pause(); lastActiveVid.muted = true; lastActiveVid = null; }
+      lastClipIdx = -1;
     }
 
-    // Standalone audio clips: play/pause/sync
+    // ── Standalone audio clips ──
     for(const ac of audioOnlyClips){
       if(S.cut.mutedTracks?.[ac.track]) continue;
-      const a=audioEls[ac.mediaIdx]; if(!a) continue;
-      if(t>=ac.start&&t<ac.start+ac.dur){
-        const aT=(ac.fileStart||0)+Math.max(0,t-ac.start);
-        a.muted=false;
-        if(a.paused){a.currentTime=aT; try{a.play();}catch(e){}}
-        else if(Math.abs(a.currentTime-aT)>0.5) a.currentTime=aT;
-      } else if(!a.paused) a.pause();
+      const a = audioEls[ac.mediaIdx]; if(!a) continue;
+      if(t >= ac.start && t < ac.start + ac.dur){
+        const aT = (ac.fileStart||0) + Math.max(0, t - ac.start);
+        a.muted = false;
+        if(a.paused){ a.currentTime = aT; try{ a.play(); }catch(e){} }
+        else if(Math.abs(a.currentTime - aT) > 0.5) a.currentTime = aT;
+      } else if(!a.paused){ a.pause(); }
     }
 
-    // Progress
-    const pct=Math.min(98,Math.round((t/totalDur)*100));
-    bar.style.width=pct+'%';
-    const elapsed=(Date.now()-startTs)/1000;
-    const rate=elapsed>0.5?t/elapsed:fps/100;
-    const rem=rate>0?(totalDur-t)/rate:0;
-    status.textContent=`Rendering: ${pct}% · ${t.toFixed(1)}s / ${totalDur.toFixed(1)}s`;
-    if(rem>1) eta.textContent=`~${Math.ceil(rem)}s remaining (${(rate).toFixed(1)}x realtime)`;
+    // ── Progress ──
+    const pct = Math.min(98, Math.round((t / totalDur) * 100));
+    bar.style.width = pct + '%';
+    const elapsed = (Date.now() - startTs) / 1000;
+    const rate = elapsed > 0.5 ? t / elapsed : 1;
+    const rem = rate > 0 ? (totalDur - t) / rate : 0;
+    status.textContent = `Rendering: ${pct}% · ${t.toFixed(1)}s / ${totalDur.toFixed(1)}s`;
+    if(rem > 1) eta.textContent = `~${Math.ceil(rem)}s remaining`;
 
-    t+=dt;
-    // Wall-clock compensation: schedule next frame at exact target time
+    t += dt;
+    // Schedule next frame at exact wall-clock target
     const wallTarget = startTs + t * 1000;
     const delay = Math.max(0, wallTarget - Date.now());
     setTimeout(renderFrame, delay);
