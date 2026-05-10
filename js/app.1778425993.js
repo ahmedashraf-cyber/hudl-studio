@@ -1550,16 +1550,36 @@ function buildCut() {
         const ph=S.cut.ph;
         // Check all overlays active at this playhead position
         const active=(window._overlays||[]).filter(o=>ph>=o.startTime&&ph<o.endTime);
-        // Find topmost hit (reverse order = last added = on top)
-        const hit=active.slice().reverse().find(o=>{
-          // Use x,y,w,h if available (shapes, images, text)
+        // Find ALL overlays hit at this point
+        const allHits=active.slice().reverse().filter(o=>{
           if(o.x!==undefined){
             const ox=o.x-(o.w||0.3)/2, oy=o.y-(o.h||0.2)/2;
             return nx>=ox&&nx<=ox+(o.w||0.3)&&ny>=oy&&ny<=oy+(o.h||0.2);
           }
-          // Freeze/fullscreen overlays — hit anywhere
           return o.type==='freeze'||o.type==='image_bg';
         });
+        // Cycle through stacked overlays on repeated clicks at same spot
+        let hit=null;
+        if(allHits.length>1){
+          const _lastId=window._activeEditId;
+          const _lastIdx=allHits.findIndex(o=>o.id===_lastId);
+          // If we already have one selected here, move to the next one
+          if(_lastIdx>=0){
+            hit=allHits[(_lastIdx+1)%allHits.length];
+          } else {
+            hit=allHits[0];
+          }
+          // Show cycle badge hint
+          const _badge=document.getElementById('ov-cycle-badge')||document.createElement('div');
+          _badge.id='ov-cycle-badge';
+          _badge.style.cssText='position:fixed;bottom:80px;left:50%;transform:translateX(-50%);background:rgba(0,0,0,0.75);color:#fff;font-size:11px;padding:4px 10px;border-radius:20px;pointer-events:none;z-index:9999;font-family:DM Sans,sans-serif;';
+          _badge.textContent='Click again to select next layer (' + allHits.length + ' overlays here)';
+          document.body.appendChild(_badge);
+          clearTimeout(window._badgeTimer);
+          window._badgeTimer=setTimeout(()=>_badge.remove(),2000);
+        } else {
+          hit=allHits[0]||null;
+        }
         if(hit){
           // 1. Mark as active
           window._activeEditId=hit.id;
