@@ -3799,6 +3799,11 @@ function cutTogglePlay(){
         if(activeNow.type === 'frame_hold'){
           // ── FRAME HOLD ACTIVE ──
           // Pause the underlying video so ph doesn't get overridden by video time
+          // Restore _img from _imgData if needed
+          if(activeNow._imgData && (!activeNow._img || !activeNow._img.complete)){
+            activeNow._img = new Image();
+            activeNow._img.src = activeNow._imgData;
+          }
           const mvFH = $('cut-main-vid');
           if(mvFH && !mvFH.paused) mvFH.pause();
           // Advance ph by wall clock (like freeze)
@@ -4300,7 +4305,11 @@ function syncCutVid(){
   const activeCI = S.cut.clips.indexOf(active);
   // Frame hold clip: draw the captured still image
   if(active.type === 'frame_hold'){
-    if(active._img && active._img.complete){
+    if(active._imgData && (!active._img || !active._img.complete)){
+      active._img = new Image();
+      active._img.src = active._imgData;
+    }
+    if(active._img && (active._img.complete || active._imgData)){
       canvas.style.display = 'block';
       canvas.style.zIndex  = '2';
       mv.style.opacity = '0';
@@ -5661,69 +5670,65 @@ function insertFrameHold(ci){
     return;
   }
 
-  // Capture the current frame from the main video element
-  const mv = document.getElementById('cut-main-vid');
-  const canvas = document.createElement('canvas');
-  canvas.width = S.proj.w || 1920;
-  canvas.height = S.proj.h || 1080;
-  const ctx = canvas.getContext('2d');
-
-  try {
-    ctx.drawImage(mv, 0, 0, canvas.width, canvas.height);
-  } catch(e) {
-    notify('Could not capture frame — try pausing first', '#E31837');
-    return;
+  // Capture frame: canvas first (effects/transitions), fallback to video element
+  let dataURL = null;
+  const transCvs = document.getElementById('cut-trans-cvs');
+  if(transCvs && transCvs.style.display !== 'none' && transCvs.width > 0){
+    try { dataURL = transCvs.toDataURL('image/jpeg', 0.92); } catch(e){}
+  }
+  if(!dataURL){
+    const mv = document.getElementById('cut-main-vid');
+    const fc = document.createElement('canvas');
+    fc.width = S.proj.w || 1920;
+    fc.height = S.proj.h || 1080;
+    try {
+      fc.getContext('2d').drawImage(mv, 0, 0, fc.width, fc.height);
+      dataURL = fc.toDataURL('image/jpeg', 0.92);
+    } catch(e) {
+      notify('Could not capture frame - pause the video first', '#E31837');
+      return;
+    }
   }
 
-  // Convert to image
   const img = new Image();
-  img.src = canvas.toDataURL('image/jpeg', 0.92);
+  img.src = dataURL;
 
-  // Find a free video track for the frame hold
-  const videoTracks = S.cut.videoTracks || 2;
-  const usedTracks = new Set(S.cut.clips.filter(c=>c.type==='video'||c.type==='frame_hold').map(c=>c.track));
-  let holdTrack = videoTracks; // default: new track after existing video tracks
-  // Check if there's a free spot on existing tracks (no overlap at ph)
-  for(let t = 0; t < videoTracks + 2; t++){
-    const occupied = S.cut.clips.some(c =>
-      (c.type==='video'||c.type==='frame_hold') &&
-      c.track === t &&
-      ph < c.start + c.dur &&
-      ph + 2 > c.start
+  // Frame hold always gets its own dedicated track above all video+audio tracks
+  const holdDur = 3;
+  const baseV = S.cut.videoTracks || 2;
+  const baseA = S.cut.audioTracks || 2;
+  let holdTrack = baseV + baseA;
+  for(let t = baseV + baseA; t < baseV + baseA + 8; t++){
+    const conflict = S.cut.clips.some(c =>
+      c.type === 'frame_hold' && c.track === t &&
+      ph < c.start + c.dur && ph + holdDur > c.start
     );
-    if(!occupied){ holdTrack = t; break; }
+    if(!conflict){ holdTrack = t; break; }
   }
-
-  // If we need a new track, expand videoTracks
   if(holdTrack >= (S.cut.videoTracks || 2)){
     S.cut.videoTracks = holdTrack + 1;
     rebuildTrackLabels();
   }
 
-  // Add the frame hold clip
-  const holdId = 'fh_' + Date.now();
   const holdClip = {
     type: 'frame_hold',
     start: ph,
-    dur: 2,         // default 2 seconds — user can resize
+    dur: holdDur,
     track: holdTrack,
-    name: '🖼 Frame Hold',
-    color: 'linear-gradient(135deg,#3d1a5a,#6b2fa0)', // purple
-    _id: holdId,
-    _img: img,      // captured still frame
-    mediaIdx: clip.mediaIdx, // reference for display
+    name: 'Frame Hold',
+    color: 'linear-gradient(135deg,#3d1a5a,#6b2fa0)',
+    _imgData: dataURL,
+    _img: img,
   };
 
   if(window.cutSaveHistory) cutSaveHistory('insert_frame_hold');
   S.cut.clips.push(holdClip);
-  const newCi = S.cut.clips.length - 1;
-  S.cut.sel = newCi;
+  S.cut.sel = S.cut.clips.length - 1;
 
   renderCutTimeline();
   syncCutVid();
   scheduleSave();
-
-  notify('🖼️ Frame Hold inserted — drag edges to resize', '#3fb950');
+  notify('Frame Hold inserted (' + holdDur + 's) - drag edges to resize', '#3fb950');
 }
 window.insertFrameHold = insertFrameHold;
 
