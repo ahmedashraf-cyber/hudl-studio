@@ -680,6 +680,13 @@ function showExportModal(){
           <option value="24">24 fps — Cinematic</option>
         </select>
       </div>
+      <div style="margin-bottom:14px">
+        <label style="font-size:10px;font-weight:700;color:#8b949e;text-transform:uppercase;letter-spacing:.7px;display:block;margin-bottom:6px">Format</label>
+        <select id="exp-format" style="width:100%;padding:9px 11px;background:#252d3d;border:1px solid rgba(255,255,255,0.11);border-radius:8px;color:#f0f2f5;font-size:13px;outline:none">
+          <option value="mp4">MP4 (H.264) — Best compatibility</option>
+          <option value="webm">WebM (VP9) — Open format</option>
+        </select>
+      </div>
       <div id="exp-progress" style="display:none;margin-bottom:14px">
         <div style="font-size:12px;font-weight:600;color:#f0f2f5;margin-bottom:8px" id="exp-status">Preparing...</div>
         <div style="background:#161b24;border-radius:6px;height:10px;overflow:hidden;margin-bottom:6px">
@@ -692,7 +699,7 @@ function showExportModal(){
         <input id="exp-filename" type="text" value="${(S.currentProject?.name||'export').replace(/[^\w\s-]/g,'').trim()}" style="width:100%;padding:9px 11px;background:#252d3d;border:1px solid rgba(255,255,255,0.11);border-radius:8px;color:#f0f2f5;font-size:13px;outline:none;box-sizing:border-box" placeholder="my-video">
       </div>
       <div style="font-size:11px;color:#8b949e;background:rgba(88,166,255,0.07);border:1px solid rgba(88,166,255,0.15);border-radius:6px;padding:8px 10px;margin-bottom:18px">
-        ℹ️ Exports as WebM with video + audio. Open in VLC or Chrome. To convert to MP4: use VLC → Media → Convert.
+        ℹ️ Frame-accurate export with all effects, freezes, and audio tracks. MP4 exports use FFmpeg (first export may take extra time to load).
       </div>
       <div style="display:flex;justify-content:flex-end;gap:8px">
         <button onclick="document.getElementById('export-modal').remove()" style="padding:9px 20px;border-radius:8px;font-size:13px;font-weight:600;font-family:DM Sans,sans-serif;cursor:pointer;background:transparent;border:1px solid rgba(255,255,255,0.15);color:#8b949e">Cancel</button>
@@ -703,10 +710,10 @@ function showExportModal(){
 }
 
 async function startExport(){
-  window._exportFileName = (document.getElementById('exp-filename')?.value||'export').trim().replace(/[^\w\s-]/g,'').replace(/\s+/g,'_')||'export';
   const qParts=(document.getElementById('exp-quality').value||'1920,1080,4000000').split(',');
   const W=parseInt(qParts[0])||1920, H=parseInt(qParts[1])||1080, BR=parseInt(qParts[2])||4000000;
   const fps=parseInt(document.getElementById('exp-fps').value)||30;
+  const fmt=document.getElementById('exp-format')?.value||'webm';
   const btn=document.getElementById('exp-btn');
   const progressDiv=document.getElementById('exp-progress');
   const bar=document.getElementById('exp-bar');
@@ -716,195 +723,272 @@ async function startExport(){
   progressDiv.style.display='block';
 
   const videoClips=S.cut.clips.filter(c=>c.type==='video').sort((a,b)=>a.start-b.start);
+  const audioClips=S.cut.clips.filter(c=>c.type==='audio'&&!c.linkedToVideo).sort((a,b)=>a.start-b.start);
+  const mutedTracks=S.cut.mutedTracks||{};
+  const hiddenTracks=S.cut.hiddenTracks||{};
+
   if(!videoClips.length){notify('No video clips on timeline','#E31837');btn.disabled=false;btn.textContent='▶ Export';return;}
   const totalDur=Math.max(...videoClips.map(c=>c.start+c.dur));
+  const totalFrames=Math.ceil(totalDur*fps);
+  const dt=1/fps;
 
-  // Offscreen canvas for video frames
+  // ── Offscreen canvas for frame-accurate rendering ──
   const canvas=document.createElement('canvas');
   canvas.width=W; canvas.height=H;
   const ctx=canvas.getContext('2d');
 
-  // AudioContext for capturing audio
-  let audioCtx=null, audioDest=null;
-  try{
-    audioCtx=new (window.AudioContext||window.webkitAudioContext)();
-    await audioCtx.resume();
-    audioDest=audioCtx.createMediaStreamDestination();
-  }catch(err){ console.warn('Audio capture unavailable:',err); }
-
-  // Preload video elements
+  // ── Preload all video elements ──
   status.textContent='Loading video files...';
   const vidEls={};
-  const audioSrcNodes={};
-
-  // Determine which video tracks have audio muted by user
-  const mutedVideoTracks = S.cut.mutedTracks || {};
-
   for(const clip of videoClips){
     const item=S.cut.media[clip.mediaIdx];
     if(!item?.url||vidEls[clip.mediaIdx]) continue;
     const v=document.createElement('video');
-    v.src=item.url; v.crossOrigin='anonymous'; v.preload='auto'; v.muted=true;
+    v.src=item.url; v.preload='auto'; v.muted=true;
+    v.style.display='none';
     document.body.appendChild(v);
-    await new Promise(r=>{v.oncanplaythrough=r;v.onerror=r;setTimeout(r,5000);});
+    await new Promise(r=>{v.oncanplaythrough=()=>r(); v.onerror=()=>r(); setTimeout(r,8000);});
     vidEls[clip.mediaIdx]=v;
-    // Wire video audio ONLY if this track is NOT muted by user
-    const trackMuted = mutedVideoTracks[clip.track] === true;
-    if(audioCtx&&audioDest&&!trackMuted){
+  }
+
+  // ── Build AudioContext and connect all audio sources ──
+  let audioCtx=null, audioDest=null;
+  const audioElsMap={};
+  try{
+    audioCtx=new(window.AudioContext||window.webkitAudioContext)();
+    await audioCtx.resume();
+    audioDest=audioCtx.createMediaStreamDestination();
+
+    // Wire video audio tracks (if not muted)
+    for(const clip of videoClips){
+      if(mutedTracks[clip.track]) continue;
+      const v=vidEls[clip.mediaIdx];
+      if(!v||audioElsMap['v_'+clip.mediaIdx]) continue;
       try{
         const src=audioCtx.createMediaElementSource(v);
         const gain=audioCtx.createGain();
-        gain.gain.value=clip.volume!==undefined?clip.volume/100:1.0;
-        src.connect(gain);
-        gain.connect(audioDest);
-        audioSrcNodes[clip.mediaIdx]=v;
-      }catch(e){ console.warn('Audio wire failed:',e); }
+        gain.gain.value=1.0;
+        src.connect(gain); gain.connect(audioDest);
+        audioElsMap['v_'+clip.mediaIdx]=v;
+      }catch(e){}
     }
-  }
 
-  // Preload and wire standalone audio clips (separate audio tracks)
-  const audioClips = S.cut.clips.filter(c=>c.type==='audio'&&!c.linkedToVideo).sort((a,b)=>a.start-b.start);
-  const audioEls = {};
-  const audioGains = {};
-  for(const clip of audioClips){
-    const item=S.cut.media[clip.mediaIdx];
-    if(!item?.url) continue;
-    const trackMuted = mutedVideoTracks[clip.track] === true;
-    if(trackMuted) continue; // respect mute
-    if(audioEls[clip.mediaIdx]) continue; // already loaded
-    const a=document.createElement('audio');
-    a.src=item.url; a.crossOrigin='anonymous'; a.preload='auto'; a.muted=true;
-    document.body.appendChild(a);
-    await new Promise(r=>{a.oncanplaythrough=r;a.onerror=r;setTimeout(r,5000);});
-    audioEls[clip.mediaIdx]=a;
-    // Wire to AudioContext
-    if(audioCtx&&audioDest){
+    // Wire standalone audio clips
+    for(const clip of audioClips){
+      if(mutedTracks[clip.track]) continue;
+      const item=S.cut.media[clip.mediaIdx];
+      if(!item?.url||audioElsMap['a_'+clip.mediaIdx]) continue;
+      const a=document.createElement('audio');
+      a.src=item.url; a.preload='auto'; a.muted=true;
+      a.style.display='none';
+      document.body.appendChild(a);
+      await new Promise(r=>{a.oncanplaythrough=()=>r(); a.onerror=()=>r(); setTimeout(r,8000);});
       try{
         const src=audioCtx.createMediaElementSource(a);
         const gain=audioCtx.createGain();
-        gain.gain.value=clip.volume!==undefined?clip.volume/100:1.0;
-        src.connect(gain);
-        gain.connect(audioDest);
-        audioGains[clip.mediaIdx]=gain;
-        audioSrcNodes['audio_'+clip.mediaIdx]=a;
-      }catch(e){ console.warn('Audio clip wire failed:',e); }
+        const vol=clip.volume!==undefined?clip.volume/100:1.0;
+        gain.gain.value=vol;
+        src.connect(gain); gain.connect(audioDest);
+        audioElsMap['a_'+clip.mediaIdx]=a;
+      }catch(e){}
     }
-  }
+  }catch(err){ console.warn('Audio capture error:', err); }
 
-  // Build MediaStream: video from canvas + audio from AudioContext
+  // ── Set up MediaRecorder ──
   const videoStream=canvas.captureStream(fps);
-  let finalStream=videoStream;
-  if(audioCtx&&audioDest&&audioDest.stream.getAudioTracks().length>0){
-    finalStream=new MediaStream([...videoStream.getVideoTracks(),...audioDest.stream.getAudioTracks()]);
+  const streams=[...videoStream.getVideoTracks()];
+  if(audioDest&&audioDest.stream.getAudioTracks().length>0){
+    streams.push(...audioDest.stream.getAudioTracks());
   }
-
-  // Pick best supported codec with audio
-  const mimeTypes=['video/webm;codecs=vp9,opus','video/webm;codecs=vp8,opus','video/webm;codecs=h264,mp4a.40.2','video/webm'];
+  const finalStream=new MediaStream(streams);
+  const mimeTypes=['video/webm;codecs=vp9,opus','video/webm;codecs=vp8,opus','video/webm'];
   const mimeType=mimeTypes.find(m=>MediaRecorder.isTypeSupported(m))||'video/webm';
   const recorder=new MediaRecorder(finalStream,{mimeType,videoBitsPerSecond:BR,audioBitsPerSecond:192000});
   const chunks=[];
   recorder.ondataavailable=e=>{if(e.data&&e.data.size>0)chunks.push(e.data);};
 
+  const fname=(document.getElementById('exp-filename')?.value||S.currentProject?.name||'export')
+    .replace(/[^\w\s-]/g,'').trim().replace(/\s+/g,'_')||'export';
+
   recorder.onstop=async()=>{
-    status.textContent='Packaging download...';
-    bar.style.width='100%';
-    // Cleanup video elements
-    Object.values(vidEls).forEach(v=>{v.pause();document.body.contains(v)&&document.body.removeChild(v);});
-    // Cleanup standalone audio elements
-    Object.values(audioEls).forEach(a=>{a.pause();document.body.contains(a)&&document.body.removeChild(a);});
+    status.textContent=fmt==='mp4'?'Converting to MP4 (FFmpeg)...':'Packaging download...';
+    bar.style.width='99%';
+    // Cleanup
+    Object.values(vidEls).forEach(v=>{v.pause();v.remove();});
+    Object.values(audioElsMap).forEach(a=>{try{a.pause();a.remove();}catch(e){}});
     if(audioCtx) audioCtx.close();
-    await new Promise(r=>setTimeout(r,300));
-    const blob=new Blob(chunks,{type:mimeType});
-    const url=URL.createObjectURL(blob);
-    const a=document.createElement('a');
-    a.href=url;
-    const fname=(S.currentProject?.name||'export').replace(/[^\w\s-]/g,'').trim().replace(/\s+/g,'_');
-    a.download=fname+'_'+W+'x'+H+'_'+fps+'fps.webm';
-    document.body.appendChild(a); a.click(); document.body.removeChild(a);
-    setTimeout(()=>URL.revokeObjectURL(url),30000);
-    document.getElementById('export-modal')?.remove();
-    notify('✓ Export downloaded — '+fname+'.webm','#3fb950');
+    await new Promise(r=>setTimeout(r,200));
+    const webmBlob=new Blob(chunks,{type:mimeType});
+
+    if(fmt==='mp4'){
+      try{
+        await exportAsMp4(webmBlob, fname, W, H, fps, status, bar, eta);
+      }catch(err){
+        console.error('MP4 conversion failed, falling back to WebM:', err);
+        notify('MP4 failed — downloading as WebM instead','#d29922');
+        downloadBlob(webmBlob, fname+'_'+W+'x'+H+'.webm');
+      }
+    } else {
+      downloadBlob(webmBlob, fname+'_'+W+'x'+H+'_'+fps+'fps.webm');
+      status.textContent='✓ Export complete!';
+    }
+    bar.style.width='100%';
+    setTimeout(()=>document.getElementById('export-modal')?.remove(), 1200);
+    notify('✓ Export downloaded — '+fname,'#3fb950');
   };
 
-  recorder.start(500); // collect every 500ms for stable chunks
-  status.textContent='Rendering with audio...';
+  // ── Build freeze lookup for fast access ──
+  const freezeOverlays=(window._overlays||[]).filter(o=>o.type==='freeze');
+  const playedFreezes=new Set(); // track which freezes we've "played" in export
 
-  const dt=1/fps;
-  let t=0;
-  let lastActiveVid=null;
+  // ── Frame-accurate render loop ──
+  recorder.start(500);
+  status.textContent='Rendering frames...';
   const startTs=Date.now();
+  let lastVidEl=null;
+  let lastAudioTime={};
 
-  async function renderFrame(){
-    if(t>totalDur+dt*2){
-      // Stop active video audio
-      if(lastActiveVid){lastActiveVid.pause();}
-      await new Promise(r=>setTimeout(r,600)); // flush audio buffer
-      recorder.stop();
-      return;
+  for(let frame=0; frame<=totalFrames; frame++){
+    const t=frame*dt;
+    if(frame%5===0){
+      const pct=Math.min(97,Math.round((frame/totalFrames)*100));
+      bar.style.width=pct+'%';
+      const elapsed=(Date.now()-startTs)/1000;
+      const rate=elapsed>0.5?(t/elapsed):1;
+      const rem=rate>0?(totalDur-t)/rate:0;
+      status.textContent=`Rendering: ${pct}% · ${t.toFixed(2)}s / ${totalDur.toFixed(1)}s`;
+      if(rem>0.5) eta.textContent=`~${Math.ceil(rem)}s remaining (${rate.toFixed(1)}× realtime)`;
     }
 
-    const clip=videoClips.find(c=>t>=c.start&&t<c.start+c.dur);
+    // Clear canvas
     ctx.fillStyle='#000';
     ctx.fillRect(0,0,W,H);
 
-    if(clip){
+    // ── Check for active freeze at this time ──
+    const activeFrz=freezeOverlays.find(o=>t>=o.startTime&&t<o.endTime);
+
+    // ── Find video clip at this time ──
+    const clip=videoClips.find(c=>t>=c.start&&t<c.start+c.dur);
+
+    if(activeFrz&&activeFrz._img&&activeFrz._img.complete){
+      // Draw frozen frame
+      ctx.drawImage(activeFrz._img,0,0,W,H);
+    } else if(clip&&!hiddenTracks[clip.track]){
       const vid=vidEls[clip.mediaIdx];
       if(vid){
-        const fileTime=(clip.fileStart||0)+Math.max(0,t-clip.start);
-        const trackMuted2 = mutedVideoTracks[clip.track] === true;
-        // Switch active video when clip changes
-        if(lastActiveVid!==vid){
-          if(lastActiveVid){lastActiveVid.pause();}
-          lastActiveVid=vid;
+        const fileTime=Math.min((clip.fileStart||0)+Math.max(0,t-clip.start), vid.duration||999);
+        // Seek video to exact frame time and wait for decode
+        if(Math.abs(vid.currentTime-fileTime)>dt*1.5){
           vid.currentTime=fileTime;
-          vid.muted=trackMuted2; // respect user's mute setting
-          try{ await vid.play(); }catch(e){}
+          await new Promise(r=>{
+            const onSeeked=()=>{vid.removeEventListener('seeked',onSeeked);r();};
+            vid.addEventListener('seeked',onSeeked);
+            setTimeout(r,500); // fallback timeout
+          });
+        }
+        // Play video for audio capture if not muted
+        if(!mutedTracks[clip.track]){
+          vid.muted=false;
+          if(vid.paused){
+            try{ await vid.play(); }catch(e){}
+          }
         } else {
-          // Keep in sync
-          if(Math.abs(vid.currentTime-fileTime)>dt*3) vid.currentTime=fileTime;
-          vid.muted=trackMuted2;
+          vid.muted=true;
         }
         try{ ctx.drawImage(vid,0,0,W,H); }catch(e){}
       }
-    } else {
-      if(lastActiveVid){lastActiveVid.pause();lastActiveVid=null;}
+    } else if(clip&&hiddenTracks[clip.track]){
+      // Hidden track — draw nothing (black frame)
     }
 
-    // Handle standalone audio clips — play/pause/seek as needed
+    // ── Handle standalone audio clips ──
     for(const aClip of audioClips){
-      const aEl = audioEls[aClip.mediaIdx];
+      if(mutedTracks[aClip.track]) continue;
+      const aEl=audioElsMap['a_'+aClip.mediaIdx];
       if(!aEl) continue;
-      const inRange = t >= aClip.start && t < aClip.start + aClip.dur;
+      const inRange=t>=aClip.start&&t<aClip.start+aClip.dur;
       if(inRange){
-        const aFileTime = (aClip.fileStart||0) + Math.max(0, t - aClip.start);
-        aEl.muted = false;
+        const aFileTime=(aClip.fileStart||0)+Math.max(0,t-aClip.start);
+        aEl.muted=false;
         if(aEl.paused){
-          aEl.currentTime = aFileTime;
+          aEl.currentTime=aFileTime;
           try{ await aEl.play(); }catch(e){}
-        } else if(Math.abs(aEl.currentTime - aFileTime) > dt*3){
-          aEl.currentTime = aFileTime;
+        } else if(Math.abs(aEl.currentTime-aFileTime)>0.3){
+          aEl.currentTime=aFileTime;
         }
       } else {
         if(!aEl.paused) aEl.pause();
       }
     }
 
-    // Progress
-    const pct=Math.min(98,Math.round((t/totalDur)*100));
-    bar.style.width=pct+'%';
-    const elapsed=(Date.now()-startTs)/1000;
-    const rate=elapsed>0.5?t/elapsed:fps/100;
-    const rem=rate>0?(totalDur-t)/rate:0;
-    status.textContent=`Rendering: ${pct}% · ${t.toFixed(1)}s / ${totalDur.toFixed(1)}s`;
-    if(rem>1) eta.textContent=`~${Math.ceil(rem)}s remaining (${(rate).toFixed(1)}x realtime)`;
-
-    t+=dt;
-    // Use setTimeout for consistent frame pacing
-    setTimeout(renderFrame, 1000/fps);
+    // Yield to browser every 10 frames to prevent UI freeze
+    if(frame%10===0) await new Promise(r=>setTimeout(r,0));
   }
 
-  await renderFrame();
+  // Flush last audio
+  await new Promise(r=>setTimeout(r,800));
+  recorder.stop();
 }
+
+// ── Download helper ──
+function downloadBlob(blob, filename){
+  const url=URL.createObjectURL(blob);
+  const a=document.createElement('a');
+  a.href=url; a.download=filename;
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  setTimeout(()=>URL.revokeObjectURL(url),30000);
+}
+
+// ── MP4 conversion via FFmpeg.wasm ──
+async function exportAsMp4(webmBlob, fname, W, H, fps, status, bar, eta){
+  // Lazy-load FFmpeg.wasm from CDN
+  if(!window._ffmpegLoaded){
+    status.textContent='Loading FFmpeg (one-time download ~10MB)...';
+    await new Promise((resolve,reject)=>{
+      const s=document.createElement('script');
+      s.src='https://unpkg.com/@ffmpeg/ffmpeg@0.12.6/dist/umd/ffmpeg.js';
+      s.onload=resolve; s.onerror=reject;
+      document.head.appendChild(s);
+    });
+    await new Promise((resolve,reject)=>{
+      const s=document.createElement('script');
+      s.src='https://unpkg.com/@ffmpeg/util@0.12.1/dist/umd/index.js';
+      s.onload=resolve; s.onerror=reject;
+      document.head.appendChild(s);
+    });
+    window._ffmpegLoaded=true;
+  }
+
+  const {FFmpeg}=window.FFmpegWASM||window;
+  const {fetchFile}=window.FFmpegUtil||window;
+  if(!FFmpeg||!fetchFile) throw new Error('FFmpeg not available');
+
+  const ffmpeg=new FFmpeg();
+  ffmpeg.on('progress',({progress})=>{
+    bar.style.width=Math.round(99*progress)+'%';
+    status.textContent='Converting to MP4: '+Math.round(progress*100)+'%';
+  });
+  await ffmpeg.load({
+    coreURL:'https://unpkg.com/@ffmpeg/core@0.12.6/dist/umd/ffmpeg-core.js',
+  });
+
+  const webmData=await fetchFile(webmBlob);
+  await ffmpeg.writeFile('input.webm', webmData);
+  await ffmpeg.exec([
+    '-i','input.webm',
+    '-c:v','libx264','-preset','fast','-crf','22',
+    '-c:a','aac','-b:a','192k',
+    '-movflags','+faststart',
+    '-r',String(fps),
+    'output.mp4'
+  ]);
+  const mp4Data=await ffmpeg.readFile('output.mp4');
+  const mp4Blob=new Blob([mp4Data.buffer],{type:'video/mp4'});
+  downloadBlob(mp4Blob, fname+'_'+W+'x'+H+'_'+fps+'fps.mp4');
+  status.textContent='✓ MP4 export complete!';
+}
+
+
 
 // ═══════════════════════════════════════
 // MENU SYSTEM
