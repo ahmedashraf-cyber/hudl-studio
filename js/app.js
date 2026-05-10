@@ -3966,8 +3966,20 @@ function cutTogglePlay(){
         // Check if we've reached end of THIS CLIP (fileStart + dur = end position in file)
         const clipEndInFile = (clipNow.fileStart||0) + clipNow.dur;
         if(vidEl.currentTime >= clipEndInFile - 0.05){
-          // Find next clip on timeline
           const currentEnd = clipNow.start + clipNow.dur;
+          // If a frame_hold immediately follows this clip, jump to it instead of skipping
+          const fhNext = S.cut.clips.find(c =>
+            c.type==='frame_hold' && c.track===clipNow.track &&
+            Math.abs(c.start - currentEnd) < 0.12
+          );
+          if(fhNext){
+            vidEl.pause();
+            S.cut.ph = fhNext.start;
+            window._fhLastTime = null;
+            updateCutPH();
+            _cutTick = requestAnimationFrame(playFrame);
+            return;
+          }
           const nextClip = S.cut.clips
             .filter(c=>c.type==='video' && c!==clipNow && c.start >= currentEnd-0.3)
             .sort((a,b)=>a.start-b.start)[0];
