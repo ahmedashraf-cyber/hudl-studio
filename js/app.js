@@ -3796,7 +3796,34 @@ function cutTogglePlay(){
         const hasEffNow=(S.cut.effects[ciNow2]||[]).filter(e=>CUT_EFFECTS[e.i]?.type!=='transition').length>0;
         const activeFreezeNow=window._overlays&&window._overlays.find(o=>o.type==='freeze'&&phNow>=o.startTime&&phNow<o.endTime&&!_playedFreezes.has(o.id));
         const hasOverlays=window._overlays&&window._overlays.some(o=>phNow>=o.startTime&&phNow<o.endTime&&!(o.type==='freeze'&&_playedFreezes.has(o.id)));
-        if(activeFreezeNow){
+        if(activeNow.type === 'frame_hold'){
+          // ── FRAME HOLD ACTIVE ──
+          // Pause the underlying video so ph doesn't get overridden by video time
+          const mvFH = $('cut-main-vid');
+          if(mvFH && !mvFH.paused) mvFH.pause();
+          // Advance ph by wall clock (like freeze)
+          if(!window._fhLastTime) window._fhLastTime = performance.now();
+          const _fhNow = performance.now();
+          const _fhDt = Math.min((_fhNow - window._fhLastTime) / 1000, 0.05);
+          window._fhLastTime = _fhNow;
+          S.cut.ph = Math.min(phNow + _fhDt, activeNow.start + activeNow.dur);
+          updateCutPH();
+          syncCutVid(); // draws the frame_hold _img via canvas
+          // If frame_hold ended, resume video from the right position
+          if(S.cut.ph >= activeNow.start + activeNow.dur - 0.02){
+            window._fhLastTime = null;
+            // Resume video from position matching current ph
+            const _nextVidClip = S.cut.clips.find(c =>
+              c.type === 'video' &&
+              S.cut.ph >= c.start && S.cut.ph < c.start + c.dur
+            );
+            if(mvFH && _nextVidClip){
+              const _resumeFileT = (_nextVidClip.fileStart||0) + (S.cut.ph - _nextVidClip.start) * (_nextVidClip.speed||1);
+              mvFH.currentTime = _resumeFileT;
+              mvFH.play().catch(()=>{});
+            }
+          }
+        } else if(activeFreezeNow){
           // ── FREEZE ACTIVE ──
           const mv2=$('cut-main-vid');
           if(!_freezeActive){
@@ -3897,7 +3924,10 @@ function cutTogglePlay(){
         updateCutPH();
         if(S.cut.ph>=maxPh){ stopCutPlay(); return; }
       } else { _audioOnlyLastTime=null; }
-      if(clipNow&&clipNow.type!=='frame_hold'&&vidEl&&!vidEl.paused&&!_freezeActive){
+      // Also skip video-driving when a frame_hold is active at current ph
+      const _fhActiveNow = S.cut.clips.some(c => c.type==='frame_hold' && S.cut.ph>=c.start && S.cut.ph<c.start+c.dur);
+      if(!_fhActiveNow) window._fhLastTime = null; // reset clock when not in frame_hold
+      if(clipNow&&clipNow.type!=='frame_hold'&&!_fhActiveNow&&vidEl&&!vidEl.paused&&!_freezeActive){
         // Video is driving — read current position (not during freeze — ph is driven by clock then)
         // ph = clip timeline start + (currentTime - fileStart)
         S.cut.ph=clipNow.start+(vidEl.currentTime-(clipNow.fileStart||0))/(clipNow.speed||1); // ph tracks real time, divided by speed to get timeline time
