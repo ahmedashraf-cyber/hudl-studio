@@ -734,9 +734,13 @@ async function startExport(){
   // AudioContext for capturing audio
   let audioCtx=null, audioDest=null;
   try{
-    audioCtx=new (window.AudioContext||window.webkitAudioContext)();
+    audioCtx=new (window.AudioContext||window.webkitAudioContext)({sampleRate:48000});
     await audioCtx.resume();
     audioDest=audioCtx.createMediaStreamDestination();
+    // Master gain node — all sources connect through this for consistent volume
+    window._exportMasterGain=audioCtx.createGain();
+    window._exportMasterGain.gain.value=2.0; // 2× boost for MediaRecorder capture
+    window._exportMasterGain.connect(audioDest);
   }catch(err){ console.warn('Audio capture unavailable:',err); }
 
   // Preload video elements
@@ -761,7 +765,8 @@ async function startExport(){
         const gain=audioCtx.createGain();
         gain.gain.value=1.0;
         src.connect(gain);
-        gain.connect(audioDest);
+        // Route through master gain for consistent output level
+        gain.connect(window._exportMasterGain||audioDest);
         audioSrcNodes[clip.mediaIdx]=v;
       }catch(e){ console.warn('Audio wire failed:',e); }
     }
@@ -787,7 +792,8 @@ async function startExport(){
         const src=audioCtx.createMediaElementSource(a);
         const gain=audioCtx.createGain();
         gain.gain.value=clip.volume!==undefined?clip.volume/100:1.0;
-        src.connect(gain); gain.connect(audioDest);
+        src.connect(gain);
+        gain.connect(window._exportMasterGain||audioDest);
       }catch(e){}
     }
   }
@@ -822,6 +828,7 @@ async function startExport(){
     // Cleanup video and audio elements
     Object.values(vidEls).forEach(v=>{try{v.pause();v.src='';document.body.contains(v)&&document.body.removeChild(v);}catch(e){}});
     Object.values(audioEls).forEach(a=>{try{a.pause();a.src='';document.body.contains(a)&&document.body.removeChild(a);}catch(e){}});
+    window._exportMasterGain=null;
     if(audioCtx) audioCtx.close();
     await new Promise(r=>setTimeout(r,300));
     const blob=new Blob(chunks,{type:mimeType});
@@ -3827,10 +3834,11 @@ function cutTogglePlay(){
           }
           _freezeActive=false;
           _freezeLastTime=null;
-          const _resumePh=_freezeStartPh!==null?_freezeStartPh:S.cut.ph;
+          // Keep S.cut.ph at freeze END time — do NOT reset back to freeze start
+          // _freezeStartPh is only used to restore the video file position
           _freezeStartPh=null;
           _freezeExitTime=performance.now();
-          S.cut.ph=_resumePh;
+          // S.cut.ph already = freeze end time — just update the UI
           updateCutPH();
           const mv2=$('cut-main-vid');
           const c2e=document.getElementById('cut-trans-cvs');
@@ -3880,7 +3888,7 @@ function cutTogglePlay(){
       if(clipNow&&vidEl&&!vidEl.paused&&!_freezeActive){
         // Video is driving — read current position (not during freeze — ph is driven by clock then)
         // ph = clip timeline start + (currentTime - fileStart)
-        S.cut.ph=clipNow.start+(vidEl.currentTime-(clipNow.fileStart||0))/(1); // ph tracks real time
+        S.cut.ph=clipNow.start+(vidEl.currentTime-(clipNow.fileStart||0))/(clipNow.speed||1); // ph tracks real time, divided by speed to get timeline time
         // Ensure playbackRate matches clip speed
         const targetRate=Math.max(0.1,clipNow.speed||1);
         if(Math.abs(vidEl.playbackRate-targetRate)>0.01) vidEl.playbackRate=targetRate;
@@ -3928,7 +3936,7 @@ function cutTogglePlay(){
           vidEl.play().catch(()=>{});
         }
       }
-      if(!_freezeActive) syncAudioPlayback(); // don't sync audio during freeze
+      if(!_freezeActive || _freezeMode==='video') syncAudioPlayback(); // sync audio unless fully frozen
       _syncVideoMute();
       _cutTick=requestAnimationFrame(playFrame);
     }
