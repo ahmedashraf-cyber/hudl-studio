@@ -674,17 +674,10 @@ function showExportModal(){
       <div style="margin-bottom:14px">
         <label style="font-size:10px;font-weight:700;color:#8b949e;text-transform:uppercase;letter-spacing:.7px;display:block;margin-bottom:6px">Frame Rate</label>
         <select id="exp-fps" style="width:100%;padding:9px 11px;background:#252d3d;border:1px solid rgba(255,255,255,0.11);border-radius:8px;color:#f0f2f5;font-size:13px;outline:none">
-          <option value="60">60 fps</option>
-          <option value="30" selected>30 fps</option>
+          <option value="60">60 fps — Smooth</option>
+          <option value="30" selected>30 fps — Standard</option>
           <option value="25">25 fps — PAL</option>
           <option value="24">24 fps — Cinematic</option>
-        </select>
-      </div>
-      <div style="margin-bottom:14px">
-        <label style="font-size:10px;font-weight:700;color:#8b949e;text-transform:uppercase;letter-spacing:.7px;display:block;margin-bottom:6px">Format</label>
-        <select id="exp-format" style="width:100%;padding:9px 11px;background:#252d3d;border:1px solid rgba(255,255,255,0.11);border-radius:8px;color:#f0f2f5;font-size:13px;outline:none">
-          <option value="mp4">MP4 — Best compatibility</option>
-          <option value="webm">WebM — Open format</option>
         </select>
       </div>
       <div id="exp-progress" style="display:none;margin-bottom:14px">
@@ -699,7 +692,7 @@ function showExportModal(){
         <input id="exp-filename" type="text" value="${(S.currentProject?.name||'export').replace(/[^\w\s-]/g,'').trim()}" style="width:100%;padding:9px 11px;background:#252d3d;border:1px solid rgba(255,255,255,0.11);border-radius:8px;color:#f0f2f5;font-size:13px;outline:none;box-sizing:border-box" placeholder="my-video">
       </div>
       <div style="font-size:11px;color:#8b949e;background:rgba(88,166,255,0.07);border:1px solid rgba(88,166,255,0.15);border-radius:6px;padding:8px 10px;margin-bottom:18px">
-        ℹ️ Exports in real-time — includes all effects, freeze frames, and audio tracks. Export time ≈ video duration. MP4 uses FFmpeg (loads once, ~10MB).
+        ℹ️ Exports as WebM with video + audio. Open in VLC or Chrome. To convert to MP4: use VLC → Media → Convert.
       </div>
       <div style="display:flex;justify-content:flex-end;gap:8px">
         <button onclick="document.getElementById('export-modal').remove()" style="padding:9px 20px;border-radius:8px;font-size:13px;font-weight:600;font-family:DM Sans,sans-serif;cursor:pointer;background:transparent;border:1px solid rgba(255,255,255,0.15);color:#8b949e">Cancel</button>
@@ -710,236 +703,426 @@ function showExportModal(){
 }
 
 async function startExport(){
+  window._exportFileName = (document.getElementById('exp-filename')?.value||'export').trim().replace(/[^\w\s-]/g,'').replace(/\s+/g,'_')||'export';
   const qParts=(document.getElementById('exp-quality').value||'1920,1080,4000000').split(',');
   const W=parseInt(qParts[0])||1920, H=parseInt(qParts[1])||1080, BR=parseInt(qParts[2])||4000000;
   const fps=parseInt(document.getElementById('exp-fps').value)||30;
-  const fmt=document.getElementById('exp-format')?.value||'webm';
   const btn=document.getElementById('exp-btn');
   const progressDiv=document.getElementById('exp-progress');
   const bar=document.getElementById('exp-bar');
   const status=document.getElementById('exp-status');
   const eta=document.getElementById('exp-eta');
-
   btn.disabled=true; btn.textContent='Exporting...';
   progressDiv.style.display='block';
 
   const videoClips=S.cut.clips.filter(c=>c.type==='video').sort((a,b)=>a.start-b.start);
-  const audioClips=S.cut.clips.filter(c=>c.type==='audio'&&!c.linkedToVideo).sort((a,b)=>a.start-b.start);
-  const mutedTracks=S.cut.mutedTracks||{};
-  const hiddenTracks=S.cut.hiddenTracks||{};
-  const freezeOverlays=(window._overlays||[]).filter(o=>o.type==='freeze'&&o._img);
-
-  if(!videoClips.length){ notify('No video clips','#E31837'); btn.disabled=false; btn.textContent='▶ Export'; return; }
+  if(!videoClips.length){notify('No video clips on timeline','#E31837');btn.disabled=false;btn.textContent='▶ Export';return;}
   const totalDur=Math.max(...videoClips.map(c=>c.start+c.dur));
-  const fname=(document.getElementById('exp-filename')?.value||S.currentProject?.name||'export')
-    .replace(/[^\w\s-]/g,'').trim().replace(/\s+/g,'_')||'export';
 
-  // ── Offscreen render canvas ──
+  // Offscreen canvas for video frames
   const canvas=document.createElement('canvas');
   canvas.width=W; canvas.height=H;
   const ctx=canvas.getContext('2d');
 
-  // ── AudioContext destination ──
+  // AudioContext for capturing audio
   let audioCtx=null, audioDest=null;
   try{
-    audioCtx=new(window.AudioContext||window.webkitAudioContext)();
+    audioCtx=new (window.AudioContext||window.webkitAudioContext)();
     await audioCtx.resume();
     audioDest=audioCtx.createMediaStreamDestination();
-  }catch(e){ console.warn('AudioContext failed',e); }
+  }catch(err){ console.warn('Audio capture unavailable:',err); }
 
-  // ── Preload all video elements ──
-  status.textContent='Loading media...';
+  // Preload video elements
+  status.textContent='Loading video files...';
   const vidEls={};
+  const audioSrcNodes={};
   for(const clip of videoClips){
     const item=S.cut.media[clip.mediaIdx];
     if(!item?.url||vidEls[clip.mediaIdx]) continue;
     const v=document.createElement('video');
-    v.src=item.url; v.preload='auto'; v.muted=true; v.style.display='none';
+    v.src=item.url; v.crossOrigin='anonymous'; v.preload='auto'; v.muted=true;
     document.body.appendChild(v);
-    await new Promise(r=>{v.oncanplaythrough=r; v.onerror=r; setTimeout(r,8000);});
+    await new Promise(r=>{v.oncanplaythrough=r;v.onerror=r;setTimeout(r,5000);});
     vidEls[clip.mediaIdx]=v;
-    // Wire audio (unless track muted)
-    if(audioCtx&&audioDest&&!mutedTracks[clip.track]){
-      try{
-        const src=audioCtx.createMediaElementSource(v);
-        const g=audioCtx.createGain(); g.gain.value=1;
-        src.connect(g); g.connect(audioDest);
-      }catch(e){}
-    }
-  }
-
-  // ── Preload standalone audio elements ──
-  const audioEls={};
-  for(const clip of audioClips){
-    if(mutedTracks[clip.track]) continue;
-    const item=S.cut.media[clip.mediaIdx];
-    if(!item?.url||audioEls[clip.mediaIdx]) continue;
-    const a=document.createElement('audio');
-    a.src=item.url; a.preload='auto'; a.muted=true; a.style.display='none';
-    document.body.appendChild(a);
-    await new Promise(r=>{a.oncanplaythrough=r; a.onerror=r; setTimeout(r,8000);});
-    audioEls[clip.mediaIdx]=a;
+    // Wire audio from this video to AudioContext
     if(audioCtx&&audioDest){
       try{
-        const src=audioCtx.createMediaElementSource(a);
-        const g=audioCtx.createGain();
-        g.gain.value=clip.volume!==undefined?clip.volume/100:1;
-        src.connect(g); g.connect(audioDest);
-      }catch(e){}
+        const src=audioCtx.createMediaElementSource(v);
+        const gain=audioCtx.createGain();
+        gain.gain.value=1.0;
+        src.connect(gain);
+        gain.connect(audioDest);
+        audioSrcNodes[clip.mediaIdx]=v;
+      }catch(e){ console.warn('Audio wire failed:',e); }
     }
   }
 
-  // ── Build final MediaStream ──
-  const vidStream=canvas.captureStream(fps);
-  const tracks=[...vidStream.getVideoTracks()];
-  if(audioDest?.stream.getAudioTracks().length) tracks.push(...audioDest.stream.getAudioTracks());
-  const finalStream=new MediaStream(tracks);
+  // Build MediaStream: video from canvas + audio from AudioContext
+  const videoStream=canvas.captureStream(fps);
+  let finalStream=videoStream;
+  if(audioCtx&&audioDest&&audioDest.stream.getAudioTracks().length>0){
+    finalStream=new MediaStream([...videoStream.getVideoTracks(),...audioDest.stream.getAudioTracks()]);
+  }
 
-  const mimes=['video/webm;codecs=vp9,opus','video/webm;codecs=vp8,opus','video/webm'];
-  const mimeType=mimes.find(m=>MediaRecorder.isTypeSupported(m))||'video/webm';
+  // Pick best supported codec with audio
+  const mimeTypes=['video/webm;codecs=vp9,opus','video/webm;codecs=vp8,opus','video/webm;codecs=h264,mp4a.40.2','video/webm'];
+  const mimeType=mimeTypes.find(m=>MediaRecorder.isTypeSupported(m))||'video/webm';
   const recorder=new MediaRecorder(finalStream,{mimeType,videoBitsPerSecond:BR,audioBitsPerSecond:192000});
   const chunks=[];
-  recorder.ondataavailable=e=>{if(e.data?.size>0)chunks.push(e.data);};
+  recorder.ondataavailable=e=>{if(e.data&&e.data.size>0)chunks.push(e.data);};
 
   recorder.onstop=async()=>{
-    status.textContent=fmt==='mp4'?'Converting to MP4...':'Packaging...';
-    // Cleanup
-    Object.values(vidEls).forEach(v=>{try{v.pause();v.src='';v.remove();}catch(e){}});
-    Object.values(audioEls).forEach(a=>{try{a.pause();a.src='';a.remove();}catch(e){}});
-    if(audioCtx) audioCtx.close();
-    await new Promise(r=>setTimeout(r,100));
-    const webmBlob=new Blob(chunks,{type:mimeType});
-    if(fmt==='mp4'){
-      try{ await exportAsMp4(webmBlob,fname,W,H,fps,status,bar); }
-      catch(e){ console.error('MP4 fail:',e); notify('MP4 failed — downloading WebM','#d29922'); _dlBlob(webmBlob,fname+'.webm'); }
-    } else {
-      _dlBlob(webmBlob,`${fname}_${W}x${H}_${fps}fps.webm`);
-    }
+    status.textContent='Packaging download...';
     bar.style.width='100%';
-    setTimeout(()=>document.getElementById('export-modal')?.remove(),1500);
-    notify('✓ Export done','#3fb950');
+    // Cleanup video elements
+    Object.values(vidEls).forEach(v=>{v.pause();document.body.contains(v)&&document.body.removeChild(v);});
+    if(audioCtx) audioCtx.close();
+    await new Promise(r=>setTimeout(r,300));
+    const blob=new Blob(chunks,{type:mimeType});
+    const url=URL.createObjectURL(blob);
+    const a=document.createElement('a');
+    a.href=url;
+    const fname=(S.currentProject?.name||'export').replace(/[^\w\s-]/g,'').trim().replace(/\s+/g,'_');
+    a.download=fname+'_'+W+'x'+H+'_'+fps+'fps.webm';
+    document.body.appendChild(a); a.click(); document.body.removeChild(a);
+    setTimeout(()=>URL.revokeObjectURL(url),30000);
+    document.getElementById('export-modal')?.remove();
+    notify('✓ Export downloaded — '+fname+'.webm','#3fb950');
   };
 
-  // ── Real-time playback render loop ──
-  // Strategy: advance time at exactly 1/fps intervals using a high-res clock.
-  // Draw each frame from the video's current position. This is real-time so audio sync is natural.
-  recorder.start(200);
-  status.textContent='Rendering...';
+  recorder.start(500); // collect every 500ms for stable chunks
+  status.textContent='Rendering with audio...';
 
-  let t=0;
   const dt=1/fps;
-  let lastVid=null;
-  const startWall=performance.now();
-
-  // Seek to start
-  const firstClip=videoClips.find(c=>0>=c.start&&0<c.start+c.dur);
-  if(firstClip){
-    const v=vidEls[firstClip.mediaIdx];
-    if(v){ v.currentTime=firstClip.fileStart||0; await new Promise(r=>{v.onseeked=r;setTimeout(r,1000);}); }
-  }
+  let t=0;
+  let lastActiveVid=null;
+  const startTs=Date.now();
 
   async function renderFrame(){
-    if(t>totalDur+dt){
-      // End of export
-      if(lastVid){lastVid.pause(); lastVid.muted=true;}
-      Object.values(audioEls).forEach(a=>a.pause());
-      await new Promise(r=>setTimeout(r,300));
+    if(t>totalDur+dt*2){
+      // Stop active video audio
+      if(lastActiveVid){lastActiveVid.pause();}
+      await new Promise(r=>setTimeout(r,600)); // flush audio buffer
       recorder.stop();
       return;
     }
 
-    // Draw frame
-    ctx.fillStyle='#000'; ctx.fillRect(0,0,W,H);
+    const clip=videoClips.find(c=>t>=c.start&&t<c.start+c.dur);
+    ctx.fillStyle='#000';
+    ctx.fillRect(0,0,W,H);
 
-    // Freeze overlay takes priority
-    const frz=freezeOverlays.find(o=>t>=o.startTime&&t<o.endTime);
-    if(frz&&frz._img?.complete){
-      ctx.drawImage(frz._img,0,0,W,H);
-    } else {
-      const clip=videoClips.find(c=>t>=c.start&&t<c.start+c.dur&&!hiddenTracks[c.track]);
-      if(clip){
-        const v=vidEls[clip.mediaIdx];
-        if(v){
-          const fileT=(clip.fileStart||0)+Math.max(0,t-clip.start);
-          // Switch clip: seek new video, unmute previous if needed
-          if(lastVid!==v){
-            if(lastVid){lastVid.pause(); lastVid.muted=true;}
-            lastVid=v;
-            v.muted=!!mutedTracks[clip.track];
-            v.currentTime=fileT;
-            await new Promise(r=>{const h=()=>{v.removeEventListener('seeked',h);r();}; v.addEventListener('seeked',h); setTimeout(r,500);});
-            if(!mutedTracks[clip.track]) try{await v.play();}catch(e){}
-          } else {
-            // Same clip playing — keep it playing, just check sync
-            v.muted=!!mutedTracks[clip.track];
-            if(!mutedTracks[clip.track]&&v.paused) try{await v.play();}catch(e){}
-          }
-          try{ctx.drawImage(v,0,0,W,H);}catch(e){}
+    if(clip){
+      const vid=vidEls[clip.mediaIdx];
+      if(vid){
+        const fileTime=(clip.fileStart||0)+Math.max(0,t-clip.start);
+        // Switch active video when clip changes
+        if(lastActiveVid!==vid){
+          if(lastActiveVid){lastActiveVid.pause();}
+          lastActiveVid=vid;
+          vid.currentTime=fileTime;
+          vid.muted=false;
+          try{ await vid.play(); }catch(e){}
+        } else {
+          // Keep in sync
+          if(Math.abs(vid.currentTime-fileTime)>dt*3) vid.currentTime=fileTime;
         }
+        try{ ctx.drawImage(vid,0,0,W,H); }catch(e){}
       }
-    }
-
-    // Standalone audio: play/pause/sync
-    for(const ac of audioClips){
-      if(mutedTracks[ac.track]) continue;
-      const a=audioEls[ac.mediaIdx]; if(!a) continue;
-      if(t>=ac.start&&t<ac.start+ac.dur){
-        const aT=(ac.fileStart||0)+Math.max(0,t-ac.start);
-        a.muted=false;
-        if(a.paused){a.currentTime=aT; try{await a.play();}catch(e){}}
-        else if(Math.abs(a.currentTime-aT)>0.4) a.currentTime=aT;
-      } else if(!a.paused) a.pause();
+    } else {
+      if(lastActiveVid){lastActiveVid.pause();lastActiveVid=null;}
     }
 
     // Progress
-    const pct=Math.min(97,Math.round(t/totalDur*100));
+    const pct=Math.min(98,Math.round((t/totalDur)*100));
     bar.style.width=pct+'%';
-    const elapsed=(performance.now()-startWall)/1000;
+    const elapsed=(Date.now()-startTs)/1000;
+    const rate=elapsed>0.5?t/elapsed:fps/100;
+    const rem=rate>0?(totalDur-t)/rate:0;
     status.textContent=`Rendering: ${pct}% · ${t.toFixed(1)}s / ${totalDur.toFixed(1)}s`;
-    if(elapsed>1){const rem=(totalDur-t)/(t/elapsed||1); if(rem>0.5) eta.textContent=`~${Math.ceil(rem)}s remaining`;}
+    if(rem>1) eta.textContent=`~${Math.ceil(rem)}s remaining (${(rate).toFixed(1)}x realtime)`;
 
     t+=dt;
-    // Schedule next frame: wait for the wall-clock target time
-    const wallTarget=startWall+t*1000;
-    const delay=Math.max(0,wallTarget-performance.now());
-    setTimeout(renderFrame,delay);
+    // Use setTimeout for consistent frame pacing
+    setTimeout(renderFrame, 1000/fps);
   }
 
-  renderFrame();
+  await renderFrame();
 }
 
-function _dlBlob(blob,filename){
-  const url=URL.createObjectURL(blob);
-  const a=document.createElement('a'); a.href=url; a.download=filename;
-  document.body.appendChild(a); a.click(); document.body.removeChild(a);
-  setTimeout(()=>URL.revokeObjectURL(url),30000);
-}
+// ═══════════════════════════════════════
+// MENU SYSTEM
+// ═══════════════════════════════════════
+const MENUS = {
+  canvas: {
+    File: [
+      { l: 'New Canvas', k: 'Ctrl+N', fn: () => newCanvas() },
+      { l: 'Open Image…', k: 'Ctrl+O', fn: () => cvOpenFile() },
+      { sep: true },
+      { l: 'Save', k: 'Ctrl+S', fn: () => doSave() },
+      { l: 'Export PNG…', fn: () => notify('Exporting PNG…') },
+      { l: 'Export JPEG…', fn: () => notify('Exporting JPEG…') },
+      { l: 'Send to Cut', fn: () => sendToCut() },
+      { sep: true },
+      { l: 'Back to Launcher', fn: () => goToLauncher() }
+    ],
+    Edit: [
+      { l: 'Undo', k: 'Ctrl+Z', fn: () => cvUndo() },
+      { l: 'Redo', k: 'Ctrl+Shift+Z', fn: () => cvRedo() },
+      { sep: true },
+      { l: 'Select All', k: 'Ctrl+A', fn: () => notify('Select All') },
+    ],
+    Image: [
+      { l: 'Brightness/Contrast', fn: () => notify('Brightness/Contrast') },
+      { l: 'Hue/Saturation', fn: () => notify('Hue/Saturation') },
+      { l: 'Curves', fn: () => notify('Curves') },
+      { sep: true },
+      { l: 'Flip Horizontal', fn: () => cvFlip('h') },
+      { l: 'Flip Vertical', fn: () => cvFlip('v') },
+      { l: 'Grayscale', fn: () => cvFilter('grayscale') },
+      { l: 'Invert', fn: () => cvFilter('invert') },
+      { l: 'Sepia', fn: () => cvFilter('sepia') },
+      { l: 'Blur', fn: () => cvFilter('blur') },
+    ],
+    Layer: [
+      { l: 'New Layer', k: 'Ctrl+Shift+N', fn: () => cvAddLayer() },
+      { l: 'Duplicate Layer', fn: () => cvDupLayer() },
+      { l: 'Delete Layer', fn: () => cvDelLayer() },
+      { sep: true },
+      { l: 'Merge Down', fn: () => notify('Layers merged') },
+      { l: 'Flatten Image', fn: () => notify('Image flattened') },
+    ],
+    Filter: [
+      { l: 'Blur', fn: () => cvFilter('blur') },
+      { l: 'Sharpen', fn: () => cvFilter('sharpen') },
+      { l: 'Grayscale', fn: () => cvFilter('grayscale') },
+      { l: 'Invert', fn: () => cvFilter('invert') },
+      { l: 'Sepia', fn: () => cvFilter('sepia') },
+      { l: 'Pixelate', fn: () => cvFilter('pixelate') },
+      { l: 'Emboss', fn: () => cvFilter('emboss') },
+    ],
+    View: [
+      { l: 'Zoom In', k: 'Ctrl++', fn: () => cvZoom(10) },
+      { l: 'Zoom Out', k: 'Ctrl+-', fn: () => cvZoom(-10) },
+      { l: 'Fit to Screen', k: 'Ctrl+0', fn: () => cvFit() },
+      { l: '100%', k: 'Ctrl+1', fn: () => { S.cv.zoom = 100; cvApplyZoom(); } },
+      { sep: true },
+      { l: 'Show Grid', fn: () => notify('Grid toggled') },
+    ],
+    Window: [
+      { l: 'Layers', fn: () => cvSwitchPanel('layers') },
+      { l: 'Properties', fn: () => cvSwitchPanel('props') },
+      { l: 'Color', fn: () => cvSwitchPanel('color') },
+    ],
+    Help: [
+      { l: 'About Canvas', fn: () => notify('Canvas — Hudl Studio') },
+      { l: 'Shortcuts', fn: () => notify('B:Brush  E:Eraser  T:Text  Ctrl+Z:Undo') },
+    ]
+  },
+  cut: {
+    File: [
+      { l: 'New Sequence', fn: () => cutNewSeq() },
+      { l: 'Import Media…', k: 'Ctrl+I', fn: () => $('cut-file-input')?.click() },
+      { sep: true },
+      { l: 'Save', k: 'Ctrl+S', fn: () => doSave() },
+      { l: 'Export…', fn: () => doExport() },
 
-async function exportAsMp4(webmBlob,fname,W,H,fps,status,bar){
-  if(!window._ffmpegReady){
-    if(status) status.textContent='Loading FFmpeg (~10MB, one time)...';
-    const load=(src)=>new Promise((res,rej)=>{const s=document.createElement('script');s.src=src;s.onload=res;s.onerror=rej;document.head.appendChild(s);});
-    await load('https://unpkg.com/@ffmpeg/ffmpeg@0.12.6/dist/umd/ffmpeg.js');
-    await load('https://unpkg.com/@ffmpeg/util@0.12.1/dist/umd/index.js');
-    window._ffmpegReady=true;
+      { sep: true },
+      { l: 'Back to Launcher', fn: () => goToLauncher() }
+    ],
+    Edit: [
+      { l: 'Undo', k: 'Ctrl+Z', fn: () => notify('Undo') },
+      { l: 'Redo', k: 'Ctrl+Shift+Z', fn: () => notify('Redo') },
+      { sep: true },
+      { l: 'Split Clip', k: 'Ctrl+K', fn: () => cutSplit() },
+      { l: 'Delete Selected', k: 'Delete', fn: () => deleteSelected() },
+    ],
+    Clip: [
+      { l: 'Speed/Duration…', fn: () => notify('Speed dialog') },
+      { l: 'Enable/Disable', fn: () => notify('Clip toggled') },
+      { l: 'Unlink Audio', fn: () => notify('Audio unlinked') },
+      { sep: true },
+
+    ],
+    Sequence: [
+      { l: 'Project Settings…', fn: () => showProjectSettings() },
+      { sep: true },
+      { l: 'Settings', fn: () => notify(`${S.proj.w}×${S.proj.h} · ${S.proj.fps}fps · ${S.proj.dur}s`) },
+      { l: 'Add Track', fn: () => { S.cut.tracks++; buildCut(); notify('Track added'); } },
+      { sep: true },
+      { l: 'Go to Start', fn: () => cutSeek(0) },
+      { l: 'Go to End', fn: () => cutSeek(S.proj.dur) },
+    ],
+    Effects: [
+      { l: 'Color Correction', fn: () => notify('Color correction added') },
+      { l: 'Gaussian Blur', fn: () => notify('Blur added') },
+      { l: 'Fade In', fn: () => notify('Fade in applied') },
+      { l: 'Fade Out', fn: () => notify('Fade out applied') },
+      { l: 'Cross Dissolve', fn: () => notify('Dissolve applied') },
+    ],
+    Overlays: [
+      { l: '❄ Freeze Frame…', fn: () => window.showFreezeDialog() },
+      { l: 'T  Add Text…', fn: () => window.showTextDialog() },
+      { l: '◆ Add Shape / Pattern…', fn: () => window.showShapeDialog() },
+      { l: '🖼 Image / Background…', fn: () => window.showImageBgDialog() },
+      { sep: true },
+      { l: '🎚 Audio Enhancement…', fn: () => window.showAudioFxDialog() },
+    ],
+    Color: [
+      { l: 'Apply LUT…', fn: () => notify('LUT picker') },
+      { l: 'Reset Color', fn: () => notify('Color reset') },
+    ],
+    View: [
+      { l: 'Zoom In Timeline', k: '=', fn: () => { PPS = Math.min(200, PPS + 20); renderCutTimeline(); } },
+      { l: 'Zoom Out Timeline', k: '-', fn: () => { PPS = Math.max(20, PPS - 20); renderCutTimeline(); } },
+    ],
+    Window: [
+      { l: 'Media', fn: () => notify('Media panel') },
+      { l: 'Timeline', fn: () => notify('Timeline panel') },
+    ],
+    Help: [
+      { l: 'About Cut', fn: () => notify('Cut — Hudl Studio') },
+      { l: 'Shortcuts', fn: () => notify('Space:Play  K:Split  Del:Delete') },
+    ]
+  },
+  motion: {
+    File: [
+      { l: 'New Composition', fn: () => aeNewComp() },
+      { sep: true },
+      { l: 'Save', k: 'Ctrl+S', fn: () => doSave() },
+      { l: 'Export…', fn: () => doExport() },
+      { l: 'Send to Cut', fn: () => sendToCut() },
+      { sep: true },
+      { l: 'Back to Launcher', fn: () => goToLauncher() }
+    ],
+    Edit: [
+      { l: 'Undo', k: 'Ctrl+Z', fn: () => notify('Undo') },
+      { l: 'Redo', k: 'Ctrl+Shift+Z', fn: () => notify('Redo') },
+      { sep: true },
+      { l: 'Duplicate Layer', k: 'Ctrl+D', fn: () => aeDupLayer() },
+      { l: 'Delete Layer', k: 'Delete', fn: () => aeDelLayer() },
+    ],
+    Composition: [
+      { l: 'Settings', fn: () => notify(`${S.proj.w}×${S.proj.h} · ${S.proj.fps}fps · ${S.proj.dur}s`) },
+      { l: 'Preview', k: 'Space', fn: () => aeTogglePlay() },
+    ],
+    Layer: [
+      { l: 'New Solid', fn: () => aeAddSolid() },
+      { l: 'New Text', fn: () => aeAddText() },
+      { l: 'New Shape', fn: () => aeAddShape() },
+      { l: 'New Camera', fn: () => aeAddCamera() },
+      { l: 'New Light', fn: () => aeAddLight() },
+    ],
+    Effect: [
+      { l: 'Gaussian Blur', fn: () => aeApplyEff('Gaussian Blur') },
+      { l: 'Glow', fn: () => aeApplyEff('Glow') },
+      { l: 'Color Correction', fn: () => aeApplyEff('Color Correction') },
+      { l: 'Lens Flare', fn: () => aeApplyEff('Lens Flare') },
+      { l: 'Particle World', fn: () => aeApplyEff('Particle World') },
+    ],
+    Animation: [
+      { l: 'Add Keyframe', k: 'Alt+K', fn: () => notify('Keyframe added') },
+      { l: 'Easy Ease', k: 'F9', fn: () => notify('Easy ease applied') },
+    ],
+    View: [
+      { l: 'Zoom In', fn: () => aeZoomView(1.1) },
+      { l: 'Zoom Out', fn: () => aeZoomView(0.9) },
+      { l: 'Show Grid', fn: () => notify('Grid toggled') },
+    ],
+    Window: [
+      { l: 'Effects', fn: () => aeSwitchTab('effects') },
+      { l: 'Properties', fn: () => aeSwitchTab('props') },
+      { l: 'Layers', fn: () => aeSwitchTab('layers') },
+    ],
+    Help: [
+      { l: 'About Motion', fn: () => notify('Motion — Hudl Studio') },
+      { l: 'Shortcuts', fn: () => notify('Space:Play  Alt+K:Keyframe') },
+    ]
   }
-  const {FFmpeg}=window.FFmpegWASM||{FFmpeg:window.FFmpeg};
-  const {fetchFile}=window.FFmpegUtil||{fetchFile:window.fetchFile};
-  if(!FFmpeg||!fetchFile) throw new Error('FFmpeg not loaded');
-  const ff=new FFmpeg();
-  ff.on('progress',({progress})=>{
-    if(bar) bar.style.width=Math.round(99*progress)+'%';
-    if(status) status.textContent='Converting to MP4: '+Math.round(progress*100)+'%';
+};
+
+let _openMBEl = null;
+function buildMenubar(key) {
+  const mb = $('menubar'); mb.innerHTML = '';
+  const defs = MENUS[key]; if (!defs) return;
+  Object.keys(defs).forEach(label => {
+    const el = document.createElement('div');
+    el.className = 'mb-item'; el.textContent = label;
+    el.addEventListener('click', e => {
+      e.stopPropagation();
+      if (_openMBEl === el) { closeMenus(); return; }
+      closeMenus(); _openMBEl = el; el.classList.add('open');
+      showDropdown(el, defs[label]);
+    });
+    mb.appendChild(el);
   });
-  await ff.load({coreURL:'https://unpkg.com/@ffmpeg/core@0.12.6/dist/umd/ffmpeg-core.js'});
-  await ff.writeFile('in.webm',await fetchFile(webmBlob));
-  await ff.exec(['-i','in.webm','-c:v','libx264','-preset','fast','-crf','22','-c:a','aac','-b:a','192k','-movflags','+faststart','-r',String(fps),'out.mp4']);
-  const data=await ff.readFile('out.mp4');
-  _dlBlob(new Blob([data.buffer],{type:'video/mp4'}),`${fname}_${W}x${H}_${fps}fps.mp4`);
-  if(status) status.textContent='✓ MP4 ready!';
 }
 
+function showDropdown(anchor, items) {
+  closeDD();
+  const ov = document.createElement('div'); ov.className = 'dd-overlay'; ov.id = '_ddov';
+  ov.addEventListener('click', closeMenus);
+  document.body.appendChild(ov);
+  const dd = document.createElement('div'); dd.className = 'dropdown'; dd.id = '_dd';
+  items.forEach(item => {
+    if (item.sep) { const s = document.createElement('div'); s.className = 'dd-sep'; dd.appendChild(s); return; }
+    const el = document.createElement('div'); el.className = 'dd-item';
+    const lbl = document.createElement('span'); lbl.textContent = item.l; el.appendChild(lbl);
+    if (item.k) { const ks = document.createElement('span'); ks.className = 'dd-key'; ks.textContent = item.k; el.appendChild(ks); }
+    el.addEventListener('click', e => { e.stopPropagation(); closeMenus(); item.fn(); });
+    dd.appendChild(el);
+  });
+  const r = anchor.getBoundingClientRect();
+  dd.style.top = (r.bottom + 2) + 'px'; dd.style.left = r.left + 'px';
+  document.body.appendChild(dd);
+}
 
+function closeDD() { $('_dd')?.remove(); $('_ddov')?.remove(); }
+function closeMenus() { closeDD(); if (_openMBEl) { _openMBEl.classList.remove('open'); _openMBEl = null; } }
+document.addEventListener('keydown', e => { if (e.key === 'Escape') closeMenus(); });
+
+// ═══════════════════════════════════════
+// CROSS-APP
+// ═══════════════════════════════════════
+function sendToCut() {
+  const cvs = $('main-cvs');
+  if (cvs) {
+    cvs.toBlob(blob => {
+      const url = URL.createObjectURL(blob);
+      S.cut.media.push({ name: 'Canvas Export.png', type: 'image', url, duration: 5, thumbnail: cvs.toDataURL('image/jpeg', 0.3) });
+      notify('Canvas → Cut media bin', '#58a6ff');
+      openApp('cut');
+      buildBinList();
+    });
+  } else { notify('Open Canvas first', '#E31837'); }
+}
+
+function sendToMotion() {
+  notify('Sending to Motion…', '#d29922');
+  setTimeout(() => openApp('motion'), 200);
+}
+
+function sendCutToMotion(){
+  const videoClips = S.cut.clips.filter(c=>c.type==='video').sort((a,b)=>a.start-b.start);
+  if(!videoClips.length){ notify('No video clips in Cut to send','#E31837'); return; }
+
+  // Copy all Cut media + clips to Motion state
+  S.ae.media = S.cut.media.map(m=>({...m}));
+  S.ae.clips = videoClips.map(c=>({
+    mediaIdx: c.mediaIdx,
+    name: c.name,
+    start: c.start,
+    dur: c.dur,
+    fileStart: c.fileStart||0,
+    color: c.color,
+    effects: c.effects ? {...c.effects} : {}
+  }));
+  S.ae._fromCut = true;
+  S.ae._cutDuration = Math.max(...videoClips.map(c=>c.start+c.dur));
+
+  // Navigate to Motion immediately
+  openApp('motion');
+  notify('Cut project → Motion ✓ · '+videoClips.length+' clips · '+S.ae._cutDuration.toFixed(1)+'s','#d29922');
+}
 
 // ═══════════════════════════════════════
 // ── CANVAS APP ──
@@ -3469,7 +3652,6 @@ const _playedFreezes=new Set();// freeze overlay ids already played — skip re-
 let _justExitedFreeze=false;   // flag to resync video after freeze ends
 let _freezeExitTime=0;         // timestamp of freeze exit — skip canvas for 500ms after
 let _freezeSavedVideoTime=0;   // video.currentTime saved when freeze started
-let _freezeMode='both';        // current freeze mode: both/video/audio
 function cutTogglePlay(){
   // Only clear played freezes when starting from near the beginning
   if(!S.cut.playing && S.cut.ph < 0.5) _playedFreezes.clear();
@@ -3536,23 +3718,13 @@ function cutTogglePlay(){
             _freezeStartPh=phNow;
             _freezeSavedVideoTime=(mv2&&mv2.currentTime)||0;
             const _fMode = activeFreezeNow.freezeMode || 'both';
-            _freezeMode = _fMode; // save for exit handler
-
-            if(_fMode === 'both'){
-              // Freeze everything: pause video + stop audio
+            // Freeze video frame: pause video unless audio-only mode
+            if(_fMode !== 'audio'){
               if(mv2&&!mv2.paused) mv2.pause();
+            }
+            // Freeze audio: stop audio unless video-only mode
+            if(_fMode !== 'video'){
               stopAudioPlayback();
-
-            } else if(_fMode === 'video'){
-              // Freeze video visually only — canvas draws frozen frame on top of mv.
-              // Do NOT pause mv: mv keeps running so its audio track keeps playing.
-              // Canvas (z-index:2, opacity covers mv) shows the frozen frame visually.
-              // No action needed — canvas already shows freeze frame via renderOverlaysOnCanvas.
-
-            } else if(_fMode === 'audio'){
-              // Freeze audio only — stop audio, but let video keep playing visually.
-              stopAudioPlayback();
-              // mv keeps playing so the video continues. Canvas is hidden.
             }
           }
           const now2=performance.now();
@@ -3577,32 +3749,18 @@ function cutTogglePlay(){
           }
           _freezeActive=false;
           _freezeLastTime=null;
-          // _freezeStartPh = timeline time when freeze started (e.g. 5s)
-          // S.cut.ph       = current timeline time = freeze end time (e.g. 7s)
-          // After freeze: timeline ph stays at freeze END (7s), video seeks to
-          // the FILE position corresponding to freeze START (where video was paused)
-          const _freezeEndPh = S.cut.ph; // e.g. 7s — keep playing from here
-          const _freezeStartPhSaved = _freezeStartPh;
+          const _resumePh=_freezeStartPh!==null?_freezeStartPh:S.cut.ph;
           _freezeStartPh=null;
           _freezeExitTime=performance.now();
-          // Do NOT reset S.cut.ph — keep it at freeze end time so playback continues forward
+          S.cut.ph=_resumePh;
           updateCutPH();
           const mv2=$('cut-main-vid');
           const c2e=document.getElementById('cut-trans-cvs');
           if(mv2){mv2.style.opacity='1';mv2.style.display='block';}
           if(c2e){c2e.style.display='none';}
-          // Seek video file to the position at freeze start
-          // (video was paused at this file time during the freeze)
-          if(mv2&&_freezeSavedVideoTime>0&&_freezeMode!=='video'){
-            mv2.currentTime=_freezeSavedVideoTime;
-          }
+          if(mv2&&_freezeSavedVideoTime>0) mv2.currentTime=_freezeSavedVideoTime;
           _freezeSavedVideoTime=0;
-          // Only restart audio if it was actually stopped during freeze
-          // (video-only mode keeps audio running — restarting would cause a loop/repeat)
-          // S.cut.ph is already at freeze END time — audio restarts from correct position
-          if(_freezeMode !== 'video'){
-            startAudioPlayback();
-          }
+          startAudioPlayback();
           if(mv2&&S.cut.playing){
             let _a=0;
             const _p=()=>{if(!S.cut.playing||_a>3)return;_a++;mv2.play().catch(e=>{if(e.name==='AbortError'&&_a<=3)setTimeout(_p,150*_a);});};
@@ -3692,7 +3850,7 @@ function cutTogglePlay(){
           vidEl.play().catch(()=>{});
         }
       }
-      if(!_freezeActive || _freezeMode==='video') syncAudioPlayback(); // sync audio unless fully frozen
+      if(!_freezeActive) syncAudioPlayback(); // don't sync audio during freeze
       _syncVideoMute();
       _cutTick=requestAnimationFrame(playFrame);
     }
