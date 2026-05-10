@@ -6,7 +6,7 @@ const S = {
   projects: [],
   currentProject: null,
   app: null,
-  proj: { name: 'Untitled', w: 1920, h: 1080, fps: 30, dur: 30 },
+  proj: { name: 'Untitled', w: 1920, h: 1080, fps: 60, dur: 30 },
   cv: { layers: [], activeLayer: 0, tool: 'brush', size: 18, opacity: 100, fg: '#E31837', bg: '#0a0c10', zoom: 100, hist: [], histIdx: -1 },
   cut: { clips: [], videoTracks: 2, audioTracks: 2, ph: 0, playing: false, sel: null, media: [], selMedia: null, effects: {}, tick: null, _hist: [], _histIdx: -1, mutedTracks: {}, hiddenTracks: {} },
   ae: { layers: [], ph: 0, playing: false, tick: null, frame: 0, media: [], clips: [] }
@@ -754,9 +754,10 @@ async function startExport(){
     // Wire audio from this video to AudioContext
     if(audioCtx&&audioDest){
       try{
+        v.volume = 1.0; // ensure full volume before wiring
         const src=audioCtx.createMediaElementSource(v);
         const gain=audioCtx.createGain();
-        gain.gain.value=1.0;
+        gain.gain.value = 1.5; // boost to compensate for AudioContext pipeline loss
         src.connect(gain);
         gain.connect(audioDest);
         audioSrcNodes[clip.mediaIdx]=v;
