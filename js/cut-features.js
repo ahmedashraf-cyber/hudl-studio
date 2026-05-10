@@ -118,12 +118,27 @@ function showFreezeDialog(){
         <button onclick="document.getElementById('frz-end').value=S.cut.ph.toFixed(2)" style="${smallBtnStyle()}">Use Playhead</button>
       </div>
     </div>
+    <div style="margin-bottom:14px">
+      <label class="modal-field-label">What to freeze</label>
+      <div style="display:flex;flex-direction:column;gap:6px;margin-top:6px">
+        <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:12px;color:var(--tx)">
+          <input type="radio" name="frz-mode" value="both" checked style="accent-color:#E8590C"> Video &amp; Audio (freeze everything)
+        </label>
+        <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:12px;color:var(--tx)">
+          <input type="radio" name="frz-mode" value="video"> Video only (audio keeps playing)
+        </label>
+        <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:12px;color:var(--tx)">
+          <input type="radio" name="frz-mode" value="audio"> Audio only (video keeps playing)
+        </label>
+      </div>
+    </div>
     <div style="font-size:11px;color:var(--mu);background:rgba(88,166,255,0.08);border-radius:6px;padding:8px">
       💡 Move playhead to start position → click "Use Playhead", then move to end → click "Use Playhead" again
     </div>
   `, ()=>{
     const start = parseFloat(document.getElementById('frz-start').value);
     const end = parseFloat(document.getElementById('frz-end').value);
+    const freezeMode = document.querySelector('input[name="frz-mode"]:checked')?.value || 'both';
     if(isNaN(start)||isNaN(end)||end<=start){ notify('Invalid time range','#E31837'); return; }
     // Find video frame at freeze start
     const clip = S.cut.clips.find(c=>c.type==='video'&&start>=c.start&&start<c.start+c.dur);
@@ -150,6 +165,7 @@ function showFreezeDialog(){
         id: ovId, type:'freeze',
         startTime: start, endTime: end,
         clipMediaIdx: clip.mediaIdx, freezeFileTime,
+        freezeMode: freezeMode || 'both',
         _img: img
       });
       document.body.removeChild(captureVid);
@@ -193,6 +209,20 @@ function showFreezeEditDialog(id){
       </div>
     </div>
     <div style="margin-bottom:14px">
+      <label class="modal-field-label">What to freeze</label>
+      <div style="display:flex;flex-direction:column;gap:6px;margin-top:6px">
+        <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:12px;color:var(--tx)">
+          <input type="radio" name="frz-mode" value="both" ${(ov.freezeMode||'both')==='both'?'checked':''} style="accent-color:#E8590C"> Video &amp; Audio
+        </label>
+        <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:12px;color:var(--tx)">
+          <input type="radio" name="frz-mode" value="video" ${ov.freezeMode==='video'?'checked':''} style="accent-color:#E8590C"> Video only
+        </label>
+        <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:12px;color:var(--tx)">
+          <input type="radio" name="frz-mode" value="audio" ${ov.freezeMode==='audio'?'checked':''} style="accent-color:#E8590C"> Audio only
+        </label>
+      </div>
+    </div>
+    <div style="margin-bottom:14px">
       <label class="modal-field-label">Re-capture frame at new time?</label>
       <div style="display:flex;align-items:center;gap:8px">
         <input id="frz-recapture" type="number" step="0.1" value="${ov.freezeFileTime.toFixed(2)}" style="${inputStyle()}">
@@ -205,6 +235,7 @@ function showFreezeEditDialog(id){
     const start = parseFloat(document.getElementById('frz-start').value);
     const end = parseFloat(document.getElementById('frz-end').value);
     const newCapTime = parseFloat(document.getElementById('frz-recapture').value);
+    ov.freezeMode = document.querySelector('input[name="frz-mode"]:checked')?.value || 'both';
     if(isNaN(start)||isNaN(end)||end<=start){ notify('Invalid time range','#E31837'); return; }
     
     ov.startTime = start;

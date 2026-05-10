@@ -3717,8 +3717,15 @@ function cutTogglePlay(){
             _freezeLastTime=performance.now();
             _freezeStartPh=phNow;
             _freezeSavedVideoTime=(mv2&&mv2.currentTime)||0;
-            if(mv2&&!mv2.paused) mv2.pause();
-            stopAudioPlayback();
+            const _fMode = activeFreezeNow.freezeMode || 'both';
+            // Freeze video frame: pause video unless audio-only mode
+            if(_fMode !== 'audio'){
+              if(mv2&&!mv2.paused) mv2.pause();
+            }
+            // Freeze audio: stop audio unless video-only mode
+            if(_fMode !== 'video'){
+              stopAudioPlayback();
+            }
           }
           const now2=performance.now();
           const dt=Math.min((now2-(_freezeLastTime||now2))/1000,0.05);
