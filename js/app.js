@@ -3771,7 +3771,11 @@ function cutTogglePlay(){
           if(c2e){c2e.style.display='none';}
           if(mv2&&_freezeSavedVideoTime>0&&_freezeMode!=='video') mv2.currentTime=_freezeSavedVideoTime;
           _freezeSavedVideoTime=0;
-          startAudioPlayback();
+          // Only restart audio if it was actually stopped during freeze
+          // (video-only mode keeps audio running — restarting would cause a loop/repeat)
+          if(_freezeMode !== 'video'){
+            startAudioPlayback();
+          }
           if(mv2&&S.cut.playing){
             let _a=0;
             const _p=()=>{if(!S.cut.playing||_a>3)return;_a++;mv2.play().catch(e=>{if(e.name==='AbortError'&&_a<=3)setTimeout(_p,150*_a);});};
@@ -3861,7 +3865,7 @@ function cutTogglePlay(){
           vidEl.play().catch(()=>{});
         }
       }
-      if(!_freezeActive) syncAudioPlayback(); // don't sync audio during freeze
+      if(!_freezeActive || _freezeMode==='video') syncAudioPlayback(); // sync audio unless fully frozen
       _syncVideoMute();
       _cutTick=requestAnimationFrame(playFrame);
     }
