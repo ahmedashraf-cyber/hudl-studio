@@ -3704,6 +3704,8 @@ function cutSeek(s){
 }
 
 function updateCutPH(){
+  // Reset frame_hold clock when ph changes (scrub/click) so no time-jump
+  if(!S.cut.playing) window._fhLastTime = null;
   const ph=$('cut-ph');
   if(!ph) return;
   const leftPx = Math.round(S.cut.ph * PPS);
@@ -3762,6 +3764,7 @@ function cutTogglePlay(){
   if(S.cut.playing){
     if(pp)pp.setAttribute('d','M6 19h4V5H6v14zm8-14v14h4V5h-4z');
     if(tp)tp.setAttribute('d','M6 19h4V5H6v14zm8-14v14h4V5h-4z');
+    window._fhLastTime = null; // always reset frame_hold clock on play start
     // Start playback: video element is master clock
     const startPh=S.cut.ph;
     // Find the clip that contains the current playhead position
@@ -5783,6 +5786,11 @@ function insertFrameHold(ci){
   const vidElFH = document.getElementById('cut-main-vid');
   if(vidElFH) vidElFH.dataset.clipIdx = String(S.cut.clips.indexOf(clip));
   S.cut.sel = S.cut.clips.indexOf(holdClip);
+
+  // Pause the video immediately so it doesn't override ph during frame_hold
+  const mvInsert = document.getElementById('cut-main-vid');
+  if(mvInsert && !mvInsert.paused) mvInsert.pause();
+  window._fhLastTime = null; // reset clock so frame_hold starts fresh
 
   renderCutTimeline();
   syncCutVid();
