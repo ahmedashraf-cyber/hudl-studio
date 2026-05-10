@@ -736,6 +736,10 @@ async function startExport(){
   status.textContent='Loading video files...';
   const vidEls={};
   const audioSrcNodes={};
+
+  // Determine which video tracks have audio muted by user
+  const mutedVideoTracks = S.cut.mutedTracks || {};
+
   for(const clip of videoClips){
     const item=S.cut.media[clip.mediaIdx];
     if(!item?.url||vidEls[clip.mediaIdx]) continue;
@@ -744,16 +748,46 @@ async function startExport(){
     document.body.appendChild(v);
     await new Promise(r=>{v.oncanplaythrough=r;v.onerror=r;setTimeout(r,5000);});
     vidEls[clip.mediaIdx]=v;
-    // Wire audio from this video to AudioContext
-    if(audioCtx&&audioDest){
+    // Wire video audio ONLY if this track is NOT muted by user
+    const trackMuted = mutedVideoTracks[clip.track] === true;
+    if(audioCtx&&audioDest&&!trackMuted){
       try{
         const src=audioCtx.createMediaElementSource(v);
         const gain=audioCtx.createGain();
-        gain.gain.value=1.0;
+        gain.gain.value=clip.volume!==undefined?clip.volume/100:1.0;
         src.connect(gain);
         gain.connect(audioDest);
         audioSrcNodes[clip.mediaIdx]=v;
       }catch(e){ console.warn('Audio wire failed:',e); }
+    }
+  }
+
+  // Preload and wire standalone audio clips (separate audio tracks)
+  const audioClips = S.cut.clips.filter(c=>c.type==='audio'&&!c.linkedToVideo).sort((a,b)=>a.start-b.start);
+  const audioEls = {};
+  const audioGains = {};
+  for(const clip of audioClips){
+    const item=S.cut.media[clip.mediaIdx];
+    if(!item?.url) continue;
+    const trackMuted = mutedVideoTracks[clip.track] === true;
+    if(trackMuted) continue; // respect mute
+    if(audioEls[clip.mediaIdx]) continue; // already loaded
+    const a=document.createElement('audio');
+    a.src=item.url; a.crossOrigin='anonymous'; a.preload='auto'; a.muted=true;
+    document.body.appendChild(a);
+    await new Promise(r=>{a.oncanplaythrough=r;a.onerror=r;setTimeout(r,5000);});
+    audioEls[clip.mediaIdx]=a;
+    // Wire to AudioContext
+    if(audioCtx&&audioDest){
+      try{
+        const src=audioCtx.createMediaElementSource(a);
+        const gain=audioCtx.createGain();
+        gain.gain.value=clip.volume!==undefined?clip.volume/100:1.0;
+        src.connect(gain);
+        gain.connect(audioDest);
+        audioGains[clip.mediaIdx]=gain;
+        audioSrcNodes['audio_'+clip.mediaIdx]=a;
+      }catch(e){ console.warn('Audio clip wire failed:',e); }
     }
   }
 
@@ -776,6 +810,8 @@ async function startExport(){
     bar.style.width='100%';
     // Cleanup video elements
     Object.values(vidEls).forEach(v=>{v.pause();document.body.contains(v)&&document.body.removeChild(v);});
+    // Cleanup standalone audio elements
+    Object.values(audioEls).forEach(a=>{a.pause();document.body.contains(a)&&document.body.removeChild(a);});
     if(audioCtx) audioCtx.close();
     await new Promise(r=>setTimeout(r,300));
     const blob=new Blob(chunks,{type:mimeType});
@@ -815,21 +851,42 @@ async function startExport(){
       const vid=vidEls[clip.mediaIdx];
       if(vid){
         const fileTime=(clip.fileStart||0)+Math.max(0,t-clip.start);
+        const trackMuted2 = mutedVideoTracks[clip.track] === true;
         // Switch active video when clip changes
         if(lastActiveVid!==vid){
           if(lastActiveVid){lastActiveVid.pause();}
           lastActiveVid=vid;
           vid.currentTime=fileTime;
-          vid.muted=false;
+          vid.muted=trackMuted2; // respect user's mute setting
           try{ await vid.play(); }catch(e){}
         } else {
           // Keep in sync
           if(Math.abs(vid.currentTime-fileTime)>dt*3) vid.currentTime=fileTime;
+          vid.muted=trackMuted2;
         }
         try{ ctx.drawImage(vid,0,0,W,H); }catch(e){}
       }
     } else {
       if(lastActiveVid){lastActiveVid.pause();lastActiveVid=null;}
+    }
+
+    // Handle standalone audio clips — play/pause/seek as needed
+    for(const aClip of audioClips){
+      const aEl = audioEls[aClip.mediaIdx];
+      if(!aEl) continue;
+      const inRange = t >= aClip.start && t < aClip.start + aClip.dur;
+      if(inRange){
+        const aFileTime = (aClip.fileStart||0) + Math.max(0, t - aClip.start);
+        aEl.muted = false;
+        if(aEl.paused){
+          aEl.currentTime = aFileTime;
+          try{ await aEl.play(); }catch(e){}
+        } else if(Math.abs(aEl.currentTime - aFileTime) > dt*3){
+          aEl.currentTime = aFileTime;
+        }
+      } else {
+        if(!aEl.paused) aEl.pause();
+      }
     }
 
     // Progress
@@ -3763,6 +3820,8 @@ function cutTogglePlay(){
           const _resumePh=_freezeStartPh!==null?_freezeStartPh:S.cut.ph;
           _freezeStartPh=null;
           _freezeExitTime=performance.now();
+          // Save the ph AFTER the freeze (current ph = freeze end time) for audio resume
+          const _audioResumePh = S.cut.ph;
           S.cut.ph=_resumePh;
           updateCutPH();
           const mv2=$('cut-main-vid');
@@ -3774,7 +3833,12 @@ function cutTogglePlay(){
           // Only restart audio if it was actually stopped during freeze
           // (video-only mode keeps audio running — restarting would cause a loop/repeat)
           if(_freezeMode !== 'video'){
+            // Restart audio from the position AFTER the freeze, not from freeze start
+            // This prevents replaying the last word before the freeze
+            const _savedPh = S.cut.ph;
+            S.cut.ph = _audioResumePh;
             startAudioPlayback();
+            S.cut.ph = _savedPh;
           }
           if(mv2&&S.cut.playing){
             let _a=0;
