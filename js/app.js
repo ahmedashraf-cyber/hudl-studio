@@ -3652,6 +3652,7 @@ const _playedFreezes=new Set();// freeze overlay ids already played — skip re-
 let _justExitedFreeze=false;   // flag to resync video after freeze ends
 let _freezeExitTime=0;         // timestamp of freeze exit — skip canvas for 500ms after
 let _freezeSavedVideoTime=0;   // video.currentTime saved when freeze started
+let _freezeMode='both';        // current freeze mode: both/video/audio
 function cutTogglePlay(){
   // Only clear played freezes when starting from near the beginning
   if(!S.cut.playing && S.cut.ph < 0.5) _playedFreezes.clear();
@@ -3718,13 +3719,23 @@ function cutTogglePlay(){
             _freezeStartPh=phNow;
             _freezeSavedVideoTime=(mv2&&mv2.currentTime)||0;
             const _fMode = activeFreezeNow.freezeMode || 'both';
-            // Freeze video frame: pause video unless audio-only mode
-            if(_fMode !== 'audio'){
+            _freezeMode = _fMode; // save for exit handler
+
+            if(_fMode === 'both'){
+              // Freeze everything: pause video + stop audio
               if(mv2&&!mv2.paused) mv2.pause();
-            }
-            // Freeze audio: stop audio unless video-only mode
-            if(_fMode !== 'video'){
               stopAudioPlayback();
+
+            } else if(_fMode === 'video'){
+              // Freeze video visually only — canvas draws frozen frame on top of mv.
+              // Do NOT pause mv: mv keeps running so its audio track keeps playing.
+              // Canvas (z-index:2, opacity covers mv) shows the frozen frame visually.
+              // No action needed — canvas already shows freeze frame via renderOverlaysOnCanvas.
+
+            } else if(_fMode === 'audio'){
+              // Freeze audio only — stop audio, but let video keep playing visually.
+              stopAudioPlayback();
+              // mv keeps playing so the video continues. Canvas is hidden.
             }
           }
           const now2=performance.now();
@@ -3758,7 +3769,7 @@ function cutTogglePlay(){
           const c2e=document.getElementById('cut-trans-cvs');
           if(mv2){mv2.style.opacity='1';mv2.style.display='block';}
           if(c2e){c2e.style.display='none';}
-          if(mv2&&_freezeSavedVideoTime>0) mv2.currentTime=_freezeSavedVideoTime;
+          if(mv2&&_freezeSavedVideoTime>0&&_freezeMode!=='video') mv2.currentTime=_freezeSavedVideoTime;
           _freezeSavedVideoTime=0;
           startAudioPlayback();
           if(mv2&&S.cut.playing){
