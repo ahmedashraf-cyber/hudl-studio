@@ -3780,7 +3780,9 @@ function cutTogglePlay(){
       if(!S.cut.playing) return;
       // Redraw canvas overlays every frame
       const phNow=S.cut.ph;
-      const activeNow=S.cut.clips.find(c=>(c.type==='video'||c.type==='frame_hold')&&phNow>=c.start&&phNow<c.start+c.dur);
+      // frame_hold takes priority over video at same time position
+      const _allNow=S.cut.clips.filter(c=>(c.type==='video'||c.type==='frame_hold')&&phNow>=c.start&&phNow<c.start+c.dur);
+      const activeNow=_allNow.find(c=>c.type==='frame_hold')||_allNow.find(c=>c.type==='video')||null;
       if(activeNow){
         const ciNow2=S.cut.clips.indexOf(activeNow);
         const trNow=getClipTransition(ciNow2);
@@ -4183,10 +4185,12 @@ function syncCutVid(){
 
   // Find active video clip at current playhead
   const videoClips = S.cut.clips.filter(c => c.type === 'video' || c.type === 'frame_hold');
-  const active = videoClips.find(c => 
-    ph >= c.start && ph < c.start + c.dur &&
-    !S.cut.hiddenTracks?.[c.track]
+  // frame_hold takes priority — when a frame hold exists at ph, show it instead of video
+  const _allAtPh = videoClips.filter(c =>
+    ph >= c.start && ph < c.start + c.dur && !S.cut.hiddenTracks?.[c.track]
   );
+  const active = _allAtPh.find(c => c.type === 'frame_hold') ||
+                 _allAtPh.find(c => c.type === 'video') || null;
 
   // Ensure pool vids exist for all clips
   videoClips.forEach(c => {
