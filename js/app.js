@@ -3291,6 +3291,8 @@ function renderCutTimeline() {
     });
   }
   updateCutPH();
+  // Re-render overlay clips (they live in tl-row-0 which was just rebuilt)
+  if(window.renderOverlayTimeline) window.renderOverlayTimeline();
 }
 
 // ── CLIP SELECTION HELPER ────────────────────────────────────
@@ -3914,7 +3916,8 @@ function cutTogglePlay(){
             _freezeStartPh=phNow;
             _freezeSavedVideoTime=(mv2&&mv2.currentTime)||0;
             if(mv2&&!mv2.paused) mv2.pause();
-            stopAudioPlayback();
+            // Only stop audio if freezeAudio is true (default) — user can choose
+            if(activeFreezeNow.freezeAudio !== false) stopAudioPlayback();
           }
           const now2=performance.now();
           const dt=Math.min((now2-(_freezeLastTime||now2))/1000,0.05);
