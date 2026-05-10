@@ -5779,10 +5779,9 @@ function insertFrameHold(ci){
   S.cut.clips.push(holdClip);
   if(rightDur > 0.05) S.cut.clips.push(rightClip);
 
-  // Sort clips by start time for clean rendering
-  S.cut.clips.sort((a,b) => a.start - b.start || a.track - b.track);
-
-  // Select the hold clip
+  // Update vidEl clip index after modification
+  const vidElFH = document.getElementById('cut-main-vid');
+  if(vidElFH) vidElFH.dataset.clipIdx = String(S.cut.clips.indexOf(clip));
   S.cut.sel = S.cut.clips.indexOf(holdClip);
 
   renderCutTimeline();
@@ -5886,7 +5885,6 @@ function insertFrameHoldAtEnd(ci){
     _imgData:dataURL, _img:img,
   };
   S.cut.clips.push(holdClip);
-  S.cut.clips.sort((a,b)=>a.start-b.start||a.track-b.track);
   S.cut.sel = S.cut.clips.indexOf(holdClip);
   renderCutTimeline(); syncCutVid(); scheduleSave();
   notify('Frame Hold added at clip end ('+holdDur+'s)','#3fb950');
