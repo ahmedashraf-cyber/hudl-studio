@@ -3844,8 +3844,18 @@ function cutTogglePlay(){
           const c2e=document.getElementById('cut-trans-cvs');
           if(mv2){mv2.style.opacity='1';mv2.style.display='block';}
           if(c2e){c2e.style.display='none';}
-          if(mv2&&_freezeSavedVideoTime>0) mv2.currentTime=_freezeSavedVideoTime;
-          _freezeSavedVideoTime=0;
+          // Seek video to the file position corresponding to ph AFTER freeze (freeze end time)
+          // This ensures line-113 ph-from-video calculation gives the correct post-freeze ph
+          // NOT _freezeSavedVideoTime (freeze start) — that would make ph jump back to freeze start
+          const _phAfterFreeze = S.cut.ph; // = freeze end time
+          const _clipAfterFreeze = S.cut.clips.find(c=>c.type==='video'&&_phAfterFreeze>=c.start&&_phAfterFreeze<c.start+c.dur);
+          if(mv2 && _clipAfterFreeze){
+            const _ftAfterFreeze = (_clipAfterFreeze.fileStart||0) + (_phAfterFreeze - _clipAfterFreeze.start) * (_clipAfterFreeze.speed||1);
+            mv2.currentTime = _ftAfterFreeze;
+          } else if(mv2 && _freezeSavedVideoTime > 0){
+            mv2.currentTime = _freezeSavedVideoTime; // fallback
+          }
+          _freezeSavedVideoTime = 0;
           startAudioPlayback();
           if(mv2&&S.cut.playing){
             let _a=0;
