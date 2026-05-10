@@ -691,8 +691,14 @@ function showExportModal(){
         <label style="font-size:10px;font-weight:700;color:#8b949e;text-transform:uppercase;letter-spacing:.7px;display:block;margin-bottom:6px">File Name</label>
         <input id="exp-filename" type="text" value="${(S.currentProject?.name||'export').replace(/[^\w\s-]/g,'').trim()}" style="width:100%;padding:9px 11px;background:#252d3d;border:1px solid rgba(255,255,255,0.11);border-radius:8px;color:#f0f2f5;font-size:13px;outline:none;box-sizing:border-box" placeholder="my-video">
       </div>
+      <div style="margin-bottom:14px">
+        <label style="font-size:10px;font-weight:700;color:#8b949e;text-transform:uppercase;letter-spacing:.7px;display:block;margin-bottom:6px">Format</label>
+        <select id="exp-format" style="width:100%;padding:9px 11px;background:#252d3d;border:1px solid rgba(255,255,255,0.11);border-radius:8px;color:#f0f2f5;font-size:13px;outline:none">
+          <option value="webm" selected>WebM (VP9) — plays in Chrome/VLC</option>
+        </select>
+      </div>
       <div style="font-size:11px;color:#8b949e;background:rgba(88,166,255,0.07);border:1px solid rgba(88,166,255,0.15);border-radius:6px;padding:8px 10px;margin-bottom:18px">
-        ℹ️ Exports as WebM with video + audio. Open in VLC or Chrome. To convert to MP4: use VLC → Media → Convert.
+        ℹ️ Exports as WebM with all video, audio, and effects. Plays in Chrome and VLC. To convert to MP4 use VLC → Media → Convert.
       </div>
       <div style="display:flex;justify-content:flex-end;gap:8px">
         <button onclick="document.getElementById('export-modal').remove()" style="padding:9px 20px;border-radius:8px;font-size:13px;font-weight:600;font-family:DM Sans,sans-serif;cursor:pointer;background:transparent;border:1px solid rgba(255,255,255,0.15);color:#8b949e">Cancel</button>
@@ -757,6 +763,28 @@ async function startExport(){
     }
   }
 
+  // Preload and wire standalone audio-only clips
+  const audioOnlyClips = S.cut.clips.filter(c=>c.type==='audio'&&!c.linkedToVideo).sort((a,b)=>a.start-b.start);
+  const audioEls = {};
+  for(const clip of audioOnlyClips){
+    const item = S.cut.media[clip.mediaIdx];
+    if(!item?.url || audioEls[clip.mediaIdx]) continue;
+    if(S.cut.mutedTracks?.[clip.track]) continue;
+    const a = document.createElement('audio');
+    a.src=item.url; a.crossOrigin='anonymous'; a.preload='auto'; a.muted=true;
+    document.body.appendChild(a);
+    await new Promise(r=>{a.oncanplaythrough=r; a.onerror=r; setTimeout(r,5000);});
+    audioEls[clip.mediaIdx]=a;
+    if(audioCtx&&audioDest){
+      try{
+        const src=audioCtx.createMediaElementSource(a);
+        const gain=audioCtx.createGain();
+        gain.gain.value=clip.volume!==undefined?clip.volume/100:1.0;
+        src.connect(gain); gain.connect(audioDest);
+      }catch(e){}
+    }
+  }
+
   // Build MediaStream: video from canvas + audio from AudioContext
   const videoStream=canvas.captureStream(fps);
   let finalStream=videoStream;
@@ -774,8 +802,9 @@ async function startExport(){
   recorder.onstop=async()=>{
     status.textContent='Packaging download...';
     bar.style.width='100%';
-    // Cleanup video elements
-    Object.values(vidEls).forEach(v=>{v.pause();document.body.contains(v)&&document.body.removeChild(v);});
+    // Cleanup video and audio elements
+    Object.values(vidEls).forEach(v=>{try{v.pause();v.src='';document.body.contains(v)&&document.body.removeChild(v);}catch(e){}});
+    Object.values(audioEls).forEach(a=>{try{a.pause();a.src='';document.body.contains(a)&&document.body.removeChild(a);}catch(e){}});
     if(audioCtx) audioCtx.close();
     await new Promise(r=>setTimeout(r,300));
     const blob=new Blob(chunks,{type:mimeType});
@@ -784,6 +813,7 @@ async function startExport(){
     a.href=url;
     const fname=(S.currentProject?.name||'export').replace(/[^\w\s-]/g,'').trim().replace(/\s+/g,'_');
     a.download=fname+'_'+W+'x'+H+'_'+fps+'fps.webm';
+    // Note: to get MP4, open in VLC → Media → Convert/Save
     document.body.appendChild(a); a.click(); document.body.removeChild(a);
     setTimeout(()=>URL.revokeObjectURL(url),30000);
     document.getElementById('export-modal')?.remove();
@@ -815,21 +845,42 @@ async function startExport(){
       const vid=vidEls[clip.mediaIdx];
       if(vid){
         const fileTime=(clip.fileStart||0)+Math.max(0,t-clip.start);
-        // Switch active video when clip changes
+        // Switch clip: seek, wait for decode, then play
         if(lastActiveVid!==vid){
-          if(lastActiveVid){lastActiveVid.pause();}
+          if(lastActiveVid){lastActiveVid.pause(); lastActiveVid.muted=true;}
           lastActiveVid=vid;
-          vid.currentTime=fileTime;
           vid.muted=false;
+          vid.currentTime=fileTime;
+          // Wait for video to decode the seek target frame
+          await new Promise(r=>{
+            const h=()=>{ vid.removeEventListener('seeked',h); r(); };
+            vid.addEventListener('seeked',h);
+            setTimeout(r,800); // fallback
+          });
           try{ await vid.play(); }catch(e){}
         } else {
-          // Keep in sync
-          if(Math.abs(vid.currentTime-fileTime)>dt*3) vid.currentTime=fileTime;
+          // Keep audio playing; re-sync if drifted more than 0.5s
+          if(Math.abs(vid.currentTime-fileTime)>0.5){
+            vid.currentTime=fileTime;
+            await new Promise(r=>{ const h=()=>{vid.removeEventListener('seeked',h);r();}; vid.addEventListener('seeked',h); setTimeout(r,400); });
+          }
         }
         try{ ctx.drawImage(vid,0,0,W,H); }catch(e){}
       }
     } else {
       if(lastActiveVid){lastActiveVid.pause();lastActiveVid=null;}
+    }
+
+    // Standalone audio clips: play/pause/sync
+    for(const ac of audioOnlyClips){
+      if(S.cut.mutedTracks?.[ac.track]) continue;
+      const a=audioEls[ac.mediaIdx]; if(!a) continue;
+      if(t>=ac.start&&t<ac.start+ac.dur){
+        const aT=(ac.fileStart||0)+Math.max(0,t-ac.start);
+        a.muted=false;
+        if(a.paused){a.currentTime=aT; try{a.play();}catch(e){}}
+        else if(Math.abs(a.currentTime-aT)>0.5) a.currentTime=aT;
+      } else if(!a.paused) a.pause();
     }
 
     // Progress
@@ -842,8 +893,10 @@ async function startExport(){
     if(rem>1) eta.textContent=`~${Math.ceil(rem)}s remaining (${(rate).toFixed(1)}x realtime)`;
 
     t+=dt;
-    // Use setTimeout for consistent frame pacing
-    setTimeout(renderFrame, 1000/fps);
+    // Wall-clock compensation: schedule next frame at exact target time
+    const wallTarget = startTs + t * 1000;
+    const delay = Math.max(0, wallTarget - Date.now());
+    setTimeout(renderFrame, delay);
   }
 
   await renderFrame();
