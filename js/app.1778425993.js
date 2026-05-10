@@ -1063,6 +1063,8 @@ const MENUS = {
     ],
     Overlays: [
       { l: '❄ Freeze Frame…', fn: () => window.showFreezeDialog() },
+      { sep: true },
+      { l: '⊞ Monitor Overlays…', fn: () => window.showMonitorOverlayPanel() },
       { l: 'T  Add Text…', fn: () => window.showTextDialog() },
       { l: '◆ Add Shape / Pattern…', fn: () => window.showShapeDialog() },
       { l: '🖼 Image / Background…', fn: () => window.showImageBgDialog() },
@@ -5918,3 +5920,339 @@ function insertFrameHoldAtEnd(ci){
   notify('Frame Hold added at clip end ('+holdDur+'s)','#3fb950');
 }
 window.insertFrameHoldAtEnd = insertFrameHoldAtEnd;
+
+
+
+// ══════════════════════════════════════════════════════════════════════
+// MONITOR OVERLAY SYSTEM — Safe Zones, Guides, Metadata, Timecode
+// Non-destructive: renders ABOVE video on a separate canvas, never exports
+// ══════════════════════════════════════════════════════════════════════
+
+window._monitorOverlays = {
+  safeZones:  false,   // title+action safe
+  guides:     [],      // [{type:'h'|'v', pos:0.5, color:'#00ff00'}]
+  metadata:   false,   // timecode + clip name
+  grid:       false,   // rule of thirds
+  socialZone: null,    // 'tiktok'|'reels'|'shorts'|null
+};
+
+// ── Create the monitor overlay canvas (sits above everything) ──
+function initMonitorCanvas(){
+  const frame = document.getElementById('cut-viewport-frame');
+  if(!frame || document.getElementById('cut-monitor-cvs')) return;
+  const mc = document.createElement('canvas');
+  mc.id = 'cut-monitor-cvs';
+  mc.style.cssText = [
+    'position:absolute','inset:0','width:100%','height:100%',
+    'pointer-events:none',   // clicks pass through to video/handles below
+    'z-index:10',            // above cut-trans-cvs (z-index:2) always
+    'border-radius:4px',
+  ].join(';');
+  frame.appendChild(mc);
+  // Guide dragging — monitor canvas is pointer-events:none but we need
+  // to intercept guide drags via the frame itself
+  frame.addEventListener('mousedown', _guideMouseDown);
+  window.addEventListener('mousemove', _guideMouseMove);
+  window.addEventListener('mouseup',   _guideMouseUp);
+}
+
+// ── Draw all monitor overlays ──
+function drawMonitorOverlays(){
+  const mc = document.getElementById('cut-monitor-cvs');
+  const frame = document.getElementById('cut-viewport-frame');
+  if(!mc || !frame) return;
+
+  // Match canvas resolution to frame display size
+  const W = frame.offsetWidth  || 1280;
+  const H = frame.offsetHeight || 720;
+  if(mc.width !== W || mc.height !== H){ mc.width = W; mc.height = H; }
+
+  const ctx = mc.getContext('2d');
+  ctx.clearRect(0, 0, W, H);
+
+  const mo = window._monitorOverlays;
+
+  // 1. Safe Zones
+  if(mo.safeZones){
+    _drawSafeZones(ctx, W, H);
+  }
+
+  // 2. Social Media Safe Zone
+  if(mo.socialZone){
+    _drawSocialZone(ctx, W, H, mo.socialZone);
+  }
+
+  // 3. Rule of Thirds Grid
+  if(mo.grid){
+    _drawGrid(ctx, W, H);
+  }
+
+  // 4. Guides
+  mo.guides.forEach(g => _drawGuide(ctx, W, H, g));
+
+  // 5. Metadata Overlay
+  if(mo.metadata){
+    _drawMetadata(ctx, W, H);
+  }
+}
+window.drawMonitorOverlays = drawMonitorOverlays;
+
+// ── Safe Zones ──
+function _drawSafeZones(ctx, W, H){
+  // Action Safe: 93% (3.5% each side)
+  // Title Safe:  80% (10% each side)
+  const zones = [
+    {pct:0.93, color:'rgba(255,255,100,0.6)', label:'Action Safe'},
+    {pct:0.80, color:'rgba(100,200,255,0.6)', label:'Title Safe'},
+  ];
+  zones.forEach(z => {
+    const x = W*(1-z.pct)/2, y = H*(1-z.pct)/2;
+    const w = W*z.pct,       h = H*z.pct;
+    ctx.save();
+    ctx.strokeStyle = z.color;
+    ctx.lineWidth   = 1;
+    ctx.setLineDash([4,4]);
+    ctx.strokeRect(x, y, w, h);
+    ctx.font = 'bold 9px DM Sans, sans-serif';
+    ctx.fillStyle = z.color;
+    ctx.fillText(z.label, x+4, y+11);
+    ctx.restore();
+  });
+  // Center crosshair
+  ctx.save();
+  ctx.strokeStyle = 'rgba(255,255,255,0.3)';
+  ctx.lineWidth = 1;
+  ctx.setLineDash([2,4]);
+  ctx.beginPath(); ctx.moveTo(W/2-12,H/2); ctx.lineTo(W/2+12,H/2); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(W/2,H/2-12); ctx.lineTo(W/2,H/2+12); ctx.stroke();
+  ctx.restore();
+}
+
+// ── Social Media Safe Zones ──
+function _drawSocialZone(ctx, W, H, platform){
+  const configs = {
+    tiktok:   {top:0.12, bottom:0.22, label:'TikTok Safe', color:'rgba(255,80,80,0.7)'},
+    reels:    {top:0.15, bottom:0.20, label:'Instagram Reels Safe', color:'rgba(200,100,255,0.7)'},
+    shorts:   {top:0.10, bottom:0.20, label:'YouTube Shorts Safe', color:'rgba(255,50,50,0.7)'},
+    facebook: {top:0.10, bottom:0.15, label:'Facebook Safe', color:'rgba(100,150,255,0.7)'},
+  };
+  const cfg = configs[platform]; if(!cfg) return;
+  ctx.save();
+  // Danger zones (top/bottom UI areas)
+  ctx.fillStyle = 'rgba(255,0,0,0.12)';
+  ctx.fillRect(0, 0, W, H*cfg.top);
+  ctx.fillRect(0, H*(1-cfg.bottom), W, H*cfg.bottom);
+  // Safe area border
+  ctx.strokeStyle = cfg.color;
+  ctx.lineWidth = 1.5;
+  ctx.setLineDash([5,3]);
+  const sy = H*cfg.top, sh = H*(1-cfg.top-cfg.bottom);
+  ctx.strokeRect(W*0.05, sy, W*0.90, sh);
+  ctx.font = 'bold 10px DM Sans, sans-serif';
+  ctx.fillStyle = cfg.color;
+  ctx.fillText(cfg.label + ' zone', W*0.05+4, sy+14);
+  ctx.restore();
+}
+
+// ── Rule of Thirds ──
+function _drawGrid(ctx, W, H){
+  ctx.save();
+  ctx.strokeStyle = 'rgba(255,255,255,0.2)';
+  ctx.lineWidth = 1;
+  ctx.setLineDash([]);
+  for(let i=1; i<3; i++){
+    ctx.beginPath(); ctx.moveTo(W*i/3,0); ctx.lineTo(W*i/3,H); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(0,H*i/3); ctx.lineTo(W,H*i/3); ctx.stroke();
+  }
+  ctx.restore();
+}
+
+// ── Individual Guide ──
+function _drawGuide(ctx, W, H, g){
+  ctx.save();
+  ctx.strokeStyle = g.color || '#00ff88';
+  ctx.lineWidth = 1;
+  ctx.setLineDash([]);
+  const pos = g.pos || 0.5;
+  if(g.type === 'h'){
+    const y = H * pos;
+    ctx.beginPath(); ctx.moveTo(0,y); ctx.lineTo(W,y); ctx.stroke();
+    ctx.font = '9px DM Mono, monospace';
+    ctx.fillStyle = g.color || '#00ff88';
+    ctx.fillText(Math.round(pos*100)+'%', 3, y-2);
+  } else {
+    const x = W * pos;
+    ctx.beginPath(); ctx.moveTo(x,0); ctx.lineTo(x,H); ctx.stroke();
+    ctx.font = '9px DM Mono, monospace';
+    ctx.fillStyle = g.color || '#00ff88';
+    ctx.fillText(Math.round(pos*100)+'%', x+2, 11);
+  }
+  ctx.restore();
+}
+
+// ── Metadata Overlay ──
+function _drawMetadata(ctx, W, H){
+  const ph = S?.cut?.ph || 0;
+  const fps = S?.proj?.fps || 30;
+  // Format timecode
+  const totalF = Math.round(ph * fps);
+  const ff = totalF % fps;
+  const ss = Math.floor(totalF/fps) % 60;
+  const mm = Math.floor(totalF/fps/60) % 60;
+  const hh = Math.floor(totalF/fps/3600);
+  const tc = `${String(hh).padStart(2,'0')}:${String(mm).padStart(2,'0')}:${String(ss).padStart(2,'0')}:${String(ff).padStart(2,'0')}`;
+
+  // Active clip name
+  const activeClip = S?.cut?.clips?.find(c => (c.type==='video'||c.type==='frame_hold') && ph>=c.start && ph<c.start+c.dur);
+  const clipName = activeClip?.name || '';
+
+  ctx.save();
+  ctx.font = 'bold 11px DM Mono, monospace';
+
+  // Timecode — bottom left
+  ctx.fillStyle='rgba(0,0,0,0.5)';
+  ctx.fillRect(6, H-22, ctx.measureText(tc).width+8, 16);
+  ctx.fillStyle='#ffdd44';
+  ctx.fillText(tc, 10, H-10);
+
+  // Clip name — bottom right
+  if(clipName){
+    const tw = ctx.measureText(clipName).width;
+    ctx.fillStyle='rgba(0,0,0,0.5)';
+    ctx.fillRect(W-tw-14, H-22, tw+8, 16);
+    ctx.fillStyle='#88ddff';
+    ctx.fillText(clipName, W-tw-10, H-10);
+  }
+
+  ctx.restore();
+}
+
+// ── Guide dragging ──
+let _guideDrag = null;
+function _guideMouseDown(e){
+  const mc = document.getElementById('cut-monitor-cvs');
+  if(!mc) return;
+  const rect = mc.getBoundingClientRect();
+  const x = e.clientX - rect.left;
+  const y = e.clientY - rect.top;
+  const W = mc.offsetWidth, H = mc.offsetHeight;
+  // Check if click is on an existing guide (within 5px)
+  const mo = window._monitorOverlays;
+  for(let i=0; i<mo.guides.length; i++){
+    const g = mo.guides[i];
+    if(g.type==='h'){
+      if(Math.abs(y - g.pos*H) < 6){ _guideDrag={idx:i,type:'h'}; e.preventDefault(); return; }
+    } else {
+      if(Math.abs(x - g.pos*W) < 6){ _guideDrag={idx:i,type:'v'}; e.preventDefault(); return; }
+    }
+  }
+}
+function _guideMouseMove(e){
+  if(!_guideDrag) return;
+  const mc = document.getElementById('cut-monitor-cvs');
+  if(!mc) return;
+  const rect = mc.getBoundingClientRect();
+  const W = mc.offsetWidth, H = mc.offsetHeight;
+  const g = window._monitorOverlays.guides[_guideDrag.idx];
+  if(!g) return;
+  if(g.type==='h') g.pos = Math.max(0, Math.min(1, (e.clientY-rect.top)/H));
+  else             g.pos = Math.max(0, Math.min(1, (e.clientX-rect.left)/W));
+  drawMonitorOverlays();
+}
+function _guideMouseUp(){ _guideDrag = null; }
+
+// ── Monitor Overlay Settings Panel ──
+function showMonitorOverlayPanel(){
+  document.querySelectorAll('#monitor-overlay-panel').forEach(e=>e.remove());
+  const mo = window._monitorOverlays;
+
+  const panel = document.createElement('div');
+  panel.id = 'monitor-overlay-panel';
+  panel.style.cssText = [
+    'position:fixed','top:60px','right:20px','width:260px',
+    'background:#1a2130','border:1px solid rgba(255,255,255,0.12)',
+    'border-radius:12px','padding:16px','z-index:9999',
+    'font-family:DM Sans,sans-serif','color:#f0f2f5',
+    'box-shadow:0 8px 32px rgba(0,0,0,0.5)',
+  ].join(';');
+
+  const tog = (id, label, key, icon) => `
+    <label style="display:flex;align-items:center;justify-content:space-between;padding:6px 0;border-bottom:1px solid rgba(255,255,255,0.05);cursor:pointer">
+      <span style="font-size:12px;display:flex;align-items:center;gap:6px"><span>${icon}</span>${label}</span>
+      <input type="checkbox" id="${id}" ${mo[key]?'checked':''} style="accent-color:#E8590C;width:14px;height:14px"
+        onchange="window._monitorOverlays.${key}=this.checked; drawMonitorOverlays(); if(this.checked) initMonitorCanvas();">
+    </label>`;
+
+  panel.innerHTML = `
+    <div style="font-size:13px;font-weight:700;margin-bottom:12px;display:flex;align-items:center;justify-content:space-between">
+      <span>⊞ Monitor Overlays</span>
+      <button onclick="document.getElementById('monitor-overlay-panel').remove()" 
+        style="background:none;border:none;color:#8b949e;cursor:pointer;font-size:16px;padding:0">✕</button>
+    </div>
+    ${tog('mo-safe','Safe Zones (Title + Action)','safeZones','⊡')}
+    ${tog('mo-grid','Rule of Thirds','grid','⊞')}
+    ${tog('mo-meta','Timecode + Clip Name','metadata','🕐')}
+    <div style="padding:6px 0;border-bottom:1px solid rgba(255,255,255,0.05)">
+      <div style="font-size:12px;margin-bottom:6px;display:flex;align-items:center;gap:6px"><span>📱</span>Social Media Safe Zone</div>
+      <select onchange="window._monitorOverlays.socialZone=this.value||null;drawMonitorOverlays();initMonitorCanvas();"
+        style="width:100%;padding:5px 8px;background:#252d3d;border:1px solid rgba(255,255,255,0.1);border-radius:6px;color:#f0f2f5;font-size:11px;outline:none">
+        <option value="">— None —</option>
+        <option value="tiktok" ${mo.socialZone==='tiktok'?'selected':''}>TikTok Safe Area</option>
+        <option value="reels"  ${mo.socialZone==='reels'?'selected':''}>Instagram Reels</option>
+        <option value="shorts" ${mo.socialZone==='shorts'?'selected':''}>YouTube Shorts</option>
+        <option value="facebook" ${mo.socialZone==='facebook'?'selected':''}>Facebook</option>
+      </select>
+    </div>
+    <div style="padding:8px 0;border-bottom:1px solid rgba(255,255,255,0.05)">
+      <div style="font-size:12px;margin-bottom:6px;display:flex;align-items:center;gap:6px"><span>📏</span>Guides</div>
+      <div style="display:flex;gap:6px;margin-bottom:6px">
+        <button onclick="window._addGuide('h')" style="flex:1;padding:5px;background:#252d3d;border:1px solid rgba(255,255,255,0.1);border-radius:6px;color:#f0f2f5;font-size:11px;cursor:pointer">+ Horizontal</button>
+        <button onclick="window._addGuide('v')" style="flex:1;padding:5px;background:#252d3d;border:1px solid rgba(255,255,255,0.1);border-radius:6px;color:#f0f2f5;font-size:11px;cursor:pointer">+ Vertical</button>
+        <button onclick="window._monitorOverlays.guides=[];drawMonitorOverlays();showMonitorOverlayPanel()" 
+          style="padding:5px 8px;background:#E31837;border:none;border-radius:6px;color:#fff;font-size:11px;cursor:pointer">✕</button>
+      </div>
+      <div id="mo-guide-list" style="font-size:10px;color:#8b949e">
+        ${mo.guides.length ? mo.guides.map((g,i)=>`
+          <div style="display:flex;align-items:center;justify-content:space-between;padding:2px 0">
+            <span>${g.type==='h'?'H':'V'} — ${Math.round(g.pos*100)}%</span>
+            <button onclick="window._monitorOverlays.guides.splice(${i},1);drawMonitorOverlays();showMonitorOverlayPanel()"
+              style="background:none;border:none;color:#E31837;cursor:pointer;font-size:11px;padding:0">✕</button>
+          </div>`).join('') : '<span>No guides — click + to add</span>'}
+      </div>
+    </div>
+    <div style="padding-top:8px;font-size:10px;color:#8b949e">
+      💡 Monitor overlays are non-destructive — they appear in preview only, not in exports.
+      Drag guides to reposition them.
+    </div>`;
+
+  document.body.appendChild(panel);
+  initMonitorCanvas();
+}
+window.showMonitorOverlayPanel = showMonitorOverlayPanel;
+
+window._addGuide = function(type){
+  window._monitorOverlays.guides.push({type, pos:0.5, color:'#00ff88'});
+  initMonitorCanvas();
+  drawMonitorOverlays();
+  showMonitorOverlayPanel();
+};
+
+// ── Hook into the RAF loop so metadata updates every frame ──
+const _origUpdateCutPH = window.updateCutPH;
+// We hook it after app loads
+setTimeout(() => {
+  const orig = window.updateCutPH;
+  if(orig && !orig._moHooked){
+    window.updateCutPH = function(){
+      orig.apply(this, arguments);
+      if(window._monitorOverlays?.metadata || window._monitorOverlays?.guides?.length > 0 ||
+         window._monitorOverlays?.safeZones || window._monitorOverlays?.grid || window._monitorOverlays?.socialZone){
+        drawMonitorOverlays();
+      }
+    };
+    window.updateCutPH._moHooked = true;
+  }
+}, 2000);
+
+// Auto-init canvas when cut editor loads
+setTimeout(initMonitorCanvas, 1500);
