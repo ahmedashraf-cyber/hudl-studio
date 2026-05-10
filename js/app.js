@@ -865,6 +865,23 @@ async function startExport(){
       return;
     }
 
+    // Frame hold: draw frozen frame independently of source clip
+    const fhNow = S.cut.clips.find(c => c.type==='frame_hold' && t>=c.start && t<c.start+c.dur);
+    if(fhNow){
+      if(fhNow._imgData && (!fhNow._img || !fhNow._img.complete)){
+        fhNow._img = new Image(); fhNow._img.src = fhNow._imgData;
+      }
+      ctx.fillStyle='#000'; ctx.fillRect(0,0,W,H);
+      if(fhNow._img && fhNow._img.complete) ctx.drawImage(fhNow._img,0,0,W,H);
+      if(lastActiveVid && !lastActiveVid.paused) lastActiveVid.pause();
+      const pct2=Math.min(98,Math.round((t/totalDur)*100));
+      bar.style.width=pct2+'%';
+      status.textContent='Rendering: '+pct2+'% (Frame Hold)';
+      t+=dt;
+      const wt2=startTs+t*1000; const d2=Math.max(0,wt2-Date.now());
+      setTimeout(renderFrame,d2); return;
+    }
+
     const clip = videoClips.find(c => t >= c.start && t < c.start + c.dur);
 
     if(clip){
@@ -5434,7 +5451,9 @@ function clipContextMenu(e, ci){
     {icon:'⚙️', label:'Scale & Rotation…', fn:()=>window.showTransformDialog(ci)},
     ...(c.type==='audio'?[{icon:'🎵', label:'Audio Enhancement…', fn:()=>window.showAudioEnhanceDialog&&showAudioEnhanceDialog(ci)}]:[]),
     {sep:true},
-    {icon:'🖼️', label:'Insert Frame Hold Here', fn:()=>insertFrameHold(ci)},
+    {sep:true},
+    {icon:'🖼', label:'Insert Frame Hold at Playhead', fn:()=>insertFrameHold(ci)},
+    {icon:'🖼', label:'Insert Frame Hold at Clip End', fn:()=>insertFrameHoldAtEnd(ci)},
   ]);
 }
 
@@ -5666,64 +5685,105 @@ function insertFrameHold(ci){
   const ph = S.cut.ph;
   const clip = S.cut.clips[ci];
   if(!clip || clip.type !== 'video'){
-    notify('Frame hold requires a video clip', '#E31837');
+    notify('Select a video clip first', '#E31837');
+    return;
+  }
+  // Playhead must be on the clip
+  if(ph <= clip.start || ph >= clip.start + clip.dur){
+    notify('Move the playhead inside the clip first', '#E31837');
     return;
   }
 
-  // Capture frame: canvas first (effects/transitions), fallback to video element
+  // ── Step 1: Capture the frozen frame ──
   let dataURL = null;
   const transCvs = document.getElementById('cut-trans-cvs');
   if(transCvs && transCvs.style.display !== 'none' && transCvs.width > 0){
-    try { dataURL = transCvs.toDataURL('image/jpeg', 0.92); } catch(e){}
+    try{ dataURL = transCvs.toDataURL('image/jpeg',0.95); }catch(e){}
   }
   if(!dataURL){
     const mv = document.getElementById('cut-main-vid');
     const fc = document.createElement('canvas');
-    fc.width = S.proj.w || 1920;
-    fc.height = S.proj.h || 1080;
-    try {
-      fc.getContext('2d').drawImage(mv, 0, 0, fc.width, fc.height);
-      dataURL = fc.toDataURL('image/jpeg', 0.92);
-    } catch(e) {
-      notify('Could not capture frame - pause the video first', '#E31837');
+    fc.width = S.proj.w||1920; fc.height = S.proj.h||1080;
+    try{
+      fc.getContext('2d').drawImage(mv,0,0,fc.width,fc.height);
+      dataURL = fc.toDataURL('image/jpeg',0.95);
+    }catch(e){
+      notify('Could not capture frame - pause the video first','#E31837');
       return;
     }
   }
 
+  const holdDur = 3; // default hold duration in seconds
+
+  // ── Step 2: Premiere-style "Insert Frame Hold Segment" ──
+  // Split clip at playhead: left part stays, right part shifts right by holdDur
+  // Insert frame_hold clip in the gap — same track as original clip
+  if(window.cutSaveHistory) cutSaveHistory('insert_frame_hold');
+
+  const origStart  = clip.start;
+  const origDur    = clip.dur;
+  const origTrack  = clip.track;
+  const origMedia  = clip.mediaIdx;
+  const origFS     = clip.fileStart || 0;
+  const origSpeed  = clip.speed || 1;
+
+  // Left part: clip.start → ph (keep clip, just shorten dur)
+  clip.dur      = ph - origStart;
+  clip.name     = clip.name; // keep original name
+
+  // Right part: ph → origEnd, shifted right by holdDur
+  const rightDur    = origDur - clip.dur;
+  const rightFileStart = origFS + (ph - origStart) * origSpeed;
+  const rightClip = {
+    type: 'video',
+    start: ph + holdDur,         // shifted right by holdDur
+    dur: rightDur,
+    track: origTrack,
+    name: clip.name,
+    mediaIdx: origMedia,
+    fileStart: rightFileStart,
+    speed: origSpeed,
+    volume: clip.volume,
+    color: clip.color,
+  };
+
+  // Frame hold clip fills the gap between left and right parts
   const img = new Image();
   img.src = dataURL;
-
-  // Frame hold always gets its own dedicated track above all video+audio tracks
-  const holdDur = 3;
-  const baseV = S.cut.videoTracks || 2;
-  const baseA = S.cut.audioTracks || 2;
-  let holdTrack = baseV + baseA;
-  for(let t = baseV + baseA; t < baseV + baseA + 8; t++){
-    const conflict = S.cut.clips.some(c =>
-      c.type === 'frame_hold' && c.track === t &&
-      ph < c.start + c.dur && ph + holdDur > c.start
-    );
-    if(!conflict){ holdTrack = t; break; }
-  }
-  if(holdTrack >= (S.cut.videoTracks || 2)){
-    S.cut.videoTracks = holdTrack + 1;
-    rebuildTrackLabels();
-  }
-
   const holdClip = {
     type: 'frame_hold',
-    start: ph,
+    start: ph,                    // immediately after left part
     dur: holdDur,
-    track: holdTrack,
+    track: origTrack,             // SAME track as original clip
     name: 'Frame Hold',
     color: 'linear-gradient(135deg,#3d1a5a,#6b2fa0)',
     _imgData: dataURL,
     _img: img,
   };
 
-  if(window.cutSaveHistory) cutSaveHistory('insert_frame_hold');
+  // Shift ALL clips that start at or after ph (on same and other tracks) right by holdDur
+  // This makes room for the hold segment — true ripple insert
+  S.cut.clips.forEach(c => {
+    if(c !== clip && c.start >= ph){
+      c.start += holdDur;
+    }
+  });
+  // Also shift overlays
+  if(window._overlays){
+    window._overlays.forEach(o => {
+      if(o.startTime >= ph){ o.startTime += holdDur; o.endTime += holdDur; }
+    });
+  }
+
+  // Insert hold clip and right part
   S.cut.clips.push(holdClip);
-  S.cut.sel = S.cut.clips.length - 1;
+  if(rightDur > 0.05) S.cut.clips.push(rightClip);
+
+  // Sort clips by start time for clean rendering
+  S.cut.clips.sort((a,b) => a.start - b.start || a.track - b.track);
+
+  // Select the hold clip
+  S.cut.sel = S.cut.clips.indexOf(holdClip);
 
   renderCutTimeline();
   syncCutVid();
@@ -5731,6 +5791,7 @@ function insertFrameHold(ci){
   notify('Frame Hold inserted (' + holdDur + 's) - drag edges to resize', '#3fb950');
 }
 window.insertFrameHold = insertFrameHold;
+
 
 window.cutTogglePlay = cutTogglePlay;
 window.syncCutVid = syncCutVid;
@@ -5788,3 +5849,46 @@ window.showExportModal = showExportModal;
 window.startExport = startExport;
 window.openApp = openApp;
 window.$ = $;
+
+// ── Insert Frame Hold at Clip End (extends the clip) ──
+function insertFrameHoldAtEnd(ci){
+  const clip = S.cut.clips[ci];
+  if(!clip || clip.type !== 'video'){ notify('Select a video clip first','#E31837'); return; }
+
+  // Seek to last frame of clip for capture
+  const mv = document.getElementById('cut-main-vid');
+  let dataURL = null;
+  const fc = document.createElement('canvas');
+  fc.width = S.proj.w||1920; fc.height = S.proj.h||1080;
+  try{
+    fc.getContext('2d').drawImage(mv,0,0,fc.width,fc.height);
+    dataURL = fc.toDataURL('image/jpeg',0.95);
+  }catch(e){
+    notify('Could not capture frame - pause near clip end first','#E31837');
+    return;
+  }
+
+  const holdDur = 3;
+  const clipEnd = clip.start + clip.dur;
+  const img = new Image(); img.src = dataURL;
+
+  if(window.cutSaveHistory) cutSaveHistory('insert_frame_hold_end');
+
+  // Shift all clips starting at or after clipEnd right by holdDur
+  S.cut.clips.forEach(c => { if(c !== clip && c.start >= clipEnd) c.start += holdDur; });
+  if(window._overlays){
+    window._overlays.forEach(o => { if(o.startTime >= clipEnd){ o.startTime += holdDur; o.endTime += holdDur; } });
+  }
+
+  const holdClip = {
+    type:'frame_hold', start:clipEnd, dur:holdDur, track:clip.track,
+    name:'Frame Hold', color:'linear-gradient(135deg,#3d1a5a,#6b2fa0)',
+    _imgData:dataURL, _img:img,
+  };
+  S.cut.clips.push(holdClip);
+  S.cut.clips.sort((a,b)=>a.start-b.start||a.track-b.track);
+  S.cut.sel = S.cut.clips.indexOf(holdClip);
+  renderCutTimeline(); syncCutVid(); scheduleSave();
+  notify('Frame Hold added at clip end ('+holdDur+'s)','#3fb950');
+}
+window.insertFrameHoldAtEnd = insertFrameHoldAtEnd;
