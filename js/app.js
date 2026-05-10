@@ -3838,22 +3838,23 @@ function cutTogglePlay(){
           if(S.cut.ph >= activeNow.start + activeNow.dur - 0.02){
             window._fhLastTime = null;
             const _fhEndPh = activeNow.start + activeNow.dur;
-            // Find the clip that plays after the frame_hold
-            const _nextVidClip = S.cut.clips.find(c =>
-              c.type === 'video' &&
-              _fhEndPh >= c.start && _fhEndPh < c.start + c.dur
-            );
+            // Find clip at fhEnd, or the next clip starting after fhEnd
+            const _nextVidClip =
+              S.cut.clips.find(c => c.type==='video' && _fhEndPh>=c.start && _fhEndPh<c.start+c.dur) ||
+              S.cut.clips.filter(c => c.type==='video' && c.start>=_fhEndPh).sort((a,b)=>a.start-b.start)[0];
             if(mvFH && _nextVidClip){
-              // Critical: update clipIdx so clip-end detection uses the right clip
               mvFH.dataset.clipIdx = String(S.cut.clips.indexOf(_nextVidClip));
-              const _resumeFileT = (_nextVidClip.fileStart||0) + (_fhEndPh - _nextVidClip.start) * (_nextVidClip.speed||1);
+              const _targetPh = Math.max(_fhEndPh, _nextVidClip.start);
+              const _resumeFileT = (_nextVidClip.fileStart||0)+Math.max(0,_targetPh-_nextVidClip.start)*(_nextVidClip.speed||1);
+              S.cut.ph = _targetPh;
+              updateCutPH();
               mvFH.currentTime = Math.max(0, _resumeFileT);
               mvFH.muted = false;
               mvFH.play().catch(()=>{});
+              if(S.cut.playing) startAudioPlayback();
             } else {
               stopCutPlay();
             }
-            if(S.cut.playing) startAudioPlayback();
           }
         } else if(activeFreezeNow){
           // ── FREEZE ACTIVE ──
