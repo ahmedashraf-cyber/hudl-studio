@@ -3837,16 +3837,23 @@ function cutTogglePlay(){
           // If frame_hold ended, resume video from the right position
           if(S.cut.ph >= activeNow.start + activeNow.dur - 0.02){
             window._fhLastTime = null;
-            // Resume video from position matching current ph
+            const _fhEndPh = activeNow.start + activeNow.dur;
+            // Find the clip that plays after the frame_hold
             const _nextVidClip = S.cut.clips.find(c =>
               c.type === 'video' &&
-              S.cut.ph >= c.start && S.cut.ph < c.start + c.dur
+              _fhEndPh >= c.start && _fhEndPh < c.start + c.dur
             );
             if(mvFH && _nextVidClip){
-              const _resumeFileT = (_nextVidClip.fileStart||0) + (S.cut.ph - _nextVidClip.start) * (_nextVidClip.speed||1);
-              mvFH.currentTime = _resumeFileT;
+              // Critical: update clipIdx so clip-end detection uses the right clip
+              mvFH.dataset.clipIdx = String(S.cut.clips.indexOf(_nextVidClip));
+              const _resumeFileT = (_nextVidClip.fileStart||0) + (_fhEndPh - _nextVidClip.start) * (_nextVidClip.speed||1);
+              mvFH.currentTime = Math.max(0, _resumeFileT);
+              mvFH.muted = false;
               mvFH.play().catch(()=>{});
+            } else {
+              stopCutPlay();
             }
+            if(S.cut.playing) startAudioPlayback();
           }
         } else if(activeFreezeNow){
           // ── FREEZE ACTIVE ──
