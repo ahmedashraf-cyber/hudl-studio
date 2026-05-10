@@ -124,7 +124,6 @@ function showFreezeDialog(){
   `, ()=>{
     const start = parseFloat(document.getElementById('frz-start').value);
     const end = parseFloat(document.getElementById('frz-end').value);
-    ov.freezeAudio = document.getElementById('frz-audio')?.checked !== false;
     if(isNaN(start)||isNaN(end)||end<=start){ notify('Invalid time range','#E31837'); return; }
     // Find video frame at freeze start
     const clip = S.cut.clips.find(c=>c.type==='video'&&start>=c.start&&start<c.start+c.dur);
@@ -151,7 +150,6 @@ function showFreezeDialog(){
         id: ovId, type:'freeze',
         startTime: start, endTime: end,
         clipMediaIdx: clip.mediaIdx, freezeFileTime,
-        freezeAudio: true,
         _img: img
       });
       document.body.removeChild(captureVid);
@@ -193,16 +191,6 @@ function showFreezeEditDialog(id){
         <input id="frz-end" type="number" step="0.1" value="${ov.endTime.toFixed(2)}" style="${inputStyle()}">
         <button onclick="document.getElementById('frz-end').value=S.cut.ph.toFixed(2)" style="${smallBtnStyle()}">Use Playhead</button>
       </div>
-    </div>
-    <div style="margin-bottom:14px">
-      <label class="modal-field-label">Audio during freeze</label>
-      <div style="display:flex;align-items:center;gap:10px;margin-top:6px">
-        <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:12px;color:var(--tx)">
-          <input type="checkbox" id="frz-audio" ${ov.freezeAudio!==false?'checked':''} style="accent-color:#E8590C;width:14px;height:14px">
-          Freeze audio (pause sound during freeze)
-        </label>
-      </div>
-      <div style="font-size:11px;color:var(--mu);margin-top:4px">Uncheck to let audio keep playing while the frame is frozen</div>
     </div>
     <div style="margin-bottom:14px">
       <label class="modal-field-label">Re-capture frame at new time?</label>
@@ -1128,83 +1116,24 @@ function getOverlayLabel(ov){
 const OVERLAY_TRACK  = 0; // always render on V1 row (track 0), as an overlay layer on top
 
 function renderOverlayTimeline(){
-  // Remove old overlay-strip (legacy)
+  // Remove old overlay-strip if it exists (legacy)
   const old = document.getElementById('overlay-strip');
   if(old) old.remove();
 
-  // Remove existing overlay clip elements from all rows
+  // Remove all existing overlay clip elements from timeline
   document.querySelectorAll('.tl-overlay-clip').forEach(el=>el.remove());
-  // Remove existing overlay sub-track rows
-  document.querySelectorAll('.overlay-sub-row').forEach(el=>el.remove());
 
   if(!window._overlays || !window._overlays.length) return;
 
   const PPS = window.PPS || 60;
-  const rows = document.getElementById('tl-rows');
-  if(!rows) return;
+  // Find the V1 row (track 0) — overlays render there as a second layer
+  const row = document.getElementById('tl-row-0');
+  if(!row) return;
 
-  // ── Auto-assign overlays to sub-tracks to avoid visual stacking ──
-  // Group overlays by time — if two overlap in time, put them on different sub-tracks
-  // ovTrack = 0,1,2... (0 = same row as V1, 1+ = extra rows below V1)
-  const rowCount = S?.cut?.videoTracks||1;
-
-  // Sort by start time for predictable assignment
-  const sorted = [...window._overlays].sort((a,b)=>a.startTime-b.startTime);
-  sorted.forEach(ov => {
-    if(ov.ovTrack === undefined || ov.ovTrack === null){
-      // Auto-assign: find first sub-track with no time overlap
-      const assigned = sorted.filter(o=>o.id!==ov.id&&o.ovTrack!==undefined&&o.ovTrack!==null);
-      let track = 0;
-      while(true){
-        const conflict = assigned.find(o=>
-          o.ovTrack === track &&
-          ov.startTime < o.endTime &&
-          ov.endTime > o.startTime
-        );
-        if(!conflict) break;
-        track++;
-      }
-      ov.ovTrack = track;
-    }
-  });
-
-  // ── Create overlay sub-track rows ──
-  const maxOvTrack = Math.max(0, ...window._overlays.map(o=>o.ovTrack||0));
-  const phEl = document.getElementById('cut-ph');
-  const refRow = document.getElementById('tl-row-0');
-  const maxW = refRow ? refRow.style.width : '1000px';
-
-  for(let t=0; t<=maxOvTrack; t++){
-    let row = document.getElementById('ov-row-'+t);
-    if(!row){
-      row = document.createElement('div');
-      row.id = 'ov-row-'+t;
-      row.className = 'clip-track-row overlay-sub-row';
-      row.setAttribute('data-ovtrack', t);
-      row.style.cssText = `
-        height:22px;min-height:22px;
-        position:relative;
-        background:rgba(255,255,255,0.01);
-        border-top:0.5px solid rgba(255,255,255,0.04);
-      `;
-      row.style.width = maxW;
-      // Insert after the last video row (before audio rows)
-      const lastVideoRow = document.getElementById('tl-row-'+(rowCount-1));
-      if(lastVideoRow && lastVideoRow.nextSibling){
-        rows.insertBefore(row, lastVideoRow.nextSibling);
-      } else {
-        if(phEl) rows.insertBefore(row, phEl); else rows.appendChild(row);
-      }
-    }
-    row.style.width = maxW;
-  }
-
-  // ── Render each overlay onto its assigned row ──
   window._overlays.forEach(ov => {
     const color = OVERLAY_COLORS[ov.type] || 'rgba(128,128,128,0.7)';
     const isActive = _activeEditId === ov.id;
-    const ovRow = document.getElementById('ov-row-'+(ov.ovTrack||0));
-    if(!ovRow) return;
+    // label computed by getOverlayLabel(ov)
 
     const el = document.createElement('div');
     el.className = 'tl-overlay-clip tl-clip';
@@ -1212,8 +1141,8 @@ function renderOverlayTimeline(){
     el.style.cssText = [
       `left:${Math.round(ov.startTime * PPS)}px`,
       `width:${Math.max(4, Math.round((ov.endTime - ov.startTime) * PPS))}px`,
-      `top:1px`,
-      `height:20px`,
+      `top:2px`,
+      `height:26px`,
       `background:${color}`,
       `border:${isActive ? '2px solid #fff' : '1px solid rgba(255,255,255,0.3)'}`,
       `border-radius:5px`,
@@ -1230,6 +1159,8 @@ function renderOverlayTimeline(){
       `white-space:nowrap`,
       `overflow:hidden`,
       `user-select:none`,
+      `box-shadow:0 1px 4px rgba(0,0,0,0.4)`,
+      `box-sizing:border-box`,
     ].join(';');
     el.title = 'Click: select | Double-click: edit | Drag: move | Drag edge: trim | Right-click: delete';
 
@@ -1371,7 +1302,6 @@ function renderOverlayTimeline(){
     row.appendChild(el);
   });
 }
-
 
 // ── OVERLAY PROPERTIES PANEL ──
 window.updateOverlayProps = function(id){
@@ -1577,20 +1507,7 @@ function showOverlayHandles(id){
     closeBtn.style.cssText = 'background:#444;color:#ccc;font-size:10px;padding:3px 8px;border-radius:4px;cursor:pointer;font-family:DM Sans,sans-serif';
     closeBtn.textContent = '✕';
     closeBtn.addEventListener('click', ()=>{ setActiveEditId(null); removeOverlayHandles(); renderOverlayTimeline(); });
-    // ── Move to another overlay sub-track ──
-    const moveBtn = document.createElement('button');
-    moveBtn.style.cssText = 'background:rgba(255,255,255,0.1);border:none;border-radius:3px;color:#fff;font-size:9px;padding:1px 5px;cursor:pointer;flex-shrink:0;';
-    moveBtn.textContent = '↕';
-    moveBtn.title = 'Move to different overlay track';
-    moveBtn.addEventListener('click', e => {
-      e.stopPropagation();
-      const maxT = Math.max(0, ...window._overlays.map(o=>o.ovTrack||0));
-      const current = ov.ovTrack||0;
-      // Cycle through available tracks + one new empty track
-      ov.ovTrack = current >= maxT + 1 ? 0 : current + 1;
-      renderOverlayTimeline();
-    });
-    bar.appendChild(editBtn); bar.appendChild(moveBtn); bar.appendChild(closeBtn);
+    bar.appendChild(editBtn); bar.appendChild(closeBtn);
     editor.appendChild(bar);
 
     // ── 4 corner resize handles ──

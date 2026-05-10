@@ -1648,10 +1648,7 @@ function cutToggleEffect(i){
       i,
       v: eff.default||0,
       startOffset: defaultStartOffset,
-      // ── effectDur: transitions use template dur, filters cap to 2s (never full clip) ──
-      effectDur: eff.type==='transition'
-        ? Math.min(eff.dur||1, clipDur*0.5)
-        : Math.min(clipDur, 2),
+      effectDur: eff.type==='transition' ? Math.min(eff.dur||1, clipDur*0.5) : clipDur,
       visible: true,
     });
     notify(eff.name+' applied at '+fmtTC(offsetInClip)+' into clip','#3fb950');
@@ -1768,39 +1765,14 @@ function buildFilterStr(ci){
   const ph=S.cut.ph;
   const parts=[];
   effects.forEach(ef=>{
-    if(ef.visible===false) return;
+    if(ef.visible===false) return; // user toggled off
     const e=CUT_EFFECTS[ef.i]; if(!e||e.type==="transition")return;
+    // Respect effect segment timing (startOffset + effectDur on clip timeline)
     if(clip){
       const effStart=clip.start+(ef.startOffset||0);
       const effEnd=effStart+(ef.effectDur!==undefined?ef.effectDur:clip.dur);
-      if(ph<effStart||ph>=effEnd) return;
-
-      // ── Linear fade ramp ──
-      // ramp = 0→1 during fadeIn window, 1 during body, 1→0 during fadeOut window
-      const fadeIn  = Math.max(0, ef.fadeIn  || 0);
-      const fadeOut = Math.max(0, ef.fadeOut || 0);
-      const elapsed  = ph - effStart;
-      const remain   = effEnd - ph;
-      let ramp = 1;
-      if(fadeIn  > 0 && elapsed < fadeIn)  ramp = Math.min(ramp, elapsed / fadeIn);
-      if(fadeOut > 0 && remain  < fadeOut) ramp = Math.min(ramp, remain  / fadeOut);
-      ramp = Math.max(0, Math.min(1, ramp));
-
-      if(e.type==='range'){
-        // Interpolate between default (no effect) and target value
-        const neutral = e.default !== undefined ? e.default : (e.unit==='%'?100:0);
-        const target  = ef.v !== undefined ? ef.v : neutral;
-        const val     = neutral + (target - neutral) * ramp;
-        parts.push(e.prop+'('+val.toFixed(2)+e.unit+')');
-      } else if(e.type==='toggle'){
-        // For toggle: apply at full strength only during body, fade via opacity wrapper
-        if(ramp >= 0.99) parts.push(e.filter);
-        // partial: blend using opacity — not perfect but functional
-        else if(ramp > 0) parts.push(e.filter + ' opacity('+ramp.toFixed(2)+')');
-      }
-      return; // handled above
+      if(ph<effStart||ph>=effEnd) return; // outside effect window
     }
-    // No clip context fallback
     if(e.type==='range') parts.push(e.prop+'('+ef.v+e.unit+')');
     else if(e.type==='toggle') parts.push(e.filter);
   });
@@ -2962,41 +2934,13 @@ function renderCutTimeline() {
       el.innerHTML = '<div class="clip-resize-l"></div>'
         + '<span>' + c.name.replace(/\.[^.]+$/, '').substring(0, 22) + '</span>'
         + '<div class="clip-resize-r"></div>';
-      // ── Effect bars (Premiere-style) ──
+      // ── Effect bars ──
       const clipEffects = S.cut.effects[ci]||[];
       clipEffects.forEach((ef,efIdx) => {
         const eff = CUT_EFFECTS[ef.i];
         if(!eff) return;
-
-        // ── Snap to clip start if startOffset < 0.1s ──
-        if((ef.startOffset||0) < 0.1 && eff.type !== 'transition') {
-          ef.startOffset = 0;
-        }
-
-        // ── Correct effectDur: never default to full c.dur (black screen bug) ──
-        // Only transitions use eff.dur; filters default to a sane 2s window
-        if(!ef.effectDur || ef.effectDur <= 0) {
-          ef.effectDur = eff.type === 'transition'
-            ? Math.min(eff.dur||1, c.dur * 0.5)
-            : Math.min(c.dur, 2);
-        }
-        // Cap to clip remaining duration
-        const maxDur = Math.max(0.1, c.dur - (ef.startOffset||0));
-        if(ef.effectDur > maxDur) ef.effectDur = maxDur;
-
         const effectStartPx = Math.round((ef.startOffset||0) * PPS);
-        const effectDurPx   = Math.max(8, Math.round(ef.effectDur * PPS));
-
-        // ── Visual style: transitions vs filter effects ──
-        const isTransition = eff.type === 'transition';
-        const barColor     = eff.color || (isTransition ? '#E8590C' : '#58a6ff');
-        const barAlpha     = isTransition ? 'dd' : 'bb';
-        const barTop       = isTransition ? '3px' : '9px';
-        const barHeight    = isTransition ? '8px' : '7px';
-        const barBorder    = isTransition
-          ? '1px solid rgba(255,255,255,0.25)'
-          : '1px solid rgba(255,255,255,0.15)';
-
+        const effectDurPx   = Math.max(6, Math.round((ef.effectDur||c.dur) * PPS));
         const bar = document.createElement('div');
         bar.className = 'effect-bar';
         bar.dataset.ci = String(ci);
@@ -3004,253 +2948,114 @@ function renderCutTimeline() {
         bar.style.cssText = [
           `left:${effectStartPx}px`,
           `width:${effectDurPx}px`,
-          `background:${barColor}${barAlpha}`,
+          `background:${eff.color||'#888'}cc`,
           `position:absolute`,
-          `top:${barTop}`,
-          `height:${barHeight}`,
+          `bottom:2px`,
+          `height:5px`,
           `border-radius:3px`,
           `z-index:4`,
           `cursor:pointer`,
-          `border:${barBorder}`,
+          `box-shadow:0 0 0 1px rgba(0,0,0,0.3)`,
           `display:flex`,
           `align-items:center`,
           `overflow:hidden`,
-          `box-shadow:0 1px 3px rgba(0,0,0,0.4)`,
-          `transition:opacity .1s`,
         ].join(';');
-        bar.title = eff.name + ' · ' + ef.effectDur.toFixed(1) + 's — drag edges to resize';
+        bar.title = eff.name + ' — click to select, drag edges to trim';
 
-        // ── Snap indicator dot (shown at left edge when snapped to clip start) ──
-        if((ef.startOffset||0) === 0 && eff.type !== 'transition') {
-          const snap = document.createElement('div');
-          snap.style.cssText = 'position:absolute;left:0;top:-2px;width:3px;height:calc(100%+4px);background:rgba(255,255,255,0.6);border-radius:1px;pointer-events:none;';
-          bar.appendChild(snap);
-        }
-
-        // ── Left drag handle ──
+        // Left drag handle
         const lh = document.createElement('div');
-        lh.style.cssText = 'width:5px;height:100%;cursor:ew-resize;background:rgba(255,255,255,0.4);flex-shrink:0;border-radius:2px 0 0 2px;pointer-events:all;';
+        lh.style.cssText = 'width:8px;height:100%;cursor:ew-resize;background:rgba(255,255,255,0.35);flex-shrink:0;border-radius:3px 0 0 3px;';
         bar.appendChild(lh);
 
-        // ── Fade-In handle (diamond at left inner edge) ──
-        const fih = document.createElement('div');
-        const fiW = Math.min(Math.round((ef.fadeIn||0) * PPS), effectDurPx - 6);
-        fih.style.cssText = [
-          'position:absolute', 'left:5px', 'top:0', 'height:100%',
-          `width:${Math.max(0,fiW)}px`,
-          'background:rgba(255,255,255,0.18)',
-          'pointer-events:none',
-          'border-right:2px solid rgba(255,255,255,0.7)',
-          'border-radius:0',
-          'z-index:1',
-        ].join(';');
-        fih.title = 'Fade In: '+(ef.fadeIn||0).toFixed(1)+'s';
-        bar.appendChild(fih);
-
-        // ── Label ──
+        // Label
         const lbl = document.createElement('span');
-        lbl.style.cssText = 'font-size:8px;font-weight:700;color:#fff;padding:0 3px;pointer-events:none;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;flex:1;text-shadow:0 1px 2px rgba(0,0,0,0.6);letter-spacing:0.2px;position:relative;z-index:2';
+        lbl.style.cssText = 'font-size:7px;font-weight:700;color:#fff;padding:0 2px;pointer-events:none;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;flex:1';
         lbl.textContent = eff.name;
         bar.appendChild(lbl);
 
-        // ── Fade-Out handle (diamond at right inner edge) ──
-        const foh = document.createElement('div');
-        const foW = Math.min(Math.round((ef.fadeOut||0) * PPS), effectDurPx - 6);
-        foh.style.cssText = [
-          'position:absolute', 'right:5px', 'top:0', 'height:100%',
-          `width:${Math.max(0,foW)}px`,
-          'background:rgba(255,255,255,0.18)',
-          'pointer-events:none',
-          'border-left:2px solid rgba(255,255,255,0.7)',
-          'border-radius:0',
-          'z-index:1',
-        ].join(';');
-        foh.title = 'Fade Out: '+(ef.fadeOut||0).toFixed(1)+'s';
-        bar.appendChild(foh);
-
-        // ── Right drag handle ──
+        // Right drag handle
         const rh = document.createElement('div');
-        rh.style.cssText = 'width:5px;height:100%;cursor:ew-resize;background:rgba(255,255,255,0.4);flex-shrink:0;border-radius:0 2px 2px 0;pointer-events:all;position:relative;z-index:3';
+        rh.style.cssText = 'width:8px;height:100%;cursor:ew-resize;background:rgba(255,255,255,0.35);flex-shrink:0;border-radius:0 3px 3px 0;';
         bar.appendChild(rh);
 
-        // ── Click → select clip + show effect-specific props ──
+        // Click — select and show in props
         bar.addEventListener('click', e => {
           e.stopPropagation();
-          e._effectBarHandled = true;
-          _selectClip(ci);
-          // Show effect-specific props panel with Fade Control
+          S.cut.sel = ci;
           const body = document.getElementById('cut-props-body');
           if(body){
-            const iStyle = 'width:56px;background:#161616;border:0.5px solid rgba(255,255,255,0.1);border-radius:5px;color:var(--tx);font-size:11px;padding:2px 5px;outline:none;font-family:DM Sans,sans-serif';
             const rangeRow = eff.type==='range'
-              ? '<div class="prop-row"><span class="prop-label">Value</span>'
-                + '<input type="range" min="'+eff.min+'" max="'+eff.max+'" value="'+(ef.v||eff.default||100)+'" style="flex:1;accent-color:#E8590C"'
-                + ' oninput="S.cut.effects['+ci+']['+efIdx+'].v=parseFloat(this.value);applyVideoEffects();syncCutVid()"></div>'
+              ? '<div class="prop-section">Settings</div>'
+                + '<div class="prop-row"><span class="prop-label">'+eff.name+'</span>'
+                + '<input type="range" min="'+(eff.min||0)+'" max="'+(eff.max||200)+'" value="'+(ef.v||eff.default||100)+'"'
+                + ' style="flex:1;accent-color:#E8590C"'
+                + ' oninput="S.cut.effects['+ci+']['+efIdx+'].v=parseFloat(this.value);applyVideoEffects();">'
+                + '</div>'
               : '';
             body.innerHTML =
-              '<div style="padding:6px 8px 2px;display:flex;align-items:center;gap:6px">'
-              +'<div style="width:3px;height:18px;border-radius:2px;background:'+eff.color+'"></div>'
-              +'<span style="font-size:11px;font-weight:700;color:#fff">'+eff.name+'</span>'
-              +'</div>'
-              +'<div style="border:0.5px solid rgba(88,166,255,0.2);border-radius:8px;margin:4px 0;overflow:hidden;background:rgba(88,166,255,0.03)">'
-              +'<div style="display:flex;align-items:center;padding:7px 10px;gap:8px">'
-              +'<div style="width:3px;height:22px;border-radius:2px;background:linear-gradient(180deg,#58a6ff,#79c0ff)"></div>'
-              +'<div style="font-size:11px;font-weight:700;color:#fff">⏱ Timing</div></div>'
-              +'<div style="padding:0 6px 8px">'
-              +'<div class="prop-row"><span class="prop-label">Start</span>'
-              +'<input type="number" value="'+(ef.startOffset||0).toFixed(2)+'" step="0.1" min="0" style="'+iStyle+'"'
-              +' onchange="S.cut.effects['+ci+']['+efIdx+'].startOffset=Math.max(0,parseFloat(this.value));renderCutTimeline()">'
-              +'<span style="font-size:10px;color:var(--mu)">s</span></div>'
-              +'<div class="prop-row"><span class="prop-label">Duration</span>'
-              +'<input type="number" value="'+(ef.effectDur||2).toFixed(2)+'" step="0.1" min="0.1" style="'+iStyle+'"'
-              +' onchange="S.cut.effects['+ci+']['+efIdx+'].effectDur=Math.max(0.1,parseFloat(this.value));renderCutTimeline();syncCutVid()">'
-              +'<span style="font-size:10px;color:var(--mu)">s</span></div>'
-              +'</div></div>'
-              +'<div style="border:0.5px solid rgba(255,255,255,0.12);border-radius:8px;margin:4px 0;overflow:hidden;background:rgba(255,255,255,0.02)">'
-              +'<div style="display:flex;align-items:center;padding:7px 10px;gap:8px">'
-              +'<div style="width:3px;height:22px;border-radius:2px;background:linear-gradient(180deg,rgba(255,255,255,0.5),rgba(255,255,255,0.2))"></div>'
-              +'<div style="font-size:11px;font-weight:700;color:#fff">◈ Fade Control</div></div>'
-              +'<div style="padding:0 6px 8px">'
-              +'<div class="prop-row"><span class="prop-label" style="color:rgba(255,255,255,0.6)">Fade In</span>'
-              +'<input id="eff-fi-'+ci+'-'+efIdx+'" type="number" value="'+(ef.fadeIn||0).toFixed(2)+'" step="0.05" min="0" style="'+iStyle+'"'
-              +' onchange="const ef2=S.cut.effects['+ci+']['+efIdx+'];ef2.fadeIn=Math.max(0,Math.min(parseFloat(this.value),(ef2.effectDur||1)-(ef2.fadeOut||0)-0.05));renderCutTimeline();syncCutVid()">'
-              +'<span style="font-size:10px;color:var(--mu)">s</span></div>'
-              +'<div class="prop-row"><span class="prop-label" style="color:rgba(255,255,255,0.6)">Fade Out</span>'
-              +'<input id="eff-fo-'+ci+'-'+efIdx+'" type="number" value="'+(ef.fadeOut||0).toFixed(2)+'" step="0.05" min="0" style="'+iStyle+'"'
-              +' onchange="const ef2=S.cut.effects['+ci+']['+efIdx+'];ef2.fadeOut=Math.max(0,Math.min(parseFloat(this.value),(ef2.effectDur||1)-(ef2.fadeIn||0)-0.05));renderCutTimeline();syncCutVid()">'
-              +'<span style="font-size:10px;color:var(--mu)">s</span></div>'
-              +'<div style="font-size:9px;color:rgba(255,255,255,0.25);padding:4px 4px 0">Drag the white markers on the bar · or type values above.</div>'
-              +'</div></div>'
-              +(rangeRow ? '<div style="border:0.5px solid rgba(232,89,12,0.2);border-radius:8px;margin:4px 0;overflow:hidden;background:rgba(232,89,12,0.03)"><div style="display:flex;align-items:center;padding:7px 10px;gap:8px"><div style="width:3px;height:22px;border-radius:2px;background:linear-gradient(180deg,#E8590C,#ff8c42)"></div><div style="font-size:11px;font-weight:700;color:#fff">⚙ Value</div></div><div style="padding:0 6px 8px">'+rangeRow+'</div></div>' : '')
-              +'<div style="padding:4px 6px 6px">'
-              +'<button onclick="cutSaveHistory(&quot;remove_effect&quot;);S.cut.effects['+ci+'].splice('+efIdx+',1);renderCutTimeline();updatePropsPanel('+ci+');notify(&quot;Effect removed&quot;)"'
-              +' style="width:100%;padding:5px;background:rgba(255,69,58,0.08);border:0.5px solid rgba(255,69,58,0.2);border-radius:6px;color:#ff453a;font-size:10px;cursor:pointer;font-family:DM Sans,sans-serif;font-weight:600">🗑 Delete Effect</button>'
-              +'</div>';
+              '<div class="prop-section">'+eff.name+' Effect</div>'
+              + '<div class="prop-row"><span class="prop-label">Clip</span><span class="prop-val">'+c.name.substring(0,14)+'</span></div>'
+              + '<div class="prop-section">Timing on Clip</div>'
+              + '<div class="prop-row"><span class="prop-label">Start</span>'
+              + '<input type="number" value="'+(ef.startOffset||0).toFixed(2)+'" step="0.1" min="0"'
+              + ' style="width:62px;background:#161616;border:0.5px solid rgba(255,255,255,0.1);border-radius:5px;color:var(--tx);font-size:11px;padding:2px 5px;outline:none"'
+              + ' onchange="S.cut.effects['+ci+']['+efIdx+'].startOffset=Math.max(0,parseFloat(this.value));renderCutTimeline()">'
+              + '</div>'
+              + '<div class="prop-row"><span class="prop-label">Duration</span>'
+              + '<input type="number" value="'+(ef.effectDur||c.dur).toFixed(2)+'" step="0.1" min="0.1"'
+              + ' style="width:62px;background:#161616;border:0.5px solid rgba(255,255,255,0.1);border-radius:5px;color:var(--tx);font-size:11px;padding:2px 5px;outline:none"'
+              + ' onchange="S.cut.effects['+ci+']['+efIdx+'].effectDur=Math.max(0.1,parseFloat(this.value));renderCutTimeline()">'
+              + '</div>'
+              + rangeRow
+              + '<div class="prop-section">Actions</div>'
+              + '<div style="display:flex;gap:4px;padding:2px 0">'
+              + '<button onclick="cutSaveHistory(&quot;remove_effect&quot;);S.cut.effects['+ci+'].splice('+efIdx+',1);renderCutTimeline();notify(&quot;Effect removed&quot;)"'
+              + ' style="flex:1;padding:5px;background:rgba(255,69,58,0.1);border:0.5px solid rgba(255,69,58,0.2);border-radius:6px;color:#ff453a;font-size:10px;cursor:pointer;font-family:DM Sans,sans-serif">Delete Effect</button>'
+              + '</div>';
           }
         });
 
-        // ── Left handle drag: trim start, keep end fixed ──
+        // Drag left handle (trim start)
         lh.addEventListener('mousedown', e => {
           e.stopPropagation(); e.preventDefault();
-          const sx        = e.clientX;
+          const sx = e.clientX;
           const origStart = ef.startOffset || 0;
-          const origDur   = ef.effectDur;
-          const origEnd   = origStart + origDur; // fixed end point
-          bar.style.opacity = '0.8';
+          const origDur   = ef.effectDur || c.dur;
           const onMove = mv => {
-            const dx  = (mv.clientX - sx) / PPS;
-            let   ns  = origStart + dx;
-            // Snap to clip start (within 0.2s)
-            if(Math.abs(ns) < 0.2) ns = 0;
-            ns = Math.max(0, Math.min(ns, origEnd - 0.1));
+            const dx = (mv.clientX - sx) / PPS;
+            const ns = Math.max(0, Math.min(origStart + dx, origStart + origDur - 0.1));
             ef.startOffset = ns;
-            ef.effectDur   = Math.max(0.1, origEnd - ns);
-            bar.style.left  = Math.round(ns * PPS) + 'px';
-            bar.style.width = Math.max(8, Math.round(ef.effectDur * PPS)) + 'px';
-            bar.title = eff.name + ' · ' + ef.effectDur.toFixed(1) + 's';
-            syncCutVid(); // live engine update
+            ef.effectDur   = Math.max(0.1, origDur - (ns - origStart));
+            bar.style.left  = Math.round(ef.startOffset * PPS) + 'px';
+            bar.style.width = Math.max(6, Math.round(ef.effectDur * PPS)) + 'px';
           };
           const onUp = () => {
             document.removeEventListener('mousemove', onMove);
             document.removeEventListener('mouseup', onUp);
-            bar.style.opacity = '1';
-            // Final snap to 0 if very close
-            if((ef.startOffset||0) < 0.1) { ef.startOffset = 0; bar.style.left = '0px'; }
             cutSaveHistory('effect_trim');
             renderCutTimeline();
-            syncCutVid();
+            syncCutVid(); // immediately apply new timing
           };
           document.addEventListener('mousemove', onMove);
           document.addEventListener('mouseup', onUp);
         });
 
-        // ── Right handle drag: trim end only ──
+        // Drag right handle (trim end)
         rh.addEventListener('mousedown', e => {
           e.stopPropagation(); e.preventDefault();
-          const sx      = e.clientX;
-          const origDur = ef.effectDur;
-          const maxDur2 = Math.max(0.1, c.dur - (ef.startOffset||0));
-          bar.style.opacity = '0.8';
+          const sx = e.clientX;
+          const origDur = ef.effectDur || c.dur;
           const onMove = mv => {
             const dx = (mv.clientX - sx) / PPS;
-            ef.effectDur = Math.max(0.1, Math.min(origDur + dx, maxDur2));
-            bar.style.width = Math.max(8, Math.round(ef.effectDur * PPS)) + 'px';
-            bar.title = eff.name + ' · ' + ef.effectDur.toFixed(1) + 's';
-            syncCutVid(); // live engine update
+            ef.effectDur = Math.max(0.1, origDur + dx);
+            bar.style.width = Math.max(6, Math.round(ef.effectDur * PPS)) + 'px';
           };
           const onUp = () => {
             document.removeEventListener('mousemove', onMove);
             document.removeEventListener('mouseup', onUp);
-            bar.style.opacity = '1';
             cutSaveHistory('effect_trim');
             renderCutTimeline();
-            syncCutVid();
-          };
-          document.addEventListener('mousemove', onMove);
-          document.addEventListener('mouseup', onUp);
-        });
-
-        // ── Fade-In inner handle drag (click on left ~30px of bar body) ──
-        // We use a dedicated invisible overlay for precise hit area
-        const fiDrag = document.createElement('div');
-        fiDrag.style.cssText = 'position:absolute;left:5px;top:0;width:14px;height:100%;cursor:col-resize;z-index:5;';
-        fiDrag.title = 'Drag to set Fade In duration';
-        bar.appendChild(fiDrag);
-
-        fiDrag.addEventListener('mousedown', e => {
-          e.stopPropagation(); e.preventDefault();
-          const sx      = e.clientX;
-          const origFI  = ef.fadeIn || 0;
-          const maxFade = Math.max(0, (ef.effectDur||1) - (ef.fadeOut||0) - 0.05);
-          bar.style.opacity = '0.8';
-          const onMove = mv => {
-            const dx = (mv.clientX - sx) / PPS;
-            ef.fadeIn = Math.max(0, Math.min(origFI + dx, maxFade));
-            // Update visual
-            const fw = Math.max(0, Math.round(ef.fadeIn * PPS));
-            if(fih) { fih.style.width = fw+'px'; fih.title='Fade In: '+ef.fadeIn.toFixed(1)+'s'; }
-            syncCutVid();
-            // Update props panel inputs live
-            const fiInput = document.getElementById('eff-fi-'+ci+'-'+efIdx);
-            if(fiInput) fiInput.value = ef.fadeIn.toFixed(2);
-          };
-          const onUp = () => {
-            document.removeEventListener('mousemove', onMove);
-            document.removeEventListener('mouseup', onUp);
-            bar.style.opacity = '1';
-            cutSaveHistory('effect_fade');
-          };
-          document.addEventListener('mousemove', onMove);
-          document.addEventListener('mouseup', onUp);
-        });
-
-        // ── Fade-Out inner handle drag (right ~30px of bar body) ──
-        const foDrag = document.createElement('div');
-        foDrag.style.cssText = 'position:absolute;right:5px;top:0;width:14px;height:100%;cursor:col-resize;z-index:5;';
-        foDrag.title = 'Drag to set Fade Out duration';
-        bar.appendChild(foDrag);
-
-        foDrag.addEventListener('mousedown', e => {
-          e.stopPropagation(); e.preventDefault();
-          const sx      = e.clientX;
-          const origFO  = ef.fadeOut || 0;
-          const maxFade = Math.max(0, (ef.effectDur||1) - (ef.fadeIn||0) - 0.05);
-          bar.style.opacity = '0.8';
-          const onMove = mv => {
-            const dx = (mv.clientX - sx) / PPS;
-            // dragging LEFT increases fadeOut (right boundary moves left)
-            ef.fadeOut = Math.max(0, Math.min(origFO - dx, maxFade));
-            const fw = Math.max(0, Math.round(ef.fadeOut * PPS));
-            if(foh) { foh.style.width = fw+'px'; foh.title='Fade Out: '+ef.fadeOut.toFixed(1)+'s'; }
-            syncCutVid();
-            const foInput = document.getElementById('eff-fo-'+ci+'-'+efIdx);
-            if(foInput) foInput.value = ef.fadeOut.toFixed(2);
-          };
-          const onUp = () => {
-            document.removeEventListener('mousemove', onMove);
-            document.removeEventListener('mouseup', onUp);
-            bar.style.opacity = '1';
-            cutSaveHistory('effect_fade');
+            syncCutVid(); // immediately apply new timing
           };
           document.addEventListener('mousemove', onMove);
           document.addEventListener('mouseup', onUp);
@@ -3291,8 +3096,6 @@ function renderCutTimeline() {
     });
   }
   updateCutPH();
-  // Re-render overlay clips (they live in tl-row-0 which was just rebuilt)
-  if(window.renderOverlayTimeline) window.renderOverlayTimeline();
 }
 
 // ── CLIP SELECTION HELPER ────────────────────────────────────
@@ -3893,7 +3696,6 @@ function cutTogglePlay(){
       // Redraw canvas overlays every frame
       const phNow=S.cut.ph;
       const activeNow=S.cut.clips.find(c=>c.type==='video'&&phNow>=c.start&&phNow<c.start+c.dur);
-        // Hidden track: delegate entirely to syncCutVid which shows the hidden indicator
       if(activeNow){
         const ciNow2=S.cut.clips.indexOf(activeNow);
         const trNow=getClipTransition(ciNow2);
@@ -3916,8 +3718,7 @@ function cutTogglePlay(){
             _freezeStartPh=phNow;
             _freezeSavedVideoTime=(mv2&&mv2.currentTime)||0;
             if(mv2&&!mv2.paused) mv2.pause();
-            // Only stop audio if freezeAudio is true (default) — user can choose
-            if(activeFreezeNow.freezeAudio !== false) stopAudioPlayback();
+            stopAudioPlayback();
           }
           const now2=performance.now();
           const dt=Math.min((now2-(_freezeLastTime||now2))/1000,0.05);
@@ -3966,18 +3767,14 @@ function cutTogglePlay(){
             syncCutVid();
           }
         } else {
-          // Check if track is hidden — if so, show hidden indicator via syncCutVid
-          const activeHidden2 = activeNow && !!S.cut.hiddenTracks?.[activeNow.track];
-          if(activeHidden2){
-            syncCutVid();
-          } else {
-            // No overlays/effects — show video element directly
-            const canv=document.getElementById('cut-trans-cvs');
-            const mv2=document.getElementById('cut-main-vid');
-            if(canv) canv.style.display='none';
-            if(mv2){ mv2.style.opacity='1'; mv2.style.display='block'; }
-            if(mv2&&mv2.paused&&S.cut.playing) mv2.play().catch(()=>{});
-          }
+          // No overlays/effects — show video element directly
+          const canv=document.getElementById('cut-trans-cvs');
+          const mv2=document.getElementById('cut-main-vid');
+          // Hide canvas
+          if(canv) canv.style.display='none';
+          // Show mv — use opacity (not display) since mv is always display:block
+          if(mv2){ mv2.style.opacity='1'; mv2.style.display='block'; }
+          if(mv2&&mv2.paused&&S.cut.playing) mv2.play().catch(()=>{});
         }
       }
       const vidEl=$('cut-main-vid');
@@ -4282,12 +4079,11 @@ function syncCutVid(){
   if(!screen) return;
 
   // Find active video clip at current playhead
-  // NOTE: we find active regardless of hidden state — hidden only affects rendering
   const videoClips = S.cut.clips.filter(c => c.type === 'video');
-  const active = videoClips.find(c =>
-    ph >= c.start && ph < c.start + c.dur
+  const active = videoClips.find(c => 
+    ph >= c.start && ph < c.start + c.dur &&
+    !S.cut.hiddenTracks?.[c.track]
   );
-  const activeIsHidden = active && !!S.cut.hiddenTracks?.[active.track];
 
   // Ensure pool vids exist for all clips
   videoClips.forEach(c => {
@@ -4387,40 +4183,6 @@ function syncCutVid(){
     const _te = _ts + (tr.effectDur||tr.dur||1);
     return (ph >= _ts && ph < _te) ? tr : null;
   })();
-  if(activeIsHidden){
-    // Track is hidden: keep video element loaded/seeking, but hide output
-    // Show a subtle "hidden" indicator instead of black screen
-    mv.style.opacity = '0';
-    canvas.style.display = 'block';
-    canvas.style.zIndex  = '2';
-    if(placeholder) placeholder.style.display = 'none';
-    const projWh = S.proj.w||1280, projHh = S.proj.h||720;
-    if(canvas.width !== projWh){ canvas.width=projWh; canvas.height=projHh; }
-    const ctxH = canvas.getContext('2d');
-    ctxH.clearRect(0,0,canvas.width,canvas.height);
-    // Draw a semi-transparent dark overlay with eye-slash indicator
-    ctxH.fillStyle = 'rgba(0,0,0,0.85)';
-    ctxH.fillRect(0,0,canvas.width,canvas.height);
-    ctxH.fillStyle = 'rgba(255,255,255,0.15)';
-    ctxH.font = 'bold 18px DM Sans, sans-serif';
-    ctxH.textAlign = 'center';
-    ctxH.fillText('👁 Track Hidden', canvas.width/2, canvas.height/2);
-    ctxH.font = '13px DM Sans, sans-serif';
-    ctxH.fillStyle = 'rgba(255,255,255,0.08)';
-    ctxH.fillText('Click the eye icon on the track label to show', canvas.width/2, canvas.height/2+28);
-    // Still load the video src so seeking works
-    const itemH = S.cut.media[active.mediaIdx];
-    if(itemH?.url && mv.dataset.mediaIdx !== String(active.mediaIdx)){
-      mv.dataset.mediaIdx = String(active.mediaIdx);
-      mv.src = itemH.url;
-    }
-    if(!S.cut.playing){
-      const tgtH = (active.fileStart||0)+Math.max(0,ph-active.start);
-      if(Math.abs(mv.currentTime-tgtH)>0.02) mv.currentTime=tgtH;
-    }
-    return;
-  }
-
   if((trInWindow || hasEffects || hasActiveOverlays) && (performance.now()-(_freezeExitTime||0)) > 500){
     mv.style.opacity = '0';     // hidden but display:block so browser decodes
     canvas.style.display = 'block';
