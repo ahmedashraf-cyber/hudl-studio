@@ -747,17 +747,19 @@ async function startExport(){
     const item=S.cut.media[clip.mediaIdx];
     if(!item?.url||vidEls[clip.mediaIdx]) continue;
     const v=document.createElement('video');
-    v.src=item.url; v.crossOrigin='anonymous'; v.preload='auto'; v.muted=true;
+    v.src=item.url; v.crossOrigin='anonymous'; v.preload='auto';
+    v.muted=false; // must be unmuted BEFORE createMediaElementSource
+    v.volume=1.0;
+    v.style.display='none';
     document.body.appendChild(v);
     await new Promise(r=>{v.oncanplaythrough=r;v.onerror=r;setTimeout(r,5000);});
     vidEls[clip.mediaIdx]=v;
-    // Wire audio from this video to AudioContext
+    // Wire audio — element must already be unmuted for source to carry signal
     if(audioCtx&&audioDest){
       try{
-        v.volume = 1.0; // ensure full volume before wiring
         const src=audioCtx.createMediaElementSource(v);
         const gain=audioCtx.createGain();
-        gain.gain.value = 1.5; // boost to compensate for AudioContext pipeline loss
+        gain.gain.value=1.0;
         src.connect(gain);
         gain.connect(audioDest);
         audioSrcNodes[clip.mediaIdx]=v;
@@ -773,7 +775,10 @@ async function startExport(){
     if(!item?.url || audioEls[clip.mediaIdx]) continue;
     if(S.cut.mutedTracks?.[clip.track]) continue;
     const a = document.createElement('audio');
-    a.src=item.url; a.crossOrigin='anonymous'; a.preload='auto'; a.muted=true;
+    a.src=item.url; a.crossOrigin='anonymous'; a.preload='auto';
+    a.muted=false; // unmuted BEFORE wiring to AudioContext
+    a.volume=1.0;
+    a.style.display='none';
     document.body.appendChild(a);
     await new Promise(r=>{a.oncanplaythrough=r; a.onerror=r; setTimeout(r,5000);});
     audioEls[clip.mediaIdx]=a;
