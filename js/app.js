@@ -3780,7 +3780,7 @@ function cutTogglePlay(){
       if(!S.cut.playing) return;
       // Redraw canvas overlays every frame
       const phNow=S.cut.ph;
-      const activeNow=S.cut.clips.find(c=>c.type==='video'&&phNow>=c.start&&phNow<c.start+c.dur);
+      const activeNow=S.cut.clips.find(c=>(c.type==='video'||c.type==='frame_hold')&&phNow>=c.start&&phNow<c.start+c.dur);
       if(activeNow){
         const ciNow2=S.cut.clips.indexOf(activeNow);
         const trNow=getClipTransition(ciNow2);
@@ -3885,7 +3885,7 @@ function cutTogglePlay(){
       const clipNow=!isNaN(ciNow)?S.cut.clips[ciNow]:null;
       if(S.cut._scrubbing) { _cutTick=requestAnimationFrame(playFrame); return; }
       // Audio-only mode: no video clip at playhead — advance ph via real clock
-      const hasVideoAtPh = S.cut.clips.some(c=>c.type==='video'&&S.cut.ph>=c.start&&S.cut.ph<c.start+c.dur);
+      const hasVideoAtPh = S.cut.clips.some(c=>(c.type==='video'||c.type==='frame_hold')&&S.cut.ph>=c.start&&S.cut.ph<c.start+c.dur);
       if(!hasVideoAtPh&&S.cut.playing&&!_freezeActive){
         const _now3=performance.now();
         const _dt3=Math.min((_audioOnlyLastTime?(_now3-_audioOnlyLastTime)/1000:1/60),0.1);
@@ -3895,7 +3895,7 @@ function cutTogglePlay(){
         updateCutPH();
         if(S.cut.ph>=maxPh){ stopCutPlay(); return; }
       } else { _audioOnlyLastTime=null; }
-      if(clipNow&&vidEl&&!vidEl.paused&&!_freezeActive){
+      if(clipNow&&clipNow.type!=='frame_hold'&&vidEl&&!vidEl.paused&&!_freezeActive){
         // Video is driving — read current position (not during freeze — ph is driven by clock then)
         // ph = clip timeline start + (currentTime - fileStart)
         S.cut.ph=clipNow.start+(vidEl.currentTime-(clipNow.fileStart||0))/(clipNow.speed||1); // ph tracks real time, divided by speed to get timeline time
@@ -4182,7 +4182,7 @@ function syncCutVid(){
   if(!screen) return;
 
   // Find active video clip at current playhead
-  const videoClips = S.cut.clips.filter(c => c.type === 'video');
+  const videoClips = S.cut.clips.filter(c => c.type === 'video' || c.type === 'frame_hold');
   const active = videoClips.find(c => 
     ph >= c.start && ph < c.start + c.dur &&
     !S.cut.hiddenTracks?.[c.track]
@@ -4264,6 +4264,22 @@ function syncCutVid(){
   if(placeholder){ placeholder.style.display = 'none'; }
 
   const activeCI = S.cut.clips.indexOf(active);
+  // Frame hold clip: draw the captured still image
+  if(active.type === 'frame_hold'){
+    if(active._img && active._img.complete){
+      canvas.style.display = 'block';
+      canvas.style.zIndex  = '2';
+      mv.style.opacity = '0';
+      if(placeholder) placeholder.style.display = 'none';
+      const projWfh = S.proj.w||1280, projHfh = S.proj.h||720;
+      if(canvas.width!==projWfh){ canvas.width=projWfh; canvas.height=projHfh; }
+      const ctxFH = canvas.getContext('2d');
+      ctxFH.clearRect(0,0,canvas.width,canvas.height);
+      ctxFH.drawImage(active._img, 0, 0, canvas.width, canvas.height);
+    }
+    return;
+  }
+
   const item = S.cut.media[active.mediaIdx];
   if(!item?.url){ return; }
 
@@ -5374,6 +5390,8 @@ function clipContextMenu(e, ci){
     {icon:'⚡', label:'Speed / Duration…', fn:()=>showSpeedDialog(ci)},
     {icon:'⚙️', label:'Scale & Rotation…', fn:()=>window.showTransformDialog(ci)},
     ...(c.type==='audio'?[{icon:'🎵', label:'Audio Enhancement…', fn:()=>window.showAudioEnhanceDialog&&showAudioEnhanceDialog(ci)}]:[]),
+    {sep:true},
+    {icon:'🖼️', label:'Insert Frame Hold Here', fn:()=>insertFrameHold(ci)},
   ]);
 }
 
@@ -5597,6 +5615,84 @@ window.renderBoundingBox = renderBoundingBox;
 const _origCutSelectClip = window.cutSelectClip;
 // Hook into updatePropsPanel to render bbox after panel updates
 const _origUpdateProps = window.updatePropsPanel;
+
+// ── FRAME HOLD ────────────────────────────────────────────────
+// Inserts a still frame clip at the current playhead position
+
+function insertFrameHold(ci){
+  const ph = S.cut.ph;
+  const clip = S.cut.clips[ci];
+  if(!clip || clip.type !== 'video'){
+    notify('Frame hold requires a video clip', '#E31837');
+    return;
+  }
+
+  // Capture the current frame from the main video element
+  const mv = document.getElementById('cut-main-vid');
+  const canvas = document.createElement('canvas');
+  canvas.width = S.proj.w || 1920;
+  canvas.height = S.proj.h || 1080;
+  const ctx = canvas.getContext('2d');
+
+  try {
+    ctx.drawImage(mv, 0, 0, canvas.width, canvas.height);
+  } catch(e) {
+    notify('Could not capture frame — try pausing first', '#E31837');
+    return;
+  }
+
+  // Convert to image
+  const img = new Image();
+  img.src = canvas.toDataURL('image/jpeg', 0.92);
+
+  // Find a free video track for the frame hold
+  const videoTracks = S.cut.videoTracks || 2;
+  const usedTracks = new Set(S.cut.clips.filter(c=>c.type==='video'||c.type==='frame_hold').map(c=>c.track));
+  let holdTrack = videoTracks; // default: new track after existing video tracks
+  // Check if there's a free spot on existing tracks (no overlap at ph)
+  for(let t = 0; t < videoTracks + 2; t++){
+    const occupied = S.cut.clips.some(c =>
+      (c.type==='video'||c.type==='frame_hold') &&
+      c.track === t &&
+      ph < c.start + c.dur &&
+      ph + 2 > c.start
+    );
+    if(!occupied){ holdTrack = t; break; }
+  }
+
+  // If we need a new track, expand videoTracks
+  if(holdTrack >= (S.cut.videoTracks || 2)){
+    S.cut.videoTracks = holdTrack + 1;
+    rebuildTrackLabels();
+  }
+
+  // Add the frame hold clip
+  const holdId = 'fh_' + Date.now();
+  const holdClip = {
+    type: 'frame_hold',
+    start: ph,
+    dur: 2,         // default 2 seconds — user can resize
+    track: holdTrack,
+    name: '🖼 Frame Hold',
+    color: 'linear-gradient(135deg,#3d1a5a,#6b2fa0)', // purple
+    _id: holdId,
+    _img: img,      // captured still frame
+    mediaIdx: clip.mediaIdx, // reference for display
+  };
+
+  if(window.cutSaveHistory) cutSaveHistory('insert_frame_hold');
+  S.cut.clips.push(holdClip);
+  const newCi = S.cut.clips.length - 1;
+  S.cut.sel = newCi;
+
+  renderCutTimeline();
+  syncCutVid();
+  scheduleSave();
+
+  notify('🖼️ Frame Hold inserted — drag edges to resize', '#3fb950');
+}
+window.insertFrameHold = insertFrameHold;
+
 window.cutTogglePlay = cutTogglePlay;
 window.syncCutVid = syncCutVid;
 window.cutSplit          = cutSplit;
