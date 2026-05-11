@@ -13,8 +13,8 @@ window.getSnapPoint = function(dragPx, excludeClipIdx, edgeType){
   const S   = window.S;
   if(!S?.cut) return null;
 
-  // Rebuild cache when excludeClipIdx changes (new drag started)
-  if(window._snapCache?.excludeIdx !== excludeClipIdx || !window._snapCache){
+  // Rebuild cache when excludeClipIdx or PPS changes (zoom invalidates pixel positions)
+  if(!window._snapCache || window._snapCache.excludeIdx !== excludeClipIdx || window._snapCache.pps !== PPS){
     const pts = [];
     pts.push({ px: 0, label: 'start' });
     pts.push({ px: S.cut.ph * PPS, label: 'playhead' });
@@ -25,7 +25,7 @@ window.getSnapPoint = function(dragPx, excludeClipIdx, edgeType){
     });
     // Sort ascending so binary search is possible
     pts.sort((a,b)=>a.px-b.px);
-    window._snapCache = { excludeIdx: excludeClipIdx, pts };
+    window._snapCache = { excludeIdx: excludeClipIdx, pps: PPS, pts };
   }
 
   // Binary search: find closest point
@@ -1291,13 +1291,25 @@ function renderOverlayTimeline(){
         const dx = (mv.clientX - startX) / PPS;
         const workOv = dupOv || ov;
         if(isLeftTrim && !dupOv){
-          workOv.startTime = Math.max(0, Math.min(origStart + dx, origEnd - 0.1));
+          let _ns = Math.max(0, Math.min(origStart + dx, origEnd - 0.1));
+          const _ss = window.getSnapPoint ? window.getSnapPoint(_ns*PPS,-1,'start') : null;
+          if(_ss!==null){_ns=_ss;window.showSnapLine&&window.showSnapLine(_ss);}
+          else{window.hideSnapLine&&window.hideSnapLine();}
+          workOv.startTime = _ns;
         } else if(isRightTrim && !dupOv){
-          workOv.endTime = Math.max(origEnd + dx, origStart + 0.1);
+          let _ne = Math.max(origEnd + dx, origStart + 0.1);
+          const _se = window.getSnapPoint ? window.getSnapPoint(_ne*PPS,-1,'end') : null;
+          if(_se!==null){_ne=_se;window.showSnapLine&&window.showSnapLine(_se);}
+          else{window.hideSnapLine&&window.hideSnapLine();}
+          workOv.endTime = _ne;
         } else {
           const dur = origEnd - origStart;
-          workOv.startTime = Math.max(0, origStart + dx);
-          workOv.endTime   = workOv.startTime + dur;
+          let _rawStart = Math.max(0, origStart + dx);
+          const _snap = window.getSnapPoint ? window.getSnapPoint(_rawStart*PPS,-1,'start') : null;
+          if(_snap!==null){_rawStart=_snap;window.showSnapLine&&window.showSnapLine(_snap);}
+          else{window.hideSnapLine&&window.hideSnapLine();}
+          workOv.startTime = _rawStart;
+          workOv.endTime   = _rawStart + (origEnd - origStart);
         }
         // Move the element directly
         const movEl = dupOv

@@ -3450,7 +3450,25 @@ function clipRzMove(e){
   renderCutTimeline();
 }
 function clipRzUp(){
-  S.cut._isResizing=false; // release resize lock
+  S.cut._isResizing=false;
+  // Overlay sync: if clip was trimmed from right edge, shift overlays
+  // that were inside the trimmed area back to the new clip end
+  if(_rz && _rz.edge==='r'){
+    const c = S.cut.clips[_rz.ci];
+    if(c && window._overlays){
+      const newClipEnd = c.start + c.dur;
+      const oldClipEnd = _rz.origStart + _rz.origDur;
+      const delta = newClipEnd - oldClipEnd; // negative = trim, positive = extend
+      // Shift overlays that started after oldClipEnd by the same delta
+      window._overlays.forEach(o=>{
+        if(o.startTime >= oldClipEnd - 0.05){
+          o.startTime = Math.max(0, o.startTime + delta);
+          o.endTime   = Math.max(o.startTime + 0.1, o.endTime + delta);
+        }
+      });
+      if(window.renderOverlayTimeline) renderOverlayTimeline();
+    }
+  }
   _rz=null;
   window.hideSnapLine&&hideSnapLine();
   document.removeEventListener('mousemove',clipRzMove);
@@ -4016,6 +4034,8 @@ function cutTogglePlay(){
           if(mv2&&mv2.paused&&S.cut.playing) mv2.play().catch(()=>{});
         }
       }
+      // Stutter fix: reset decode-wait flag when switching to canvas mode
+      window._lastDrawTime = window._lastDrawTime || 0;
       const vidEl=$('cut-main-vid');
       const ciNow=vidEl?parseInt(vidEl.dataset.clipIdx):NaN;
       const clipNow=!isNaN(ciNow)?S.cut.clips[ciNow]:null;
@@ -4065,10 +4085,11 @@ function cutTogglePlay(){
             _cutTick = requestAnimationFrame(playFrame);
             return;
           }
-          // nextClip: strictly AFTER currentEnd, exclude current by index
-          const _nowIdx = S.cut.clips.indexOf(clipNow);
+          // nextClip: strictly AFTER currentEnd, exclude by object identity AND position
           const nextClip = S.cut.clips
-            .filter((c,_i)=>c.type==='video' && _i!==_nowIdx && c.start > currentEnd-0.05)
+            .filter(c=>c.type==='video' && c!==clipNow
+              && c.start >= currentEnd-0.05  // at or after end of current clip
+              && !(c.start===clipNow.start && c.dur===clipNow.dur)) // not same position
             .sort((a,b)=>a.start-b.start)[0];
           if(nextClip){
             const item=S.cut.media[nextClip.mediaIdx];
@@ -4539,7 +4560,7 @@ function syncCutVid(){
 
     // Base draw: if NO active transition, draw video normally
     // If transition IS active, skip base draw — each transition draws its own video
-    if(drawSrc.readyState >= 2){
+    if(drawSrc && drawSrc.readyState >= 2){
       if(!trInWindow){
         // No transition: draw video at full opacity
         ctx.clearRect(0,0,canvas.width,canvas.height);
@@ -4922,7 +4943,7 @@ function setupPlayheadDrag(){
   function onDragTouch(e){e.preventDefault();onDrag(e);}
   function stopDrag(){
     dragging=false;
-    window._seekLockUntil = Date.now() + 400;
+    window._seekLockUntil = Date.now() + 800;
     S.cut._scrubbing=false;
     document.removeEventListener('mousemove',onDrag);
     document.removeEventListener('mouseup',stopDrag);
@@ -4992,7 +5013,7 @@ function setupPlayheadDrag(){
     ruler.addEventListener('mousedown',function(e){
       const rect=ruler.getBoundingClientRect();
       S.cut.ph=Math.max(0,Math.min(Math.max(S.proj.dur,S.cut.clips.length?Math.max(...S.cut.clips.map(c=>c.start+c.dur)):0),(e.clientX-rect.left+scroll.scrollLeft)/PPS));
-      window._seekLockUntil = Date.now() + 400;
+      window._seekLockUntil = Date.now() + 800;
       updateCutPH();syncCutVid();
       dragging=true;
       S.cut._scrubbing=true;
