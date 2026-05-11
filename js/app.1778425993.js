@@ -737,10 +737,19 @@ async function startExport(){
     audioCtx=new (window.AudioContext||window.webkitAudioContext)({sampleRate:48000});
     await audioCtx.resume();
     audioDest=audioCtx.createMediaStreamDestination();
-    // Master gain node — all sources connect through this for consistent volume
+    // Build audio chain: sources -> gain -> compressor -> destination
+    // DynamicsCompressor prevents clipping when we boost gain
+    const _exportComp = audioCtx.createDynamicsCompressor();
+    _exportComp.threshold.value = -6;  // start compressing at -6dBFS
+    _exportComp.knee.value      =  6;  // soft knee
+    _exportComp.ratio.value     =  3;  // 3:1 ratio
+    _exportComp.attack.value    =  0.003;
+    _exportComp.release.value   =  0.15;
+    _exportComp.connect(audioDest);
+    // Master gain: 3.5x boost to match editor preview loudness
     window._exportMasterGain=audioCtx.createGain();
-    window._exportMasterGain.gain.value=2.0; // 2× boost for MediaRecorder capture
-    window._exportMasterGain.connect(audioDest);
+    window._exportMasterGain.gain.value=3.5;
+    window._exportMasterGain.connect(_exportComp);
   }catch(err){ console.warn('Audio capture unavailable:',err); }
 
   // Preload video elements
@@ -763,9 +772,10 @@ async function startExport(){
       try{
         const src=audioCtx.createMediaElementSource(v);
         const gain=audioCtx.createGain();
-        gain.gain.value=1.0;
+        // Use clip volume setting (0-200 range -> 0-2.0 gain)
+        const clipVol = clip.volume !== undefined ? clip.volume/100 : 1.0;
+        gain.gain.value = Math.max(0, clipVol);
         src.connect(gain);
-        // Route through master gain for consistent output level
         gain.connect(window._exportMasterGain||audioDest);
         audioSrcNodes[clip.mediaIdx]=v;
       }catch(e){ console.warn('Audio wire failed:',e); }
@@ -818,7 +828,7 @@ async function startExport(){
     const webmTypes = ['video/webm;codecs=vp9,opus','video/webm;codecs=vp8,opus','video/webm'];
     mimeType = webmTypes.find(m=>MediaRecorder.isTypeSupported(m)) || 'video/webm';
   }
-  const recorder=new MediaRecorder(finalStream,{mimeType,videoBitsPerSecond:BR,audioBitsPerSecond:192000});
+  const recorder=new MediaRecorder(finalStream,{mimeType,videoBitsPerSecond:BR,audioBitsPerSecond:320000});
   const chunks=[];
   recorder.ondataavailable=e=>{if(e.data&&e.data.size>0)chunks.push(e.data);};
 
