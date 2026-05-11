@@ -3155,6 +3155,21 @@ function cutAddToTL(i) {
   }
   cutSaveHistory('add_clip');
   renderCutTimeline(); notify(item.name+' added','#3fb950'); scheduleSave();
+  // Auto-scroll timeline so the new clip's end is visible
+  setTimeout(() => {
+    const _scroll = document.getElementById('tl-scroll');
+    if(!_scroll) return;
+    const _newClip = S.cut.clips[S.cut.clips.length - 1];
+    if(!_newClip) return;
+    const _clipEndPx = (_newClip.start + _newClip.dur) * (window.PPS || 60);
+    const _viewW = _scroll.clientWidth;
+    // Scroll so the clip end is at 80% of the viewport (some margin on right)
+    const _targetScroll = Math.max(0, _clipEndPx - _viewW * 0.8);
+    _scroll.scrollTo({ left: _targetScroll, behavior: 'smooth' });
+    // Also move playhead to start of new clip
+    S.cut.ph = startSec;
+    updateCutPH();
+  }, 80);
   // Ensure viewport frame has correct dimensions, then initialize video
   applyCanvasAspectRatio(S.proj.w||1920, S.proj.h||1080);
   const _startInit = (attempts) => {
