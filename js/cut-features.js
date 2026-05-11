@@ -175,6 +175,7 @@ function showFreezeDialog(){
       if(window.cutSaveHistory) cutSaveHistory('add_overlay');
       window._overlays.push({
         id: ovId, type:'freeze',
+        track: 0,
         startTime: start, endTime: end,
         clipMediaIdx: clip.mediaIdx, freezeFileTime,
         freezeMode: freezeMode || 'both',
@@ -378,6 +379,7 @@ function showTextDialog(editId){
     const text=document.getElementById('txt-content').value.trim();
     if(!text||isNaN(start)||isNaN(end)||end<=start){notify('Fill all fields correctly','#E31837');return;}
     const ov = {
+      track: 0,
       id: editId||newOverlayId(), type:'text',
       startTime:start, endTime:end,
       text, font:document.getElementById('txt-font').value,
@@ -592,6 +594,7 @@ function showShapeDialog(){
     if(window.cutSaveHistory) cutSaveHistory('add_overlay');
     window._overlays.push({
       id:newOverlayId(), type:'shape',
+      track: 0,
       startTime:start, endTime:end,
       shape:document.getElementById('shp-type').value,
       color:document.getElementById('shp-color').value,
@@ -886,7 +889,9 @@ window.computeOverlayTransition = computeOverlayTransition;
 
 function renderOverlaysOnCanvas(ctx, W, H, currentTime, playedFreezes){
   if(!window._overlays || !window._overlays.length) return;
-  const overlays = window._overlays.filter(o=>currentTime>=o.startTime&&currentTime<o.endTime&&!(o.type==='freeze'&&playedFreezes&&playedFreezes.has(o.id)));
+  const overlays = window._overlays
+    .filter(o=>currentTime>=o.startTime&&currentTime<o.endTime&&!(o.type==='freeze'&&playedFreezes&&playedFreezes.has(o.id)))
+    .sort((a,b)=>(a.track||0)-(b.track||0)); // lower track = rendered first (underneath)
   if(!overlays.length) return;
 
   overlays.forEach(ov=>{
@@ -1169,11 +1174,15 @@ function renderOverlayTimeline(){
   if(!window._overlays || !window._overlays.length) return;
 
   const PPS = window.PPS || 60;
-  // Find the V1 row (track 0) — overlays render there as a second layer
-  const row = document.getElementById('tl-row-0');
-  if(!row) return;
+  const _S = window.S;
+  const _videoTracks = _S?.cut?.videoTracks || 1;
 
   window._overlays.forEach(ov => {
+    if(ov.track === undefined || ov.track === null) ov.track = 0;
+    ov.track = Math.max(0, Math.min(_videoTracks - 1, ov.track));
+    const row = document.getElementById('tl-row-' + ov.track);
+    if(!row) return;
+    // per-overlay block
     const color = OVERLAY_COLORS[ov.type] || 'rgba(128,128,128,0.7)';
     const isActive = _activeEditId === ov.id;
     // label computed by getOverlayLabel(ov)
@@ -1208,7 +1217,7 @@ function renderOverlayTimeline(){
     el.title = 'Click: select | Double-click: edit | Drag: move | Drag edge: trim | Right-click: delete';
 
     // Icon + label
-    el.innerHTML = `<span style="opacity:0.9">${getOverlayIcon(ov)}</span><span style="overflow:hidden;text-overflow:ellipsis">${getOverlayLabel(ov)}</span>`;
+    el.innerHTML = `<span style="opacity:0.9">${getOverlayIcon(ov)}</span><span style="overflow:hidden;text-overflow:ellipsis">${getOverlayLabel(ov)}</span><span style="margin-left:auto;font-size:8px;opacity:0.5;flex-shrink:0">V${(ov.track||0)+1}</span>`;
 
     // In transition bar (left edge, semi-transparent teal)
     if(ov.inTransition && ov.inTransition !== 'none' && ov.inDuration > 0){
@@ -1286,9 +1295,12 @@ function renderOverlayTimeline(){
         document.body.style.cursor = 'copy';
       }
 
+      const startY_ov = e.clientY;
+      const origTrack_ov = ov.track || 0;
       const onMove = mv => {
         moved = true;
         const dx = (mv.clientX - startX) / PPS;
+        const dy = mv.clientY - startY_ov;
         const workOv = dupOv || ov;
         if(isLeftTrim && !dupOv){
           let _ns = Math.max(0, Math.min(origStart + dx, origEnd - 0.1));
@@ -1310,6 +1322,18 @@ function renderOverlayTimeline(){
           else{window.hideSnapLine&&window.hideSnapLine();}
           workOv.startTime = _rawStart;
           workOv.endTime   = _rawStart + (origEnd - origStart);
+        }
+        // Vertical drag: change track (only for main move, not trim)
+        if(!isLeftTrim && !isRightTrim && !dupOv){
+          const _S2 = window.S;
+          const _maxTrack = Math.max(0, (_S2?.cut?.videoTracks || 1) - 1);
+          const _rowH = 30;
+          const _trackDelta = Math.round(dy / _rowH);
+          const _newTrack = Math.max(0, Math.min(_maxTrack, origTrack_ov + _trackDelta));
+          if(workOv.track !== _newTrack){
+            workOv.track = _newTrack;
+            renderOverlayTimeline();
+          }
         }
         // Move the element directly
         const movEl = dupOv
@@ -1357,8 +1381,7 @@ function renderOverlayTimeline(){
     row.appendChild(el);
   });
 }
-
-// ── OVERLAY PROPERTIES PANEL ──
+// OVERLAY PROPERTIES PANEL
 window.updateOverlayProps = function(id){
   // Show/hide overlay transition hint in effects panel
   const hint=document.getElementById('cut-eff-overlay-hint');
