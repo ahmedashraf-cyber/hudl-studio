@@ -651,15 +651,30 @@ window.doSave = async function() {
 window.doExport = function() { showExportModal(); };
 
 function showExportModal(){
-  // Create AudioContext synchronously (direct user gesture click)
-  // Must happen BEFORE any async code for Chrome to allow it running
+  // Create masterVid and call play() synchronously in user gesture
+  // This unlocks the audio stream BEFORE any async code runs
   try{
-    if(window._prebuiltAudioCtx && window._prebuiltAudioCtx.state !== 'closed'){
-      window._prebuiltAudioCtx.close();
-    }
-    window._prebuiltAudioCtx = new (window.AudioContext||window.webkitAudioContext)({sampleRate:48000});
-    window._prebuiltAudioCtx.resume();
-  }catch(e){ window._prebuiltAudioCtx = null; }
+    if(window._exportMasterVid){ try{window._exportMasterVid.pause();window._exportMasterVid.remove();}catch(e){} }
+    const _mv = document.createElement('video');
+    _mv.muted = false; _mv.volume = 1.0;
+    _mv.style.display = 'none';
+    // Use the first video clip's URL if available
+    const _vclips = S?.cut?.clips?.filter(c=>c.type==='video') || [];
+    const _firstUrl = _vclips.length ? S?.cut?.media?.[_vclips[0].mediaIdx]?.url : null;
+    if(_firstUrl) _mv.src = _firstUrl;
+    else _mv.src = ''; // empty src still unlocks the stream
+    document.body.appendChild(_mv);
+    // play() in user gesture = unlocks audio autoplay
+    const _playP = _mv.play();
+    if(_playP) _playP.catch(()=>{});
+    // captureStream() immediately while element is in play() chain
+    window._exportMasterVid = _mv;
+    window._exportMasterStream = _mv.captureStream ? _mv.captureStream() : null;
+    window._exportMasterAudioTracks = window._exportMasterStream
+      ? window._exportMasterStream.getAudioTracks() : [];
+    // Pause after getting tracks
+    setTimeout(()=>{ try{_mv.pause(); _mv.currentTime=0;}catch(e){}; }, 200);
+  }catch(e){ console.warn('showExportModal audio setup:', e); }
   document.querySelectorAll('#export-modal').forEach(m=>m.remove());
   const videoClips=S.cut.clips.filter(c=>c.type==='video').sort((a,b)=>a.start-b.start);
   const totalDur=videoClips.length?Math.max(...videoClips.map(c=>c.start+c.dur)):0;
@@ -769,22 +784,18 @@ async function startExport(){
   masterVid.style.display = 'none';
   document.body.appendChild(masterVid);
 
-  // Load first clip into masterVid and play briefly to unlock audio stream
+  // Use the audio stream pre-captured in showExportModal (user gesture)
+  // masterVid and masterAudioTracks were created synchronously in the click handler
+  const masterAudioTracks = window._exportMasterAudioTracks || [];
+  console.log('Export audio tracks from gesture:', masterAudioTracks.length,
+    masterAudioTracks.map(t=>t.readyState+'/'+t.enabled).join(','));
+
+  // Load first clip into masterVid
   const _firstClip = videoClips[0];
   const _firstItem = S.cut.media[_firstClip.mediaIdx];
   masterVid.src = _firstItem?.url || '';
-  masterVid.crossOrigin = 'anonymous';
   masterVid.currentTime = _firstClip.fileStart || 0;
   await new Promise(r=>{masterVid.oncanplaythrough=r;masterVid.onerror=r;setTimeout(r,8000);});
-  try{ await masterVid.play(); }catch(e){ console.warn('masterVid unlock:', e); }
-
-  // captureStream() while masterVid IS playing = live audio track
-  const masterStream = masterVid.captureStream ? masterVid.captureStream() : null;
-  const masterAudioTracks = masterStream ? masterStream.getAudioTracks() : [];
-  console.log('Export audio tracks:', masterAudioTracks.length,
-    masterAudioTracks.map(t=>t.readyState).join(','));
-
-  // Pause - renderFrame will control playback
   masterVid.pause();
 
   // Preload standalone audio-only clips
@@ -797,7 +808,7 @@ async function startExport(){
     if(!item?.url || audioEls[clip.mediaIdx]) continue;
     if(S.cut.mutedTracks?.[clip.track]) continue;
     const a = document.createElement('audio');
-    a.src=item.url; a.crossOrigin='anonymous'; a.preload='auto';
+    a.src=item.url; a.preload='auto';
     a.muted=false; a.volume=1.0; a.style.display='none';
     document.body.appendChild(a);
     await new Promise(r=>{a.oncanplaythrough=r;a.onerror=r;setTimeout(r,8000);});
@@ -815,10 +826,13 @@ async function startExport(){
     }catch(e){}
   }
 
-  // Build final stream: canvas video + master audio track
+  // Build final stream: canvas video + audio tracks from user gesture
   const videoStream = canvas.captureStream(fps);
-  const finalStream = allAudioTracks.length > 0
-    ? new MediaStream([...videoStream.getVideoTracks(), ...allAudioTracks])
+  const _allExportAudio = [...masterAudioTracks, ...allAudioTracks]
+    .filter(t => t.readyState === 'live' || t.enabled);
+  console.log('Final export audio tracks:', _allExportAudio.length);
+  const finalStream = _allExportAudio.length > 0
+    ? new MediaStream([...videoStream.getVideoTracks(), ..._allExportAudio])
     : videoStream;
 
   // vidEls alias for renderFrame compatibility (single element, all clips use it)
@@ -922,7 +936,7 @@ async function startExport(){
         lastClipIdx = clipIdx;
         if(vid.dataset.exportMediaIdx !== String(clip.mediaIdx)){
           vid.src = clipItem?.url || '';
-          vid.crossOrigin = 'anonymous';
+          // no crossOrigin for blob URLs
           vid.dataset.exportMediaIdx = String(clip.mediaIdx);
           await new Promise(r=>{vid.oncanplaythrough=r;vid.onerror=r;setTimeout(r,5000);});
         }
