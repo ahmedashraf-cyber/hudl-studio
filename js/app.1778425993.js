@@ -3282,8 +3282,8 @@ function renderCutTimeline() {
 
   for (let t=0; t<totalTk; t++) {
     const row=$('tl-row-'+t); if(!row) continue;
-    const _ce1=S.cut.clips.length?Math.max(...S.cut.clips.map(c=>c.start+c.dur)):0;
-    row.style.width=Math.max(S.proj.dur,_ce1+5)*PPS+'px';
+    // Use _tlW computed at top of function (includes overlays, +5s breathing room)
+    row.style.width = _tlW + 'px';
     // setup drop
     row.ondragover=e=>{e.preventDefault();row.classList.add('drag-over');};
     row.ondragleave=()=>row.classList.remove('drag-over');
