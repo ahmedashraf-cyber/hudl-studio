@@ -738,6 +738,19 @@ async function startExport(){
     audioCtx = new (window.AudioContext||window.webkitAudioContext)({sampleRate:48000});
     await audioCtx.resume();
     audioDest = audioCtx.createMediaStreamDestination();
+    // Master gain: boost to match editor speaker-level loudness
+    // MediaStreamDestination outputs at -6dBFS; 4x compensates
+    // Limiter prevents clipping when we push gain hard
+    const _exportLimiter = audioCtx.createDynamicsCompressor();
+    _exportLimiter.threshold.value = -3.0;  // limit at -3dBFS
+    _exportLimiter.knee.value      =  2.0;
+    _exportLimiter.ratio.value     =  20.0; // hard limit
+    _exportLimiter.attack.value    =  0.001;
+    _exportLimiter.release.value   =  0.1;
+    _exportLimiter.connect(audioDest);
+    window._exportMasterGain = audioCtx.createGain();
+    window._exportMasterGain.gain.value = 8.0;
+    window._exportMasterGain.connect(_exportLimiter);
   }catch(e){ console.warn('AudioContext failed:',e); }
 
   // Preload video elements and wire audio immediately
@@ -761,7 +774,7 @@ async function startExport(){
         const gain = audioCtx.createGain();
         gain.gain.value = clip.volume !== undefined ? Math.min(2, clip.volume/100) : 1.0;
         src.connect(gain);
-        gain.connect(audioDest);
+        gain.connect(window._exportMasterGain || audioDest);
         audioSrcNodes[clip.mediaIdx] = {src, gain};
       }catch(e){ console.warn('Audio wire failed:',e); }
     }
@@ -786,7 +799,7 @@ async function startExport(){
         const src = audioCtx.createMediaElementSource(a);
         const gain = audioCtx.createGain();
         gain.gain.value = clip.volume !== undefined ? Math.min(2, clip.volume/100) : 1.0;
-        src.connect(gain); gain.connect(audioDest);
+        src.connect(gain); gain.connect(window._exportMasterGain || audioDest);
       }catch(e){}
     }
   }
