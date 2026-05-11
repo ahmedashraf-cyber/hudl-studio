@@ -1123,8 +1123,33 @@ const MENUS = {
       { l: 'Reset Color', fn: () => notify('Color reset') },
     ],
     View: [
-      { l: 'Zoom In Timeline', k: '=', fn: () => { PPS = Math.min(200, PPS + 20); renderCutTimeline(); } },
-      { l: 'Zoom Out Timeline', k: '-', fn: () => { PPS = Math.max(20, PPS - 20); renderCutTimeline(); } },
+      { l: 'Zoom In Timeline', k: '=', fn: () => {
+        const _sc=document.getElementById('tl-scroll');
+        const _ph=S.cut.ph||0;
+        const _vw=_sc?_sc.clientWidth:800;
+        PPS=Math.min(600,PPS*1.25);
+        window._snapCache=null;
+        renderCutTimeline();
+        if(_sc) _sc.scrollLeft=Math.max(0,_ph*PPS-_vw*0.4);
+      } },
+      { l: 'Zoom Out Timeline', k: '-', fn: () => {
+        const _sc=document.getElementById('tl-scroll');
+        const _ph=S.cut.ph||0;
+        const _vw=_sc?_sc.clientWidth:800;
+        PPS=Math.max(8,PPS*0.8);
+        window._snapCache=null;
+        renderCutTimeline();
+        if(_sc) _sc.scrollLeft=Math.max(0,_ph*PPS-_vw*0.4);
+      } },
+      { l: 'Zoom Reset Timeline', k: '0', fn: () => {
+        const _sc=document.getElementById('tl-scroll');
+        const _ph=S.cut.ph||0;
+        const _vw=_sc?_sc.clientWidth:800;
+        PPS=60;
+        window._snapCache=null;
+        renderCutTimeline();
+        if(_sc) _sc.scrollLeft=Math.max(0,_ph*PPS-_vw*0.4);
+      } },
     ],
     Window: [
       { l: 'Media', fn: () => notify('Media panel') },
@@ -5138,6 +5163,7 @@ function setupPlayheadDrag(){
         const mouseTime=mouseX/PPS;
         const oldPPS=PPS;
         PPS=Math.max(8,Math.min(600,PPS*(e.deltaY<0?1.18:0.85)));
+        window._snapCache=null;
         // Keep mouse position fixed after zoom
         tlScroll2.scrollLeft=Math.max(0,mouseTime*PPS-(e.clientX-rect2.left));
         renderCutTimeline();
