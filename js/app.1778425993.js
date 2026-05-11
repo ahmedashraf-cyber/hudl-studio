@@ -879,24 +879,27 @@ async function startExport(){
     notify('✓ Export downloaded — '+fname+' ('+(mimeType.includes('mp4')?'MP4':'WebM')+')','#3fb950');
   };
 
-  recorder.start(500); // collect every 500ms for stable chunks
+  // recorder.start() is called AFTER the first video frame renders
+  // This prevents audio offset caused by seek/load delays before first frame
+  let _recorderStarted = false;
   status.textContent='Rendering with audio...';
 
   const dt=1/fps;
   let t=0;
   let lastActiveVid=null;
-  const startTs=Date.now();
+  let startTs=Date.now(); // will be reset when recorder actually starts
 
-  // ── Smooth render: let video play naturally, capture frames at real-time rate ──
-  // Seek once to start, then just drawImage() each frame — no per-frame seeks
+  // Smooth render: let video play naturally, capture frames at real-time rate
+  // Seek once to start, then just drawImage() each frame - no per-frame seeks
   let lastClipIdx = -1;
 
   async function renderFrame(){
     if(t > totalDur + dt){
       if(lastActiveVid && !lastActiveVid.paused){ lastActiveVid.pause(); }
       Object.values(audioEls).forEach(a=>{ try{a.pause();}catch(e){} });
-      await new Promise(r=>setTimeout(r,400)); // flush audio buffer
-      recorder.stop();
+      await new Promise(r=>setTimeout(r,400));
+      if(_recorderStarted && recorder.state !== 'inactive') recorder.stop();
+      else if(!_recorderStarted){ notify('Nothing rendered','#E31837'); }
       return;
     }
 
@@ -950,6 +953,13 @@ async function startExport(){
           setTimeout(r, 1000);
         });
         try{ await vid.play(); }catch(e){}
+        // Start recorder NOW - video is playing, audio stream is live
+        // This eliminates the seek/load delay offset
+        if(!_recorderStarted){
+          _recorderStarted = true;
+          startTs = Date.now() - (t * 1000); // adjust wall clock to current t
+          recorder.start(200); // 200ms chunks for better sync
+        }
       }
 
       ctx.fillStyle = '#000';
@@ -965,6 +975,12 @@ async function startExport(){
       ctx.fillRect(0, 0, W, H);
       if(lastActiveVid && !lastActiveVid.paused){ lastActiveVid.pause(); lastActiveVid = null; }
       lastClipIdx = -1;
+      // Start recorder on first frame even if no video (audio-only or black)
+      if(!_recorderStarted){
+        _recorderStarted = true;
+        startTs = Date.now() - (t * 1000);
+        recorder.start(200);
+      }
     }
 
     // ── Standalone audio clips ──
