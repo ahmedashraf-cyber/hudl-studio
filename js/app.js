@@ -2592,13 +2592,22 @@ function applyClipSpeed(ci, newSpeedPct, ripple){
 
   const newSpeed = Math.max(0.1, Math.min(16, newSpeedPct / 100));
   
-  // Store original untrimed duration the first time
+  // _origDur = available source content from fileStart to end of file
+  // Use media item duration minus fileStart for true available duration
   if(c._origDur === undefined || c._origDur === null){
-    c._origDur = c.dur * (c.speed||1); // original source duration
+    const _item = S.cut.media[c.mediaIdx];
+    const _srcTotal = _item?.duration || (c.dur * (c.speed||1));
+    c._origDur = Math.max(c.dur * (c.speed||1), _srcTotal - (c.fileStart||0));
   }
   
   const oldDur  = c.dur;
-  const newDur  = c._origDur / newSpeed;
+  // Available source = total from fileStart (never exceed file end)
+  const _item2 = S.cut.media[c.mediaIdx];
+  const _srcAvail = _item2?.duration
+    ? Math.max(0, _item2.duration - (c.fileStart||0))
+    : c._origDur;
+  // Timeline duration = available source / speed, capped to actual source
+  const newDur  = Math.min(c._origDur / newSpeed, _srcAvail / newSpeed);
   const oldEnd  = c.start + oldDur;
   const newEnd  = c.start + newDur;
   const delta   = newDur - oldDur; // positive = clip got longer
@@ -3649,7 +3658,7 @@ let _rz=null;
 function clipResizeStart(e,ci,edge){
   S.cut._isResizing = true;
   window._snapCache = null;
-  _rz={ci,edge,sx:e.clientX,origDur:S.cut.clips[ci].dur,origStart:S.cut.clips[ci].start};
+  _rz={ci,edge,sx:e.clientX,origDur:S.cut.clips[ci].dur,origStart:S.cut.clips[ci].start,origFileStart:S.cut.clips[ci].fileStart||0};
   document.addEventListener('mousemove',clipRzMove);
   document.addEventListener('mouseup',clipRzUp);
 }
@@ -3671,6 +3680,12 @@ function clipRzMove(e){
     if(snappedStart!==null){ newStart=snappedStart; window.showSnapLine&&showSnapLine(snappedStart); }
     else { window.hideSnapLine&&hideSnapLine(); }
     const nd = Math.max(0.2, (_rz.origStart + _rz.origDur) - newStart);
+    const _trimDelta = newStart - _rz.origStart; // how much was trimmed from left
+    const _spd = c.speed || 1;
+    // Advance fileStart by trimDelta/speed so we read further into source
+    // Clamp: fileStart cannot exceed (sourceDur - minDur*speed)
+    const _newFs = (_rz.origFileStart||0) + _trimDelta / _spd;
+    c.fileStart = Math.max(0, _newFs);
     c.start = newStart;
     c.dur   = nd;
   }
