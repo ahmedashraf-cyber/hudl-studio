@@ -741,24 +741,56 @@ async function startExport(){
   const ctx=canvas.getContext('2d');
 
 
-  // Preload video elements - audio captured AFTER play() via captureStream
+  // EXPORT AUDIO v3: single video element approach
+  // One element = one captureStream() = continuous audio in MediaRecorder
+  // No AudioContext, no suspended state issues, no multi-track mixing problems
   status.textContent='Loading video files...';
-  const vidEls={};
-  const audioSrcNodes={};
-  for(const clip of videoClips){
-    const item=S.cut.media[clip.mediaIdx];
-    if(!item?.url||vidEls[clip.mediaIdx]) continue;
-    const v=document.createElement('video');
-    v.src=item.url; v.crossOrigin='anonymous'; v.preload='auto';
-    v.muted=false; v.volume=1.0;
-    v.style.display='none';
+
+  // Build unique media list for preloading
+  const _mediaUrls = {};
+  videoClips.forEach(c=>{
+    const item = S.cut.media[c.mediaIdx];
+    if(item?.url) _mediaUrls[c.mediaIdx] = item.url;
+  });
+
+  // Preload all media by creating temporary elements to warm the browser cache
+  for(const [idx, url] of Object.entries(_mediaUrls)){
+    const v = document.createElement('video');
+    v.src = url; v.preload = 'auto'; v.muted = true; v.style.display='none';
     document.body.appendChild(v);
     await new Promise(r=>{v.oncanplaythrough=r;v.onerror=r;setTimeout(r,8000);});
-    vidEls[clip.mediaIdx]=v;
+    v.remove();
   }
 
+  // Single master video element - this is what captureStream() runs on
+  const masterVid = document.createElement('video');
+  masterVid.muted = false;
+  masterVid.volume = 1.0;
+  masterVid.style.display = 'none';
+  document.body.appendChild(masterVid);
+
+  // Load first clip into masterVid and play briefly to unlock audio stream
+  const _firstClip = videoClips[0];
+  const _firstItem = S.cut.media[_firstClip.mediaIdx];
+  masterVid.src = _firstItem?.url || '';
+  masterVid.crossOrigin = 'anonymous';
+  masterVid.currentTime = _firstClip.fileStart || 0;
+  await new Promise(r=>{masterVid.oncanplaythrough=r;masterVid.onerror=r;setTimeout(r,8000);});
+  try{ await masterVid.play(); }catch(e){ console.warn('masterVid unlock:', e); }
+
+  // captureStream() while masterVid IS playing = live audio track
+  const masterStream = masterVid.captureStream ? masterVid.captureStream() : null;
+  const masterAudioTracks = masterStream ? masterStream.getAudioTracks() : [];
+  console.log('Export audio tracks:', masterAudioTracks.length,
+    masterAudioTracks.map(t=>t.readyState).join(','));
+
+  // Pause - renderFrame will control playback
+  masterVid.pause();
+
   // Preload standalone audio-only clips
-  const audioOnlyClips = S.cut.clips.filter(c=>c.type==='audio'&&!c.linkedToVideo).sort((a,b)=>a.start-b.start);
+  const audioOnlyClips = S.cut.clips
+    .filter(c=>c.type==='audio'&&!c.linkedToVideo)
+    .sort((a,b)=>a.start-b.start);
   const audioEls = {};
   for(const clip of audioOnlyClips){
     const item = S.cut.media[clip.mediaIdx];
@@ -766,56 +798,32 @@ async function startExport(){
     if(S.cut.mutedTracks?.[clip.track]) continue;
     const a = document.createElement('audio');
     a.src=item.url; a.crossOrigin='anonymous'; a.preload='auto';
-    a.muted=false; a.volume=1.0;
-    a.style.display='none';
+    a.muted=false; a.volume=1.0; a.style.display='none';
     document.body.appendChild(a);
     await new Promise(r=>{a.oncanplaythrough=r;a.onerror=r;setTimeout(r,8000);});
-    audioEls[clip.mediaIdx]=a;
+    audioEls[clip.mediaIdx] = a;
   }
 
-  // Build MediaStream: video from canvas + audio from captureStream
-  // captureStream() must be called AFTER play() - only then are audio tracks live
-  // Strategy: play first element briefly, grab captureStream() while it is hot, pause
-  const videoStream = canvas.captureStream(fps);
-  let finalStream = videoStream;
-
-  const _firstVidEl = Object.values(vidEls)[0];
-  if(_firstVidEl){
+  // Collect standalone audio tracks the same way
+  const allAudioTracks = [...masterAudioTracks];
+  for(const a of Object.values(audioEls)){
     try{
-      _firstVidEl.currentTime = 0;
-      await _firstVidEl.play();
-    }catch(e){ console.warn('export play unlock:', e); }
-
-    // captureStream() called while element IS PLAYING = audio tracks are live and hot
-    const allAudioTracks = [];
-    Object.values(vidEls).forEach(v=>{
-      try{
-        if(v.captureStream){
-          v.captureStream().getAudioTracks().forEach(t=>{ if(t.readyState==='live') allAudioTracks.push(t); });
-        }
-      }catch(e){}
-    });
-    Object.values(audioEls).forEach(a=>{
-      try{
-        if(a.captureStream){
-          a.captureStream().getAudioTracks().forEach(t=>{ if(t.readyState==='live') allAudioTracks.push(t); });
-        }
-      }catch(e){}
-    });
-
-    // Pause - renderFrame will seek+play each element at the correct file position
-    _firstVidEl.pause();
-    _firstVidEl.currentTime = 0;
-
-    if(allAudioTracks.length > 0){
-      finalStream = new MediaStream([
-        ...videoStream.getVideoTracks(),
-        ...allAudioTracks
-      ]);
-    }
+      await a.play();
+      const as2 = a.captureStream ? a.captureStream() : null;
+      if(as2) as2.getAudioTracks().forEach(t=>{ if(t.readyState==='live') allAudioTracks.push(t); });
+      a.pause(); a.currentTime = 0;
+    }catch(e){}
   }
 
-  // No AudioContext needed - cleanup
+  // Build final stream: canvas video + master audio track
+  const videoStream = canvas.captureStream(fps);
+  const finalStream = allAudioTracks.length > 0
+    ? new MediaStream([...videoStream.getVideoTracks(), ...allAudioTracks])
+    : videoStream;
+
+  // vidEls alias for renderFrame compatibility (single element, all clips use it)
+  const vidEls = { _master: masterVid };
+  window._exportMasterVid = masterVid;
   window._exportMasterGain = null;
 
 
@@ -840,7 +848,7 @@ async function startExport(){
     status.textContent='Packaging download...';
     bar.style.width='100%';
     // Cleanup video and audio elements
-    Object.values(vidEls).forEach(v=>{try{v.pause();v.src='';document.body.contains(v)&&document.body.removeChild(v);}catch(e){}});
+    if(window._exportMasterVid){try{window._exportMasterVid.pause();window._exportMasterVid.src='';if(document.body.contains(window._exportMasterVid))document.body.removeChild(window._exportMasterVid);}catch(e){}window._exportMasterVid=null;}
     Object.values(audioEls).forEach(a=>{try{a.pause();a.src='';document.body.contains(a)&&document.body.removeChild(a);}catch(e){}});
     window._exportMasterGain=null;
     await new Promise(r=>setTimeout(r,300));
@@ -871,7 +879,7 @@ async function startExport(){
 
   async function renderFrame(){
     if(t > totalDur + dt){
-      if(lastActiveVid){ lastActiveVid.pause(); lastActiveVid.muted = true; }
+      if(lastActiveVid && !lastActiveVid.paused){ lastActiveVid.pause(); }
       Object.values(audioEls).forEach(a=>{ try{a.pause();}catch(e){} });
       await new Promise(r=>setTimeout(r,400)); // flush audio buffer
       recorder.stop();
@@ -904,20 +912,24 @@ async function startExport(){
     const clip = videoClips.find(c => t >= c.start && t < c.start + c.dur);
 
     if(clip){
-      const vid = vidEls[clip.mediaIdx];
+      const vid = window._exportMasterVid;
       const clipIdx = videoClips.indexOf(clip);
+      const clipItem = S.cut.media[clip.mediaIdx];
 
       if(clipIdx !== lastClipIdx){
-        // ── New clip: seek once, wait for decode, then start playing ──
-        if(lastActiveVid && lastActiveVid !== vid){
-          lastActiveVid.pause();
-        }
+        if(lastActiveVid && !lastActiveVid.paused) lastActiveVid.pause();
         lastActiveVid = vid;
         lastClipIdx = clipIdx;
+        if(vid.dataset.exportMediaIdx !== String(clip.mediaIdx)){
+          vid.src = clipItem?.url || '';
+          vid.crossOrigin = 'anonymous';
+          vid.dataset.exportMediaIdx = String(clip.mediaIdx);
+          await new Promise(r=>{vid.oncanplaythrough=r;vid.onerror=r;setTimeout(r,5000);});
+        }
         const fileTime = (clip.fileStart||0) + Math.max(0, t - clip.start);
         vid.muted = false;
+        vid.volume = clip.volume !== undefined ? Math.min(1, clip.volume/100) : 1.0;
         vid.currentTime = fileTime;
-        // Wait for seek to complete
         await new Promise(r=>{
           const h = ()=>{ vid.removeEventListener('seeked',h); r(); };
           vid.addEventListener('seeked', h);
@@ -926,7 +938,6 @@ async function startExport(){
         try{ await vid.play(); }catch(e){}
       }
 
-      // ── Draw current frame — video is playing, drawImage is instant ──
       ctx.fillStyle = '#000';
       ctx.fillRect(0, 0, W, H);
       try{ ctx.drawImage(vid, 0, 0, W, H); }catch(e){}
@@ -938,7 +949,7 @@ async function startExport(){
     } else {
       ctx.fillStyle = '#000';
       ctx.fillRect(0, 0, W, H);
-      if(lastActiveVid){ lastActiveVid.pause(); lastActiveVid.muted = true; lastActiveVid = null; }
+      if(lastActiveVid && !lastActiveVid.paused){ lastActiveVid.pause(); lastActiveVid = null; }
       lastClipIdx = -1;
     }
 
