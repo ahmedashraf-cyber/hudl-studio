@@ -3231,23 +3231,39 @@ function renderCutTimeline() {
   const totalTk=S.cut.videoTracks+S.cut.audioTracks;
   // Update timeline shell height
   const shell=$('cut-tl');
-  // Height = header(38) + ruler(18) + tracks*30 + 4px padding
   if(shell) shell.style.height=Math.max(120,(38+18+totalTk*30+4))+'px';
 
-  // Always rebuild track rows completely to ensure correct order
+  // Compute actual project duration: max of proj.dur, all clip ends, all overlay ends
+  // This is the elastic canvas width - grows automatically as content is added
+  const _clipEnd = S.cut.clips.length ? Math.max(...S.cut.clips.map(c=>c.start+c.dur)) : 0;
+  const _ovEnd   = (window._overlays||[]).length ? Math.max(...window._overlays.map(o=>o.endTime||0)) : 0;
+  const _actualDur = Math.max(S.proj.dur||10, _clipEnd, _ovEnd) + 5; // +5s breathing room
+  const _tlW = Math.round(_actualDur * PPS);
+
+  // Update ruler width and marks dynamically
+  const ruler = document.getElementById('tl-ruler');
+  if(ruler){
+    ruler.style.width = _tlW + 'px';
+    const _step = _actualDur<=30?2:_actualDur<=120?5:_actualDur<=600?10:30;
+    ruler.innerHTML = Array.from({length:Math.floor(_actualDur/_step)+1},(_,i)=>i*_step)
+      .map(s=>'<div class="ruler-mark" style="left:'+Math.round(s*PPS)+'px"><span>'+fmtTC(s)+'</span></div>')
+      .join('');
+  }
+
+  // Update tl-rows container width
   const rows=$('tl-rows');
+  if(rows) rows.style.width = _tlW + 'px';
+
+  // Rebuild track rows
   if(rows){
     const ph=document.getElementById('cut-ph');
-    // Remove all existing track rows
     rows.querySelectorAll('.clip-track-row').forEach(r=>r.remove());
-    // Recreate in correct order: V1,V2,...Vn, A1,A2,...An
     for(let t=0;t<totalTk;t++){
       const row=document.createElement('div');
       row.id='tl-row-'+t;
       row.className='clip-track-row '+(t<S.cut.videoTracks?'video-row':'audio-row');
       row.setAttribute('data-track',t);
-      const _ce0=S.cut.clips.length?Math.max(...S.cut.clips.map(c=>c.start+c.dur)):0;
-      row.style.width=Math.max(S.proj.dur,_ce0+5)*PPS+'px';
+      row.style.width = _tlW + 'px'; // all rows same elastic width
       if(ph) rows.insertBefore(row,ph); else rows.appendChild(row);
     }
   }
