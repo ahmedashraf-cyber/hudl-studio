@@ -3399,6 +3399,7 @@ function renderCutTimeline() {
     });
   }
   updateCutPH();
+  if(window._selectedClips?.size>1&&window._highlightSelected)window._highlightSelected();
 }
 
 // ── CLIP SELECTION HELPER ────────────────────────────────────
@@ -3476,6 +3477,13 @@ function clipMoveStart(e,ci){
   }
 
   // ── Normal drag: move the clip ──
+  // Store all selected clip origins for group move
+  const _multiOrigins = {};
+  if(window._selectedClips?.size > 1){
+    window._selectedClips.forEach(_idx => {
+      if(S.cut.clips[_idx]) _multiOrigins[_idx] = S.cut.clips[_idx].start;
+    });
+  }
   window._snapCache = null;
   _mv = {
     ci,
@@ -3484,6 +3492,7 @@ function clipMoveStart(e,ci){
     origStart:S.cut.clips[ci].start,
     origTrack:S.cut.clips[ci].track,
     el:       el,
+    _multiOrigins,
   };
   if(el){ el.style.opacity='0.7'; el.style.zIndex='100'; }
   document.addEventListener('mousemove', clipMoveMove);
@@ -3521,7 +3530,19 @@ function clipMoveMove(e){
     const orig=S.cut.clips[_mv.ci];
     orig.color=orig.type==='image'?'rgba(63,185,80,0.8)':'rgba(88,166,255,0.8)';
   }
+  // GROUP MOVE: move all other selected clips by the same delta as primary
+  if(window._selectedClips?.size > 1 && _mv._multiOrigins){
+    const _delta = newStart - (_mv._multiOrigins[_mv.ci] ?? _mv.origStart);
+    window._selectedClips.forEach(_sidx => {
+      if(_sidx === _mv.ci) return;
+      const _sc = S.cut.clips[_sidx];
+      if(_sc && _mv._multiOrigins[_sidx] !== undefined){
+        _sc.start = Math.max(0, _mv._multiOrigins[_sidx] + _delta);
+      }
+    });
+  }
   renderCutTimeline();
+  if(window._selectedClips?.size > 1) _highlightSelected();
 }
 function clipMoveUp(){
   if(!_mv) return;
@@ -6612,50 +6633,7 @@ function _highlightSelected(){
     el.classList.toggle('selected', isSelected);
   });
 }
-
-// Override clipMoveMove to move ALL selected clips together
-const _origClipMoveMove = window.clipMoveMove;
-// Wrap after app loads
-setTimeout(() => {
-  const orig = window.clipMoveMove;
-  if(orig && !orig._multiHooked){
-    window.clipMoveMove = function(e){
-      orig(e);
-      // If multi-select active, move all other selected clips by the same delta
-      if(window._selectedClips?.size > 1 && window._mv){
-        const primaryCi = window._mv.ci;
-        const primaryClip = S.cut.clips[primaryCi];
-        if(!primaryClip) return;
-        const delta = primaryClip.start - (window._mv._multiOrigins?.[primaryCi] ?? primaryClip.start);
-        if(!window._mv._multiOrigins) return;
-        window._selectedClips.forEach(ci => {
-          if(ci === primaryCi) return;
-          const c = S.cut.clips[ci];
-          if(c && window._mv._multiOrigins?.[ci] !== undefined){
-            c.start = Math.max(0, window._mv._multiOrigins[ci] + delta);
-          }
-        });
-      }
-    };
-    window.clipMoveMove._multiHooked = true;
-  }
-
-  // Store origins when drag starts
-  const origStart = window.clipMoveStart;
-  if(origStart && !origStart._multiHooked){
-    window.clipMoveStart = function(e, ci){
-      origStart(e, ci);
-      if(window._selectedClips?.size > 1){
-        window._mv._multiOrigStart = S.cut.clips[ci]?.start;
-        window._mv._multiOrigins = {};
-        window._selectedClips.forEach(idx => {
-          if(S.cut.clips[idx]) window._mv._multiOrigins[idx] = S.cut.clips[idx].start;
-        });
-      }
-    };
-    window.clipMoveStart._multiHooked = true;
-  }
-}, 500);
+window._highlightSelected = _highlightSelected;
 
 // Clear multi-select when clicking empty area
 document.addEventListener('click', e => {
