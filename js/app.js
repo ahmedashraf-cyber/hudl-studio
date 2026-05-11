@@ -4316,8 +4316,12 @@ function cutTogglePlay(){
         // Check if we've reached end of THIS CLIP (fileStart + dur = end position in file)
         // clipEndInFile = file position when this clip's content ends
         // = fileStart + (timelineDur / speed) because slow clips play fewer source frames
+        // clipEndInFile = file time when clip's content ends
+        // timelineDur = sourceDur / speed, so sourceDur = timelineDur * speed
+        // With playbackRate=speed, video currentTime advances at rate=speed
+        // so video reaches fileStart + timelineDur*speed after timelineDur real-seconds
         const _cspd = clipNow.speed || 1;
-        const clipEndInFile = (clipNow.fileStart||0) + clipNow.dur / _cspd;
+        const clipEndInFile = (clipNow.fileStart||0) + clipNow.dur * _cspd;
         if(vidEl.currentTime >= clipEndInFile - 0.05){
           const currentEnd = clipNow.start + clipNow.dur;
           // If a frame_hold immediately follows this clip, jump to it instead of skipping
@@ -4368,7 +4372,7 @@ function cutTogglePlay(){
         }
       } else if(clipNow&&vidEl&&vidEl.paused&&S.cut.playing&&!S.cut._scrubbing&&!_freezeActive){
         const _cspd2 = clipNow.speed || 1;
-        const clipEndFile2=(clipNow.fileStart||0)+clipNow.dur/_cspd2;
+        const clipEndFile2=(clipNow.fileStart||0)+clipNow.dur*_cspd2;
         const _phInClip = S.cut.ph>=clipNow.start && S.cut.ph<clipNow.start+clipNow.dur-0.1;
         const _vidNotEnd = vidEl.currentTime < clipEndFile2-0.1;
         if(_phInClip && _vidNotEnd){
@@ -4647,7 +4651,8 @@ function syncCutVid(){
       if(isNaN(ci)) return;
       const clip = S.cut.clips[ci];
       if(!clip) return;
-      S.cut.ph = clip.start + (mv.currentTime - (clip.fileStart||0));
+      // Divide by speed: file time / speed = timeline time
+      S.cut.ph = clip.start + (mv.currentTime - (clip.fileStart||0)) / (clip.speed||1);
       updateCutPH();
     });
     frame.appendChild(mv);
@@ -4769,9 +4774,9 @@ function syncCutVid(){
     }
     mv.dataset.clipIdx = String(activeCI);
 
-    // Sync position when paused - divide by speed for speed-modified clips
+    // Convert timeline position to file position: fileTime = fileStart + offset * speed
     const _spd = active.speed || 1;
-    const targetT = (active.fileStart||0) + Math.max(0, (ph - active.start) / _spd);
+    const targetT = (active.fileStart||0) + Math.max(0, (ph - active.start) * _spd);
     if(!S.cut.playing && Math.abs(mv.currentTime - targetT) > 0.05){
       mv.currentTime = targetT;
     }
@@ -4807,10 +4812,10 @@ function syncCutVid(){
     if(S.cut.playing && mv.paused && !_freezeActive){
       mv.play().catch(()=>{});
     }
-    // Pre-seek when paused - account for clip speed
+    // Pre-seek: convert timeline pos to file pos (multiply by speed)
     if(!S.cut.playing){
       const _spd2 = active.speed || 1;
-      const t0 = (active.fileStart||0) + Math.max(0, (ph - active.start) / _spd2);
+      const t0 = (active.fileStart||0) + Math.max(0, (ph - active.start) * _spd2);
       if(Math.abs(mv.currentTime - t0) > 0.05) mv.currentTime = t0;
     }
 
@@ -5100,8 +5105,9 @@ function syncCutVid(){
   mv.dataset.clipIdx = String(activeCI);
 
   if(!S.cut.playing){
+    // Convert timeline position to file position: fileTime = fileStart + timelineOffset * speed
     const _spd3 = active.speed || 1;
-    const targetTime = (active.fileStart||0) + Math.max(0, (ph - active.start) / _spd3);
+    const targetTime = (active.fileStart||0) + Math.max(0, (ph - active.start) * _spd3);
     if(Math.abs(mv.currentTime - targetTime) > 0.02) mv.currentTime = targetTime;
     if(!mv.paused) mv.pause();
   }
