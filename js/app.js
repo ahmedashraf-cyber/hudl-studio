@@ -3415,6 +3415,8 @@ function renderCutTimeline() {
   }
   updateCutPH();
   if(window._selectedClips?.size>1&&window._highlightSelected)window._highlightSelected();
+  // Always redraw overlays after timeline rebuild so they never disappear
+  if(window.renderOverlayTimeline) window.renderOverlayTimeline();
 }
 
 // ── CLIP SELECTION HELPER ────────────────────────────────────
