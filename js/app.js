@@ -651,6 +651,15 @@ window.doSave = async function() {
 window.doExport = function() { showExportModal(); };
 
 function showExportModal(){
+  // Create AudioContext synchronously (direct user gesture click)
+  // Must happen BEFORE any async code for Chrome to allow it running
+  try{
+    if(window._prebuiltAudioCtx && window._prebuiltAudioCtx.state !== 'closed'){
+      window._prebuiltAudioCtx.close();
+    }
+    window._prebuiltAudioCtx = new (window.AudioContext||window.webkitAudioContext)({sampleRate:48000});
+    window._prebuiltAudioCtx.resume();
+  }catch(e){ window._prebuiltAudioCtx = null; }
   document.querySelectorAll('#export-modal').forEach(m=>m.remove());
   const videoClips=S.cut.clips.filter(c=>c.type==='video').sort((a,b)=>a.start-b.start);
   const totalDur=videoClips.length?Math.max(...videoClips.map(c=>c.start+c.dur)):0;
@@ -731,27 +740,26 @@ async function startExport(){
   canvas.width=W; canvas.height=H;
   const ctx=canvas.getContext('2d');
 
-  // Audio via Web Audio API wired before play()
-  // createMediaElementSource activates when element plays -- no silent track issue
-  let audioCtx=null, audioDest=null;
+  // Use AudioContext pre-created in showExportModal during user gesture
+  // This is the fix for Chrome autoplay policy silencing export audio
+  let audioCtx = (window._prebuiltAudioCtx && window._prebuiltAudioCtx.state !== 'closed')
+    ? window._prebuiltAudioCtx : null;
+  let audioDest = null;
   try{
-    audioCtx = new (window.AudioContext||window.webkitAudioContext)({sampleRate:48000});
-    await audioCtx.resume();
+    if(!audioCtx){
+      audioCtx = new (window.AudioContext||window.webkitAudioContext)({sampleRate:48000});
+      audioCtx.resume();
+    }
+    if(audioCtx.state === 'suspended') audioCtx.resume();
     audioDest = audioCtx.createMediaStreamDestination();
-    // Master gain: boost to match editor speaker-level loudness
-    // MediaStreamDestination outputs at -6dBFS; 4x compensates
-    // Limiter prevents clipping when we push gain hard
-    const _exportLimiter = audioCtx.createDynamicsCompressor();
-    _exportLimiter.threshold.value = -3.0;  // limit at -3dBFS
-    _exportLimiter.knee.value      =  2.0;
-    _exportLimiter.ratio.value     =  20.0; // hard limit
-    _exportLimiter.attack.value    =  0.001;
-    _exportLimiter.release.value   =  0.1;
-    _exportLimiter.connect(audioDest);
+    const _lim = audioCtx.createDynamicsCompressor();
+    _lim.threshold.value = -3.0; _lim.knee.value = 2.0;
+    _lim.ratio.value = 20.0; _lim.attack.value = 0.001; _lim.release.value = 0.1;
+    _lim.connect(audioDest);
     window._exportMasterGain = audioCtx.createGain();
-    window._exportMasterGain.gain.value = 8.0;
-    window._exportMasterGain.connect(_exportLimiter);
-  }catch(e){ console.warn('AudioContext failed:',e); }
+    window._exportMasterGain.gain.value = 6.0;
+    window._exportMasterGain.connect(_lim);
+  }catch(e){ console.warn('Export audio ctx failed:',e); }
 
   // Preload video elements and wire audio immediately
   status.textContent='Loading video files...';
