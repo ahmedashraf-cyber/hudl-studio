@@ -2111,884 +2111,137 @@ function handleCutFiles(files) {
 
 function buildBinList() {
   const el=$('cut-bin'); if(!el) return;
-  if (!S.cut.media.length) { el.innerHTML='<div style="padding:24px 12px;text-align:center"><div style="font-size:22px;opacity:0.25;margin-bottom:8px">📂</div><div style="font-size:11px;color:rgba(255,255,255,0.25);font-weight:500">No media yet</div><div style="font-size:10px;color:rgba(255,255,255,0.15);margin-top:3px">Drop files or click above</div></div>'; return; }
-  el.innerHTML = S.cut.media.map((item,i)=>{
-    const icon=item.type==='video'?'🎬':item.type==='audio'?'🎵':'🖼️';
-    return `<div class="mbin-item${S.cut.selMedia===i?' sel':''}" id="mbi-${i}" draggable="true"
-      ondragstart="cutBinDragStart(event,${i})" onclick="cutSelMedia(${i})" ondblclick="cutAddToTL(${i})"
-      title="Double-click to add · Drag to timeline">
-      <div class="mbin-thumb">${item.thumbnail?`<img src="${item.thumbnail}">`:(item.type==='image'&&item.url?`<img src="${item.url}">`:icon)}</div>
-      <div style="flex:1;min-width:0"><div class="mbin-name">${item.name}</div>
-      <div class="mbin-dur">${item.duration>0?fmtTC(item.duration):'--'}</div></div></div>`;
-  }).join('');
+
+  // Initialize bins/folders state
+  if(!S.cut.bins) S.cut.bins = [{id:'root',name:'All Media',open:true}];
+  if(!S.cut.mediaBins) S.cut.mediaBins = {};
+
+  if (!S.cut.media.length) {
+    el.innerHTML='<div style="padding:24px 12px;text-align:center"><div style="font-size:22px;opacity:0.25;margin-bottom:8px">📂</div><div style="font-size:11px;color:rgba(255,255,255,0.25);font-weight:500">No media yet</div><div style="font-size:10px;color:rgba(255,255,255,0.15);margin-top:3px">Drop files or click above</div></div>';
+    return;
+  }
+
+  // Group media by bin
+  const binItems = {};
+  S.cut.media.forEach((item,i) => {
+    const binId = S.cut.mediaBins?.[i] || 'root';
+    if(!binItems[binId]) binItems[binId] = [];
+    binItems[binId].push({item,i});
+  });
+
+  // Bin toolbar
+  let html = `<div style="display:flex;align-items:center;gap:4px;padding:4px 6px 2px;border-bottom:0.5px solid rgba(255,255,255,0.06)">
+    <span style="font-size:10px;color:rgba(255,255,255,0.3);flex:1">${S.cut.media.length} file(s)</span>
+    <button onclick="cutMediaNewBin()" title="New folder" style="background:none;border:none;color:rgba(255,255,255,0.4);cursor:pointer;font-size:12px;padding:2px 5px;line-height:1;border-radius:4px;border:0.5px solid rgba(255,255,255,0.1)" onmouseover="this.style.color='#E8590C'" onmouseout="this.style.color='rgba(255,255,255,0.4)'">+ Folder</button>
+  </div>`;
+
+  // Render each bin
+  S.cut.bins.forEach(bin => {
+    const items = binItems[bin.id] || [];
+    const isRoot = bin.id === 'root';
+    if(!isRoot){
+      html += `<div style="display:flex;align-items:center;gap:4px;padding:4px 8px;cursor:pointer;user-select:none;background:rgba(255,255,255,0.03);border-bottom:0.5px solid rgba(255,255,255,0.04)"
+        onclick="cutMediaToggleBin('${bin.id}')">
+        <span style="font-size:10px;color:rgba(255,255,255,0.4)">${bin.open!==false?'▼':'▶'}</span>
+        <span style="font-size:10px;font-weight:600;color:rgba(255,255,255,0.6);flex:1">📁 ${bin.name} (${items.length})</span>
+        <button onclick="event.stopPropagation();cutMediaDeleteBin('${bin.id}')" style="background:none;border:none;color:rgba(255,69,58,0.5);cursor:pointer;font-size:10px;padding:0" title="Delete folder">✕</button>
+      </div>`;
+    }
+    if(bin.open !== false || isRoot){
+      items.forEach(({item,i}) => {
+        const icon = item.type==='video'?'🎬':item.type==='audio'?'🎵':'🖼️';
+        const indent = isRoot ? '' : 'padding-left:16px;';
+        html += `<div class="mbin-item${S.cut.selMedia===i?' sel':''}" id="mbi-${i}" draggable="true"
+          ondragstart="cutBinDragStart(event,${i})" onclick="cutSelMedia(${i})" ondblclick="cutAddToTL(${i})"
+          oncontextmenu="cutMediaContextMenu(event,${i})"
+          title="Double-click to add · Right-click for options" style="${indent}position:relative">
+          <div class="mbin-thumb">${item.thumbnail?`<img src="${item.thumbnail}">`:(item.type==='image'&&item.url?`<img src="${item.url}">`:icon)}</div>
+          <div style="flex:1;min-width:0"><div class="mbin-name">${item.name}</div>
+          <div class="mbin-dur">${item.duration>0?fmtTC(item.duration):'--'}</div></div>
+          <button onclick="event.stopPropagation();cutMediaDelete(${i})" title="Delete" style="background:none;border:none;color:rgba(255,69,58,0.6);cursor:pointer;font-size:13px;padding:2px 4px;opacity:0;transition:opacity .15s;position:absolute;right:4px;top:50%;transform:translateY(-50%)" class="mbin-del">🗑</button>
+        </div>`;
+      });
+    }
+  });
+
+  el.innerHTML = html;
+
+  // Show delete button on hover
+  el.querySelectorAll('.mbin-item').forEach(el2 => {
+    const del = el2.querySelector('.mbin-del');
+    if(!del) return;
+    el2.addEventListener('mouseenter', ()=>{ del.style.opacity='1'; });
+    el2.addEventListener('mouseleave', ()=>{ del.style.opacity='0'; });
+  });
+
   const inf=$('cut-info'); if(inf) inf.textContent=S.cut.media.length+' file(s) — drag to timeline or double-click';
 }
 
-// ── PROPERTIES PANEL ──
-function updatePropsPanel(ci){
-  const body=$('cut-props-body'); if(!body) return;
-  if(ci===null||ci===undefined){
-    body.innerHTML='<div style="padding:20px 8px;text-align:center;color:var(--mu2);font-size:11px">Select a clip or overlay</div>';
-    const oldBox=document.getElementById('cut-bbox'); if(oldBox) oldBox.remove();
-    return;
-  }
-  const c=S.cut.clips[ci]; if(!c){body.innerHTML='';return;}
-  const item=S.cut.media[c.mediaIdx]||{};
-  const fmtN=n=>Math.round(n*100)/100;
-  const speed=c.speed||1;
-  const inp=(id,val,step,min,onch)=>`<input type="number" id="${id}" value="${val}" step="${step}" min="${min||0}" style="width:62px;background:#161616;border:0.5px solid rgba(255,255,255,0.1);border-radius:5px;color:var(--tx);font-size:11px;padding:2px 5px;outline:none" onchange="${onch}">`;
-
-  const fadeIn  = c.fadeIn  || 0;
-  const fadeOut = c.fadeOut || 0;
-  const vol     = c.volume  !== undefined ? c.volume : 1;
-  const fx = c.audioFx || {};
-  const audioSection = c.type==='audio'||c.linkedToVideo ? `
-    <div style="border:0.5px solid rgba(210,153,34,0.25);border-radius:8px;margin:4px 0;overflow:hidden;background:rgba(210,153,34,0.04)">
-      <div style="display:flex;align-items:center;padding:8px 10px;cursor:pointer;user-select:none;gap:8px"
-        onclick="const el=document.getElementById('acc-au-${ci}');el.hidden=!el.hidden;this.querySelector('.acc-chv').style.transform=el.hidden?'rotate(-90deg)':'rotate(0deg)'">
-        <div style="width:3px;height:28px;border-radius:2px;background:linear-gradient(180deg,#d29922,#e3b341);flex-shrink:0"></div>
-        <div style="flex:1;min-width:0">
-          <div style="font-size:11px;font-weight:700;color:#fff;letter-spacing:0.3px">🔊 Audio</div>
-          <div style="font-size:10px;color:rgba(255,255,255,0.4);margin-top:1px">Vol: ${Math.round(vol*100)}%${fadeIn||fadeOut?' · Fade '+fadeIn.toFixed(1)+'s / '+fadeOut.toFixed(1)+'s':''}</div>
-        </div>
-        <span class="acc-chv" style="font-size:9px;color:rgba(255,255,255,0.3);transition:transform 0.2s">▼</span>
-      </div>
-      <div id="acc-au-${ci}" style="padding:0 6px 8px">
-
-    <div class="prop-row"><span class="prop-label">Volume</span>
-      <input type="range" id="vol-val-${ci}-input" min="0" max="200" value="${Math.round(vol*100)}" style="flex:1;accent-color:#E8590C"
-        oninput="S.cut.clips[${ci}].volume=this.value/100;if(!S.cut.clips[${ci}].audioFx)S.cut.clips[${ci}].audioFx={};S.cut.clips[${ci}].audioFx.volume=parseInt(this.value);document.getElementById('vol-pct-${ci}').textContent=this.value+'%'">
-      <span id="vol-pct-${ci}" style="font-size:10px;color:var(--mu);min-width:32px;text-align:right">${Math.round(vol*100)}%</span>
-    </div>
-    <div class="prop-section" style="padding-top:6px" style="color:rgba(255,220,80,0.9)">🎚 Fade</div>
-    <div class="prop-row">
-      <span class="prop-label" style="color:rgba(255,220,80,0.8)">Fade In</span>
-      <input type="number" id="fade-in-val-${ci}" value="${fadeIn.toFixed(2)}" min="0" step="0.1"
-        style="width:58px;background:#161616;border:0.5px solid rgba(255,255,255,0.1);border-radius:5px;color:var(--tx);font-size:11px;padding:2px 5px;outline:none"
-        onchange="S.cut.clips[${ci}].fadeIn=Math.max(0,parseFloat(this.value)||0);renderCutTimeline();cutSaveHistory('fade_in')">
-      <span style="font-size:10px;color:var(--mu)">s</span>
-    </div>
-    <div class="prop-row">
-      <span class="prop-label" style="color:rgba(255,220,80,0.8)">Fade Out</span>
-      <input type="number" id="fade-out-val-${ci}" value="${fadeOut.toFixed(2)}" min="0" step="0.1"
-        style="width:58px;background:#161616;border:0.5px solid rgba(255,255,255,0.1);border-radius:5px;color:var(--tx);font-size:11px;padding:2px 5px;outline:none"
-        onchange="S.cut.clips[${ci}].fadeOut=Math.max(0,parseFloat(this.value)||0);renderCutTimeline();cutSaveHistory('fade_out')">
-      <span style="font-size:10px;color:var(--mu)">s</span>
-    </div>
-    ${fx.bass!==undefined||fx.treble!==undefined||fx.preset ? `
-    <div class="prop-section" style="padding-top:6px" style="color:rgba(255,180,50,0.85)">🎛 EQ (applied)</div>
-    <div class="prop-row"><span class="prop-label">Bass</span><span class="prop-val">${fx.bass||0} dB</span></div>
-    <div class="prop-row"><span class="prop-label">Mid</span><span class="prop-val">${fx.mid||0} dB</span></div>
-    <div class="prop-row"><span class="prop-label">Treble</span><span class="prop-val">${fx.treble||0} dB</span></div>
-    ${fx.preset&&fx.preset!=='none'?'<div class="prop-row"><span class="prop-label">Preset</span><span class="prop-val">'+fx.preset+'</span></div>':''}
-    ` : ''}
-    <div class="prop-row" style="padding:4px 0">
-      <button onclick="showAudioEnhanceDialog(${ci})" style="width:100%;padding:6px;background:rgba(232,89,12,0.12);border:0.5px solid rgba(232,89,12,0.35);border-radius:6px;color:#E8590C;font-size:11px;font-weight:600;cursor:pointer;font-family:'DM Sans',sans-serif">🎵 Audio Enhancement…</button>
-    </div>
-      </div>
-    </div>` : '';
-
-
-  // Ensure clip has transform object
-  if(!c.transform) c.transform = {x:0, y:0, scaleX:100, scaleY:100, rotation:0};
-  const tf = c.transform;
-
-  body.innerHTML=`
-    <div style="padding:6px 8px 2px;display:flex;align-items:center;gap:6px">
-      <div style="width:3px;height:18px;border-radius:2px;background:linear-gradient(180deg,#E8590C,#ff8c42)"></div>
-      <span style="font-size:11px;font-weight:700;color:rgba(255,255,255,0.85)">${c.type==='video'?'Video Clip':c.type==='audio'?'Audio Clip':'Clip'}</span>
-      <span style="font-size:10px;color:rgba(255,255,255,0.25);flex:1;text-align:right;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${item.name||''}</span>
-    </div>
-
-    ${c.type==='video' ? `
-    <div style="border:0.5px solid rgba(232,89,12,0.25);border-radius:8px;margin:4px 0;overflow:hidden;background:rgba(232,89,12,0.04)">
-      <div style="display:flex;align-items:center;padding:8px 10px;cursor:pointer;user-select:none;gap:8px"
-        onclick="const el=document.getElementById('acc-tf-${ci}');el.hidden=!el.hidden;this.querySelector('.acc-chv').style.transform=el.hidden?'rotate(-90deg)':'rotate(0deg)'">
-        <div style="width:3px;height:28px;border-radius:2px;background:linear-gradient(180deg,#E8590C,#ff8c42);flex-shrink:0"></div>
-        <div style="flex:1;min-width:0">
-          <div style="font-size:11px;font-weight:700;color:#fff;letter-spacing:0.3px">⊞ Transform</div>
-          <div style="font-size:10px;color:rgba(255,255,255,0.4);margin-top:1px">${(tf.x||tf.y||(tf.scaleX&&tf.scaleX!==100)||(tf.scaleY&&tf.scaleY!==100)||tf.rotation)?`x:${(tf.x||0).toFixed(0)}% y:${(tf.y||0).toFixed(0)}% s:${tf.scaleX||100}%`:'No transform applied'}</div>
-        </div>
-        <span class="acc-chv" style="font-size:9px;color:rgba(255,255,255,0.3);transition:transform 0.2s">▼</span>
-      </div>
-      <div id="acc-tf-${ci}" style="padding:0 6px 8px">
-        <div class="prop-row"><span class="prop-label">X</span>
-          <input type="range" min="-100" max="100" step="0.5" value="${tf.x||0}" style="flex:1;accent-color:#E8590C"
-            oninput="const c2=S.cut.clips[${ci}];if(!c2.transform)c2.transform={x:0,y:0,scaleX:100,scaleY:100,rotation:0};c2.transform.x=parseFloat(this.value);this.nextElementSibling.textContent=parseFloat(this.value).toFixed(1)+'%';syncCutVid();renderBoundingBox(${ci});">
-          <span style="font-size:10px;color:var(--mu);min-width:36px;text-align:right">${(tf.x||0).toFixed(1)}%</span>
-        </div>
-        <div class="prop-row"><span class="prop-label">Y</span>
-          <input type="range" min="-100" max="100" step="0.5" value="${tf.y||0}" style="flex:1;accent-color:#E8590C"
-            oninput="const c2=S.cut.clips[${ci}];if(!c2.transform)c2.transform={x:0,y:0,scaleX:100,scaleY:100,rotation:0};c2.transform.y=parseFloat(this.value);this.nextElementSibling.textContent=parseFloat(this.value).toFixed(1)+'%';syncCutVid();renderBoundingBox(${ci});">
-          <span style="font-size:10px;color:var(--mu);min-width:36px;text-align:right">${(tf.y||0).toFixed(1)}%</span>
-        </div>
-        <div class="prop-row"><span class="prop-label">Scale X</span>
-          <input type="range" min="10" max="300" step="1" value="${tf.scaleX||100}" style="flex:1;accent-color:#E8590C"
-            oninput="const c2=S.cut.clips[${ci}];if(!c2.transform)c2.transform={x:0,y:0,scaleX:100,scaleY:100,rotation:0};c2.transform.scaleX=parseInt(this.value);this.nextElementSibling.textContent=this.value+'%';syncCutVid();renderBoundingBox(${ci});">
-          <span style="font-size:10px;color:var(--mu);min-width:36px;text-align:right">${tf.scaleX||100}%</span>
-        </div>
-        <div class="prop-row"><span class="prop-label">Scale Y</span>
-          <input type="range" min="10" max="300" step="1" value="${tf.scaleY||100}" style="flex:1;accent-color:#E8590C"
-            oninput="const c2=S.cut.clips[${ci}];if(!c2.transform)c2.transform={x:0,y:0,scaleX:100,scaleY:100,rotation:0};c2.transform.scaleY=parseInt(this.value);this.nextElementSibling.textContent=this.value+'%';syncCutVid();renderBoundingBox(${ci});">
-          <span style="font-size:10px;color:var(--mu);min-width:36px;text-align:right">${tf.scaleY||100}%</span>
-        </div>
-        <div class="prop-row"><span class="prop-label">Rotation</span>
-          <input type="range" min="-180" max="180" step="1" value="${tf.rotation||0}" style="flex:1;accent-color:#E8590C"
-            oninput="const c2=S.cut.clips[${ci}];if(!c2.transform)c2.transform={x:0,y:0,scaleX:100,scaleY:100,rotation:0};c2.transform.rotation=parseInt(this.value);this.nextElementSibling.textContent=this.value+'°';syncCutVid();renderBoundingBox(${ci});">
-          <span style="font-size:10px;color:var(--mu);min-width:36px;text-align:right">${tf.rotation||0}°</span>
-        </div>
-        <div class="prop-row" style="padding-top:4px">
-          <button onclick="const c2=S.cut.clips[${ci}];c2.transform={x:0,y:0,scaleX:100,scaleY:100,rotation:0};updatePropsPanel(${ci});syncCutVid();renderBoundingBox(${ci});"
-            style="flex:1;padding:4px;background:rgba(255,255,255,0.04);border:0.5px solid rgba(255,255,255,0.08);border-radius:5px;color:rgba(255,255,255,0.4);font-size:10px;cursor:pointer;font-family:'DM Sans',sans-serif">
-            Reset Transform
-          </button>
-        </div>
-      </div>
-    </div>` : ''}
-
-    <div style="border:0.5px solid rgba(88,166,255,0.2);border-radius:8px;margin:4px 0;overflow:hidden;background:rgba(88,166,255,0.03)">
-      <div style="display:flex;align-items:center;padding:8px 10px;cursor:pointer;user-select:none;gap:8px"
-        onclick="const el=document.getElementById('acc-tm-${ci}');el.hidden=!el.hidden;this.querySelector('.acc-chv').style.transform=el.hidden?'rotate(-90deg)':'rotate(0deg)'">
-        <div style="width:3px;height:28px;border-radius:2px;background:linear-gradient(180deg,#58a6ff,#79c0ff);flex-shrink:0"></div>
-        <div style="flex:1;min-width:0">
-          <div style="font-size:11px;font-weight:700;color:#fff;letter-spacing:0.3px">⏱ Timing</div>
-          <div style="font-size:10px;color:rgba(255,255,255,0.4);margin-top:1px">${fmtN(c.start)}s → ${fmtN(c.start+c.dur)}s · ${fmtN(c.dur)}s</div>
-        </div>
-        <span class="acc-chv" style="font-size:9px;color:rgba(255,255,255,0.3);transition:transform 0.2s">▼</span>
-      </div>
-      <div id="acc-tm-${ci}" style="padding:0 6px 8px">
-        <div class="prop-row"><span class="prop-label">Start</span>
-          ${inp('ps-start',fmtN(c.start),0.1,0,`S.cut.clips[${ci}].start=parseFloat(this.value)||0;renderCutTimeline();cutSaveHistory('prop_edit')`)}
-          <span style="font-size:10px;color:var(--mu)">s</span>
-        </div>
-        <div class="prop-row"><span class="prop-label">Duration</span>
-          ${inp('ps-dur',fmtN(c.dur),0.1,0.1,`S.cut.clips[${ci}].dur=Math.max(0.1,parseFloat(this.value)||0.1);renderCutTimeline();cutSaveHistory('prop_edit')`)}
-          <span style="font-size:10px;color:var(--mu)">s</span>
-        </div>
-        <div class="prop-row"><span class="prop-label">End</span><span class="prop-val">${fmtN(c.start+c.dur)}s</span></div>
-        <div class="prop-row"><span class="prop-label">Track</span><span class="prop-val">${c.type==='video'?'V':'A'}${c.track+1}</span></div>
-      </div>
-    </div>
-
-    <div style="border:0.5px solid rgba(232,89,12,0.2);border-radius:8px;margin:4px 0;overflow:hidden;background:rgba(232,89,12,0.03)">
-      <div style="display:flex;align-items:center;padding:8px 10px;cursor:pointer;user-select:none;gap:8px"
-        onclick="const el=document.getElementById('acc-sp-${ci}');el.hidden=!el.hidden;this.querySelector('.acc-chv').style.transform=el.hidden?'rotate(-90deg)':'rotate(0deg)'">
-        <div style="width:3px;height:28px;border-radius:2px;background:linear-gradient(180deg,#E8590C,#ff8c42);flex-shrink:0"></div>
-        <div style="flex:1;min-width:0">
-          <div style="font-size:11px;font-weight:700;color:#fff;letter-spacing:0.3px">⚡ Speed</div>
-          <div style="font-size:10px;color:rgba(255,255,255,0.4);margin-top:1px">${Math.round(speed*100)}% · ${fmtN(c.dur)}s</div>
-        </div>
-        <span class="acc-chv" style="font-size:9px;color:rgba(255,255,255,0.3);transition:transform 0.2s">▼</span>
-      </div>
-      <div id="acc-sp-${ci}" style="padding:0 6px 8px">
-        <div class="prop-row">
-          <span class="prop-label">Speed %</span>
-          <input type="number" id="spd-pct-panel-${ci}" value="${Math.round(speed*100)}" min="10" max="800" step="1"
-            style="width:58px;background:#161616;border:0.5px solid rgba(255,255,255,0.1);border-radius:5px;color:var(--tx);font-size:11px;font-family:'DM Sans',sans-serif;padding:3px 6px;outline:none"
-            onchange="applyClipSpeed(${ci},parseFloat(this.value)||100,false);updatePropsPanel(${ci})">
-          <span style="font-size:10px;color:var(--mu)">%</span>
-        </div>
-        <div class="prop-row">
-          <button onclick="showSpeedDialog(${ci})" style="flex:1;padding:5px;background:rgba(232,89,12,0.08);border:0.5px solid rgba(232,89,12,0.2);border-radius:6px;color:#E8590C;font-size:10px;cursor:pointer;font-family:'DM Sans',sans-serif;font-weight:600">
-            ⚡ Speed / Duration…
-          </button>
-        </div>
-      </div>
-    </div>
-
-    ${audioSection}
-
-    ${(()=>{
-      const efArr = S.cut.effects[ci]||[];
-      const trIdxs = efArr.map((e,i)=>i).filter(i=>CUT_EFFECTS[efArr[i].i]?.type==='transition');
-      if(!trIdxs.length) return '';
-      return trIdxs.map(efIdx2=>{
-      const ef2 = efArr[efIdx2];
-      const trName = CUT_EFFECTS[ef2.i]?.name||'Transition';
-      const accordionId = 'tr-acc-'+ci+'-'+efIdx2;
-      const isOpen = window._trAccordion?.[accordionId] !== false;
-      const maxStart = Math.max(0, c.dur - 0.1);
-      const maxDur   = Math.max(0.1, c.dur - (ef2.startOffset||0));
-      return `
-        <div style="border:0.5px solid rgba(232,89,12,0.25);border-radius:8px;margin:4px 0;overflow:hidden;background:rgba(232,89,12,0.04)">
-          <div style="display:flex;align-items:center;padding:8px 10px;cursor:pointer;user-select:none;gap:8px"
-            onclick="window._trAccordion=window._trAccordion||{};window._trAccordion['${accordionId}']=!document.getElementById('${accordionId}').hidden;document.getElementById('${accordionId}').hidden=!document.getElementById('${accordionId}').hidden;this.querySelector('.tr-chevron').style.transform=document.getElementById('${accordionId}').hidden?'rotate(-90deg)':'rotate(0deg)'">
-            <div style="width:3px;height:28px;border-radius:2px;background:linear-gradient(180deg,#E8590C,#ff8c42);flex-shrink:0"></div>
-            <div style="flex:1;min-width:0">
-              <div style="font-size:11px;font-weight:700;color:#fff;letter-spacing:0.3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${trName}</div>
-              <div style="font-size:10px;color:rgba(255,255,255,0.4);margin-top:1px">${(ef2.startOffset||0).toFixed(1)}s &rarr; ${((ef2.startOffset||0)+(ef2.effectDur||1)).toFixed(1)}s &nbsp;·&nbsp; ${(ef2.effectDur||1).toFixed(1)}s</div>
-            </div>
-            <span class="tr-chevron" style="font-size:9px;color:rgba(255,255,255,0.3);transition:transform 0.2s;transform:${isOpen?'rotate(0deg)':'rotate(-90deg)'}">▼</span>
-          </div>
-          <div id="${accordionId}" ${isOpen?'':'hidden'} style="padding:0 6px 8px">
-          <div style="display:flex;justify-content:flex-end;padding:0 0 4px">
-            <button onclick="event.stopPropagation();const e=S.cut.effects[${ci}][${efIdx2}];e&&(S.cut.effects[${ci}].splice(${efIdx2},1),renderCutTimeline(),updatePropsPanel(${ci}),syncCutVid(),scheduleSave())" style="font-size:9px;padding:2px 6px;border-radius:4px;border:0.5px solid rgba(255,69,58,0.3);background:rgba(255,69,58,0.08);color:#ff453a;cursor:pointer">✕ Remove</button>
-          </div>
-        <div class="prop-row"><span class="prop-label">Start</span>
-          <input type="range" min="0" max="${maxStart.toFixed(1)}" step="0.1"
-            value="${(ef2.startOffset||0).toFixed(1)}"
-            style="flex:1;accent-color:#E8590C"
-            oninput="S.cut.effects[${ci}][${efIdx2}].startOffset=parseFloat(this.value);this.nextElementSibling.textContent=parseFloat(this.value).toFixed(1)+'s';syncCutVid();">
-          <span style="font-size:10px;color:var(--mu);min-width:36px;text-align:right">${(ef2.startOffset||0).toFixed(1)}s</span>
-        </div>
-        <div class="prop-row"><span class="prop-label">Duration</span>
-          <input type="range" min="0.1" max="${maxDur.toFixed(1)}" step="0.1"
-            value="${(ef2.effectDur||1).toFixed(1)}"
-            style="flex:1;accent-color:#E8590C"
-            oninput="S.cut.effects[${ci}][${efIdx2}].effectDur=parseFloat(this.value);this.nextElementSibling.textContent=parseFloat(this.value).toFixed(1)+'s';syncCutVid();">
-          <span style="font-size:10px;color:var(--mu);min-width:36px;text-align:right">${(ef2.effectDur||1).toFixed(1)}s</span>
-        </div>
-        <div class="prop-row"><span class="prop-label">Completion</span>
-          <input type="range" min="0" max="100" step="1"
-            value="${Math.round((ef2.completion||100))}"
-            style="flex:1;accent-color:#E8590C"
-            oninput="S.cut.effects[${ci}][${efIdx2}].completion=parseInt(this.value);this.nextElementSibling.textContent=this.value+'%';syncCutVid();">
-          <span style="font-size:10px;color:var(--mu);min-width:36px;text-align:right">${Math.round(ef2.completion||100)}%</span>
-        </div>
-        <div class="prop-row"><span class="prop-label">Softness</span>
-          <input type="range" min="0" max="1" step="0.05"
-            value="${(ef2.softness||0).toFixed(2)}"
-            style="flex:1;accent-color:#E8590C"
-            oninput="S.cut.effects[${ci}][${efIdx2}].softness=parseFloat(this.value);this.nextElementSibling.textContent=Math.round(this.value*100)+'%';syncCutVid();">
-          <span style="font-size:10px;color:var(--mu);min-width:36px;text-align:right">${Math.round((ef2.softness||0)*100)}%</span>
-        </div>
-        <div class="prop-row"><span class="prop-label">Easing</span>
-          <select style="flex:1;background:#161616;border:0.5px solid rgba(255,255,255,0.1);border-radius:5px;color:var(--tx);font-size:11px;padding:2px 4px"
-            onchange="S.cut.effects[${ci}][${efIdx2}].easing=this.value;syncCutVid();">
-            ${['linear','ease-in','ease-out','ease-in-out','cinematic'].map(e=>`<option value="${e}" ${(ef2.easing||'linear')===e?'selected':''}>${e.charAt(0).toUpperCase()+e.slice(1)}</option>`).join('')}
-          </select>
-        </div>
-        ${(()=>{ const trMode=CUT_EFFECTS[ef2.i]?.mode||'';
-          const isWipe=['wipeleft','wiperight','wipeup','wipedown','clock','radial','iris_round','iris_diamond','band_h','band_v'].includes(trMode);
-          if(!isWipe) return '';
-          return `<div class="prop-row"><span class="prop-label">Direction</span>
-            <select style="flex:1;background:#161616;border:0.5px solid rgba(255,255,255,0.1);border-radius:5px;color:var(--tx);font-size:11px;padding:2px 4px"
-              onchange="S.cut.effects[${ci}][${efIdx2}].direction=this.value;syncCutVid();">
-              ${['forward','reverse'].map(d=>`<option value="${d}" ${(ef2.direction||'forward')===d?'selected':''}>${d.charAt(0).toUpperCase()+d.slice(1)}</option>`).join('')}
-            </select>
-          </div>`;
-        })()}
-          </div>
-        </div>
-      `;
-      }).join('');
-    })()}
-
-    <div style="border:0.5px solid rgba(163,113,247,0.2);border-radius:8px;margin:4px 0;overflow:hidden;background:rgba(163,113,247,0.03)">
-      <div style="display:flex;align-items:center;padding:8px 10px;cursor:pointer;user-select:none;gap:8px"
-        onclick="const el=document.getElementById('acc-ac-${ci}');el.hidden=!el.hidden;this.querySelector('.acc-chv').style.transform=el.hidden?'rotate(-90deg)':'rotate(0deg)'">
-        <div style="width:3px;height:28px;border-radius:2px;background:linear-gradient(180deg,#a371f7,#bc8cff);flex-shrink:0"></div>
-        <div style="flex:1;min-width:0">
-          <div style="font-size:11px;font-weight:700;color:#fff;letter-spacing:0.3px">🎬 Actions</div>
-          <div style="font-size:10px;color:rgba(255,255,255,0.4);margin-top:1px">Delete · Split · Duplicate</div>
-        </div>
-        <span class="acc-chv" style="font-size:9px;color:rgba(255,255,255,0.3);transition:transform 0.2s">▼</span>
-      </div>
-      <div id="acc-ac-${ci}" style="padding:0 6px 8px">
-        <div style="display:flex;gap:4px;flex-wrap:wrap;padding:2px 0">
-          <button onclick="deleteSelected()" style="flex:1;padding:5px;background:rgba(255,69,58,0.08);border:0.5px solid rgba(255,69,58,0.2);border-radius:6px;color:#ff453a;font-size:10px;cursor:pointer;font-family:'DM Sans',sans-serif;font-weight:600">🗑 Delete</button>
-          <button onclick="cutSplit()" style="flex:1;padding:5px;background:rgba(255,255,255,0.04);border:0.5px solid rgba(255,255,255,0.08);border-radius:6px;color:var(--tx);font-size:10px;cursor:pointer;font-family:'DM Sans',sans-serif;font-weight:600">✂️ Split</button>
-          <button onclick="cutDuplicate(${ci})" style="flex:1;padding:5px;background:rgba(255,255,255,0.04);border:0.5px solid rgba(255,255,255,0.08);border-radius:6px;color:var(--tx);font-size:10px;cursor:pointer;font-family:'DM Sans',sans-serif;font-weight:600">⧉ Dupe</button>
-        </div>
-      </div>
-    </div>
-
-    ${(S.cut.effects[ci]||[]).length>0?`
-    <div style="border:0.5px solid rgba(163,113,247,0.2);border-radius:8px;margin:4px 0;overflow:hidden;background:rgba(163,113,247,0.03)">
-      <div style="display:flex;align-items:center;padding:8px 10px;cursor:pointer;user-select:none;gap:8px"
-        onclick="const el=document.getElementById('acc-ef-${ci}');el.hidden=!el.hidden;this.querySelector('.acc-chv').style.transform=el.hidden?'rotate(-90deg)':'rotate(0deg)'">
-        <div style="width:3px;height:28px;border-radius:2px;background:linear-gradient(180deg,#a371f7,#bc8cff);flex-shrink:0"></div>
-        <div style="flex:1;min-width:0">
-          <div style="font-size:11px;font-weight:700;color:#fff;letter-spacing:0.3px">🎛 Effects</div>
-          <div style="font-size:10px;color:rgba(255,255,255,0.4);margin-top:1px">${(S.cut.effects[ci]||[]).length} applied</div>
-        </div>
-        <span class="acc-chv" style="font-size:9px;color:rgba(255,255,255,0.3);transition:transform 0.2s">▼</span>
-      </div>
-      <div id="acc-ef-${ci}" style="padding:0 6px 8px">
-        <div style="display:flex;flex-direction:column;gap:3px">
-          ${(S.cut.effects[ci]||[]).map((ef,efIdx)=>{
-            const eff=CUT_EFFECTS[ef.i]||{name:'Effect',color:'#888'};
-            const isVisible=ef.visible!==false;
-            return '<div style="display:flex;align-items:center;gap:4px;padding:4px 6px;background:'+(isVisible?'rgba(255,255,255,0.03)':'rgba(255,255,255,0.01)')+';border-radius:5px;border:0.5px solid rgba(255,255,255,0.05)">'
-              +'<div style="width:8px;height:8px;border-radius:50%;background:'+eff.color+';flex-shrink:0"></div>'
-              +'<span style="flex:1;font-size:10px;color:'+(isVisible?'var(--tx)':'var(--mu2)')+';overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+eff.name+'</span>'
-              +'<button onclick="S.cut.effects['+ci+']['+efIdx+'].visible=S.cut.effects['+ci+']['+efIdx+'].visible===false?true:false;applyVideoEffects();updatePropsPanel('+ci+')" style="font-size:9px;padding:1px 5px;border-radius:3px;border:0.5px solid rgba(255,255,255,0.1);background:rgba(255,255,255,0.04);color:var(--mu);cursor:pointer">'+(isVisible?'Hide':'Show')+'</button>'
-              +'<button onclick="cutSaveHistory();S.cut.effects['+ci+'].splice('+efIdx+',1);applyVideoEffects();updatePropsPanel('+ci+')" style="font-size:9px;padding:1px 5px;border-radius:3px;border:0.5px solid rgba(255,69,58,0.2);background:rgba(255,69,58,0.06);color:#ff453a;cursor:pointer">✕</button>'
-              +'</div>';
-          }).join('')}
-        </div>
-      </div>
-    </div>`:''}
-  `;
-
-  // _origDur is set in applyClipSpeed, not here
-}
-
-// ── SPEED / TIME REMAPPING ENGINE ──────────────────────────
-
-// Apply speed to a clip with optional ripple edit
-// ripple=true: shift all clips that start AFTER this clip's original end
-function applyClipSpeed(ci, newSpeedPct, ripple){
-  const c = S.cut.clips[ci];
-  if(!c) return;
-
-  const newSpeed = Math.max(0.1, Math.min(16, newSpeedPct / 100));
-  
-  // Store original untrimed duration the first time
-  if(c._origDur === undefined || c._origDur === null){
-    c._origDur = c.dur * (c.speed||1); // original source duration
-  }
-  
-  const oldDur  = c.dur;
-  const newDur  = c._origDur / newSpeed;
-  const oldEnd  = c.start + oldDur;
-  const newEnd  = c.start + newDur;
-  const delta   = newDur - oldDur; // positive = clip got longer
-
-  c.speed = newSpeed;
-  c.dur   = newDur;
-
-  // Ripple edit: shift all clips that started at or after the old end
-  if(ripple && delta !== 0){
-    S.cut.clips.forEach((other, oi) => {
-      if(oi === ci) return;
-      if(other.start >= oldEnd - 0.01){
-        other.start = Math.max(0, other.start + delta);
-      }
-    });
-  }
-
-  cutSaveHistory('speed_change');
-  renderCutTimeline();
-  // Re-populate props panel with updated values
-  if(S.cut.sel === ci) updatePropsPanel(ci);
-}
-window.applyClipSpeed = applyClipSpeed;
-
-// Show speed dialog (from context menu)
-function showSpeedDialog(ci){
-  const c = S.cut.clips[ci];
-  if(!c) return;
-  if(c._origDur === undefined) c._origDur = c.dur * (c.speed||1);
-  const currentPct = Math.round((c.speed||1) * 100);
-  const isAudio = c.type==='audio' || c.linkedToVideo;
-
-  showModal(`
-    <div style="font-family:'DM Sans',sans-serif">
-      <h3 style="margin:0 0 16px;font-size:16px;font-weight:700;color:var(--tx)">⚡ Speed / Duration</h3>
-      
-      <div style="margin-bottom:14px">
-        <label style="display:block;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.6px;color:var(--mu2);margin-bottom:8px">Speed</label>
-        <div style="display:flex;align-items:center;gap:10px">
-          <input type="range" id="spd-slider" min="10" max="800" value="${currentPct}" step="5"
-            style="flex:1;accent-color:#E8590C"
-            oninput="
-              const v=parseFloat(this.value);
-              document.getElementById('spd-pct').value=v;
-              document.getElementById('spd-preview').textContent=(c=S.cut.clips[${ci}],c._origDur||(c.dur*(c.speed||1)),(c._origDur/(v/100)).toFixed(2))+'s';
-              document.getElementById('spd-mult').textContent=(v/100).toFixed(2)+'x';
-            ">
-          <input type="number" id="spd-pct" value="${currentPct}" min="10" max="800" step="5"
-            style="width:70px;padding:6px 8px;background:var(--n2);border:0.5px solid var(--b2);border-radius:8px;color:var(--tx);font-size:14px;font-weight:600;text-align:center;outline:none"
-            oninput="document.getElementById('spd-slider').value=this.value;
-              document.getElementById('spd-preview').textContent=(c=S.cut.clips[${ci}],c._origDur||(c.dur*(c.speed||1)),(c._origDur/(parseFloat(this.value)/100)).toFixed(2))+'s';
-              document.getElementById('spd-mult').textContent=(parseFloat(this.value)/100).toFixed(2)+'x';">
-          <span style="font-size:12px;color:var(--mu2)">%</span>
-        </div>
-        <div style="display:flex;justify-content:space-between;margin-top:6px;font-size:11px;color:var(--mu2)">
-          <span>10%</span>
-          <span style="color:var(--tx);font-weight:600" id="spd-mult">${(currentPct/100).toFixed(2)}x</span>
-          <span>800%</span>
-        </div>
-      </div>
-
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:14px">
-        <div style="background:var(--n3);border-radius:8px;padding:10px;text-align:center">
-          <div style="font-size:10px;color:var(--mu2);margin-bottom:4px">ORIGINAL</div>
-          <div style="font-size:14px;font-weight:700;color:var(--tx)">${(c._origDur||c.dur).toFixed(2)}s</div>
-        </div>
-        <div style="background:var(--n3);border-radius:8px;padding:10px;text-align:center">
-          <div style="font-size:10px;color:var(--mu2);margin-bottom:4px">NEW DURATION</div>
-          <div style="font-size:14px;font-weight:700;color:#E8590C" id="spd-preview">${((c._origDur||c.dur)/(currentPct/100)).toFixed(2)}s</div>
-        </div>
-      </div>
-
-      <div style="margin-bottom:14px">
-        <label style="display:block;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.6px;color:var(--mu2);margin-bottom:6px">Presets</label>
-        <div style="display:flex;gap:5px;flex-wrap:wrap">
-          ${[['25%','Slow 4x'],['50%','Slow 2x'],['75%','Slow 1.3x'],['100%','Normal'],['150%','Fast 1.5x'],['200%','Fast 2x'],['400%','Fast 4x']].map(([p,l])=>`
-            <button onclick="document.getElementById('spd-pct').value='${parseInt(p)}';document.getElementById('spd-slider').value='${parseInt(p)}';document.getElementById('spd-preview').textContent=((S.cut.clips[${ci}]._origDur||S.cut.clips[${ci}].dur)/(${parseInt(p)}/100)).toFixed(2)+'s';document.getElementById('spd-mult').textContent=(${parseInt(p)}/100).toFixed(2)+'x'"
-              style="padding:4px 10px;background:${p==='100%'?'var(--red)':'var(--n4)'};border:0.5px solid var(--b2);border-radius:6px;color:var(--tx);font-size:11px;cursor:pointer;font-family:'DM Sans',sans-serif;transition:all .15s">${l}<br><span style="font-size:9px;color:var(--mu2)">${p}</span>
-            </button>`).join('')}
-        </div>
-      </div>
-
-      ${isAudio ? `
-      <div style="margin-bottom:14px;padding:10px;background:var(--n3);border-radius:8px;border:0.5px solid var(--b2)">
-        <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:12px;color:var(--tx)">
-          <input type="checkbox" id="spd-pitch" checked style="accent-color:#E8590C;width:14px;height:14px">
-          Preserve audio pitch (prevent chipmunk effect)
-        </label>
-        <div style="font-size:10px;color:var(--mu2);margin-top:4px;margin-left:22px">Uses pitch correction when checked</div>
-      </div>` : ''}
-
-      <div style="margin-bottom:0">
-        <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:12px;color:var(--tx)">
-          <input type="checkbox" id="spd-ripple" checked style="accent-color:#E8590C;width:14px;height:14px">
-          Ripple edit — shift subsequent clips
-        </label>
-        <div style="font-size:10px;color:var(--mu2);margin-top:4px;margin-left:22px">Moves all clips after this one to fill/close the gap</div>
-      </div>
-    </div>
-  `, () => {
-    const pct     = parseFloat(document.getElementById('spd-pct').value) || 100;
-    const ripple  = document.getElementById('spd-ripple')?.checked ?? true;
-    const pitch   = document.getElementById('spd-pitch')?.checked ?? true;
-    S.cut.clips[ci]._preservePitch = pitch;
-    applyClipSpeed(ci, pct, ripple);
-    notify('Speed set to '+pct+'%', '#3fb950');
-  });
-}
-window.showSpeedDialog = showSpeedDialog;
-
-// ── AUDIO FADE HANDLES ────────────────────────────────────────
-// Draws a canvas overlay on audio clips showing:
-//   • Fade-in triangle (top-left handle)
-//   • Fade-out triangle (top-right handle)
-//   • Gain line (horizontal, draggable up/down)
-function buildAudioFadeHandles(el, c, ci){
-  // Ensure clip has fade/gain state
-  if(c.fadeIn  === undefined) c.fadeIn  = 0;    // seconds
-  if(c.fadeOut === undefined) c.fadeOut = 0;    // seconds
-  if(c.volume  === undefined) c.volume  = 1;    // 0-2 gain
-
-  // ── Canvas for fade shape ──
-  const cvs = document.createElement('canvas');
-  cvs.className = 'fade-canvas';
-  cvs.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;pointer-events:none;z-index:2;border-radius:5px';
-  el.appendChild(cvs);
-
-  function drawFades(){
-    const W = el.offsetWidth, H = el.offsetHeight;
-    if(!W||!H) return;
-    cvs.width = W; cvs.height = H;
-    const ctx = cvs.getContext('2d');
-    ctx.clearRect(0,0,W,H);
-
-    const inPx  = Math.round((c.fadeIn  || 0) * PPS);
-    const outPx = Math.round((c.fadeOut || 0) * PPS);
-    const gainY = Math.round(H * (1 - Math.min(2, Math.max(0, c.volume||1)) / 2)); // 0=top, H=bottom
-
-    // Fade-in triangle (dark overlay that tapers to 0)
-    if(inPx > 2){
-      ctx.beginPath();
-      ctx.moveTo(0,0); ctx.lineTo(inPx,0); ctx.lineTo(0,H); ctx.closePath();
-      ctx.fillStyle = 'rgba(0,0,0,0.45)';
-      ctx.fill();
-      // Diagonal line
-      ctx.beginPath(); ctx.moveTo(0,H); ctx.lineTo(inPx,0);
-      ctx.strokeStyle = 'rgba(255,220,80,0.9)'; ctx.lineWidth=1.5; ctx.stroke();
-    }
-
-    // Fade-out triangle
-    if(outPx > 2){
-      ctx.beginPath();
-      ctx.moveTo(W,0); ctx.lineTo(W-outPx,0); ctx.lineTo(W,H); ctx.closePath();
-      ctx.fillStyle = 'rgba(0,0,0,0.45)';
-      ctx.fill();
-      ctx.beginPath(); ctx.moveTo(W,H); ctx.lineTo(W-outPx,0);
-      ctx.strokeStyle = 'rgba(255,220,80,0.9)'; ctx.lineWidth=1.5; ctx.stroke();
-    }
-
-    // Gain line (horizontal across clip)
-    ctx.beginPath();
-    ctx.moveTo(0, gainY); ctx.lineTo(W, gainY);
-    ctx.strokeStyle = 'rgba(255,255,255,0.35)'; ctx.lineWidth=1; ctx.setLineDash([3,3]); ctx.stroke();
-    ctx.setLineDash([]);
-  }
-
-  // Draw after layout
-  requestAnimationFrame(drawFades);
-
-  const clipW = () => el.offsetWidth;
-  const clipH = () => el.offsetHeight;
-
-  // ── Fade-In handle (top-left corner triangle) ──
-  const fiHandle = document.createElement('div');
-  fiHandle.title = 'Drag → to set Fade In';
-  fiHandle.style.cssText = [
-    'position:absolute','top:0','left:0',
-    'width:12px','height:12px',
-    'cursor:e-resize','z-index:10',
-    'background:linear-gradient(135deg,rgba(255,220,80,0.9) 50%,transparent 50%)',
-    'border-radius:5px 0 0 0',
-  ].join(';');
-  el.appendChild(fiHandle);
-
-  // ── Fade-Out handle (top-right corner triangle) ──
-  const foHandle = document.createElement('div');
-  foHandle.title = 'Drag ← to set Fade Out';
-  foHandle.style.cssText = [
-    'position:absolute','top:0','right:0',
-    'width:12px','height:12px',
-    'cursor:w-resize','z-index:10',
-    'background:linear-gradient(225deg,rgba(255,220,80,0.9) 50%,transparent 50%)',
-    'border-radius:0 5px 0 0',
-  ].join(';');
-  el.appendChild(foHandle);
-
-  // ── Gain dot (center of gain line) ──
-  const gainHandle = document.createElement('div');
-  gainHandle.title = 'Drag ↑↓ to adjust volume';
-  gainHandle.style.cssText = [
-    'position:absolute','left:50%','transform:translate(-50%,-50%)',
-    'width:10px','height:10px',
-    'border-radius:50%',
-    'background:rgba(255,255,255,0.7)',
-    'border:1.5px solid rgba(0,0,0,0.5)',
-    'cursor:ns-resize','z-index:10',
-    'top:' + Math.round((1 - Math.min(2, c.volume||1)/2)*100) + '%',
-  ].join(';');
-  el.appendChild(gainHandle);
-
-  // ── Drag: Fade-In ──
-  fiHandle.addEventListener('mousedown', e => {
-    e.stopPropagation(); e.preventDefault();
-    const sx = e.clientX;
-    const origFi = c.fadeIn || 0;
-    const onMove = mv => {
-      const dx = (mv.clientX - sx) / PPS;
-      c.fadeIn = Math.max(0, Math.min(c.dur * 0.9, origFi + dx));
-      // Update props panel live
-      const fiEl = document.getElementById('fade-in-val-' + ci);
-      if(fiEl) fiEl.value = c.fadeIn.toFixed(2);
-      drawFades();
-    };
-    const onUp = () => {
-      document.removeEventListener('mousemove', onMove);
-      document.removeEventListener('mouseup', onUp);
-      cutSaveHistory('fade_in');
-      scheduleSave();
-      // Refresh props panel
-      if(S.cut.sel === ci) updatePropsPanel(ci);
-    };
-    document.addEventListener('mousemove', onMove);
-    document.addEventListener('mouseup', onUp);
-  });
-
-  // ── Drag: Fade-Out ──
-  foHandle.addEventListener('mousedown', e => {
-    e.stopPropagation(); e.preventDefault();
-    const sx = e.clientX;
-    const origFo = c.fadeOut || 0;
-    const onMove = mv => {
-      const dx = (mv.clientX - sx) / PPS;
-      c.fadeOut = Math.max(0, Math.min(c.dur * 0.9, origFo - dx));
-      const foEl = document.getElementById('fade-out-val-' + ci);
-      if(foEl) foEl.value = c.fadeOut.toFixed(2);
-      drawFades();
-    };
-    const onUp = () => {
-      document.removeEventListener('mousemove', onMove);
-      document.removeEventListener('mouseup', onUp);
-      cutSaveHistory('fade_out');
-      scheduleSave();
-      if(S.cut.sel === ci) updatePropsPanel(ci);
-    };
-    document.addEventListener('mousemove', onMove);
-    document.addEventListener('mouseup', onUp);
-  });
-
-  // ── Drag: Gain line ──
-  gainHandle.addEventListener('mousedown', e => {
-    e.stopPropagation(); e.preventDefault();
-    const sy = e.clientY;
-    const origVol = c.volume || 1;
-    const H = el.offsetHeight;
-    const onMove = mv => {
-      const dy = (mv.clientY - sy) / H; // fraction of clip height
-      c.volume = Math.max(0, Math.min(2, origVol - dy * 2));
-      // Move handle
-      gainHandle.style.top = Math.round((1 - c.volume/2)*100) + '%';
-      const volEl = document.getElementById('vol-val-' + ci + '-input');
-      if(volEl) volEl.value = Math.round(c.volume * 100);
-      drawFades();
-    };
-    const onUp = () => {
-      document.removeEventListener('mousemove', onMove);
-      document.removeEventListener('mouseup', onUp);
-      cutSaveHistory('gain');
-      scheduleSave();
-      if(S.cut.sel === ci) updatePropsPanel(ci);
-    };
-    document.addEventListener('mousemove', onMove);
-    document.addEventListener('mouseup', onUp);
-  });
-}
-window.buildAudioFadeHandles = buildAudioFadeHandles;
-
-// ── SHAPES SUBMENU ──────────────────────────────────────────
-const SHAPE_ICONS = {
-  rect:    '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/></svg>',
-  circle:  '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/></svg>',
-  triangle:'<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="12,3 22,21 2,21"/></svg>',
-  star:    '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="12,2 15.09,8.26 22,9.27 17,14.14 18.18,21.02 12,17.77 5.82,21.02 7,14.14 2,9.27 8.91,8.26"/></svg>',
-  line:    '<svg width="15" height="15" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5"><line x1="3" y1="21" x2="21" y2="3"/></svg>',
-  arrow:   '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12,5 19,12 12,19"/></svg>',
-};
-let _pendingShapeClick = null;
-
-function handleShapeMousedown(e){
-  // Long-press (400ms) → show submenu; short click → activate tool
-  _pendingShapeClick = setTimeout(()=>{ _pendingShapeClick=null; showShapeSubmenu(e); }, 400);
-}
-document.addEventListener('mouseup', ()=>{ if(_pendingShapeClick){ clearTimeout(_pendingShapeClick); _pendingShapeClick=null; }});
-
-function showShapeSubmenu(e){
+function cutMediaContextMenu(e, i){
   e.preventDefault(); e.stopPropagation();
-  document.getElementById('shape-submenu')?.remove();
-  const menu = document.createElement('div');
-  menu.id = 'shape-submenu';
-  menu.style.cssText = 'position:fixed;background:#1a1a1a;border:0.5px solid rgba(255,255,255,0.12);border-radius:10px;padding:6px;display:grid;grid-template-columns:1fr 1fr;gap:4px;z-index:9999;box-shadow:0 8px 32px rgba(0,0,0,0.6)';
-  const shapes = [
-    {id:'rect',    label:'Rectangle'},
-    {id:'circle',  label:'Ellipse'},
-    {id:'triangle',label:'Triangle'},
-    {id:'star',    label:'Star'},
-    {id:'line',    label:'Line'},
-    {id:'arrow',   label:'Arrow'},
-  ];
-  shapes.forEach(s => {
-    const btn = document.createElement('div');
-    btn.style.cssText = 'display:flex;flex-direction:column;align-items:center;gap:3px;padding:8px 10px;border-radius:7px;cursor:pointer;color:rgba(255,255,255,0.7);font-size:9px;font-weight:600;text-transform:uppercase;letter-spacing:.4px;transition:all .1s';
-    btn.innerHTML = SHAPE_ICONS[s.id] + '<span>' + s.label + '</span>';
-    btn.addEventListener('mouseenter', ()=>{ btn.style.background='rgba(232,89,12,0.15)'; btn.style.color='#E8590C'; });
-    btn.addEventListener('mouseleave', ()=>{ btn.style.background=''; btn.style.color='rgba(255,255,255,0.7)'; });
-    btn.addEventListener('click', ev => {
-      ev.stopPropagation();
-      setActiveShape(s.id);
-      menu.remove();
-    });
-    menu.appendChild(btn);
+  cutSelMedia(i);
+  const bins = (S.cut.bins||[]).filter(b=>b.id!=='root');
+  showContextMenu(e, [
+    {icon:'🗑️', label:'Delete from project', danger:true, fn:()=>cutMediaDelete(i)},
+    {sep:true},
+    ...bins.map(b=>({icon:'📁', label:'Move to: '+b.name, fn:()=>{ if(!S.cut.mediaBins)S.cut.mediaBins={}; S.cut.mediaBins[i]=b.id; buildBinList(); }})),
+    ...(bins.length?[{icon:'📂', label:'Move to: All Media', fn:()=>{ if(S.cut.mediaBins)delete S.cut.mediaBins[i]; buildBinList(); }}]:[]),
+    {sep:true},
+    {icon:'📁', label:'New folder', fn:()=>cutMediaNewBin()},
+  ]);
+}
+window.cutMediaContextMenu = cutMediaContextMenu;
+
+function cutMediaDelete(i){
+  const item = S.cut.media[i];
+  const usedClips = S.cut.clips.filter(c=>c.mediaIdx===i);
+  if(usedClips.length){
+    if(!confirm(`"${item.name}" is used in ${usedClips.length} timeline clip(s).\nDelete anyway? Those clips will be removed.`)) return;
+  }
+  cutSaveHistory('delete_media');
+  S.cut.clips = S.cut.clips.filter(c=>c.mediaIdx!==i);
+  S.cut.clips.forEach(c=>{ if(c.mediaIdx>i) c.mediaIdx--; });
+  S.cut.media.splice(i,1);
+  const newBins = {};
+  Object.entries(S.cut.mediaBins||{}).forEach(([k,v])=>{
+    const ki=parseInt(k);
+    if(ki<i) newBins[ki]=v;
+    else if(ki>i) newBins[ki-1]=v;
   });
-  // Position near the shape button
-  const btn = document.getElementById('vt-shape');
-  if(btn){
-    const r = btn.getBoundingClientRect();
-    menu.style.left = (r.right + 6) + 'px';
-    menu.style.top  = (r.top - 4)  + 'px';
+  S.cut.mediaBins = newBins;
+  if(S.cut.selMedia===i) S.cut.selMedia=null;
+  else if(S.cut.selMedia>i) S.cut.selMedia--;
+  buildBinList(); renderCutTimeline(); scheduleSave();
+  notify('Media deleted','#3fb950');
+}
+window.cutMediaDelete = cutMediaDelete;
+
+function cutMediaNewBin(){
+  const name = prompt('Folder name:','New Folder');
+  if(!name||!name.trim()) return;
+  if(!S.cut.bins) S.cut.bins=[{id:'root',name:'All Media',open:true}];
+  S.cut.bins.push({id:'bin_'+Date.now(), name:name.trim(), open:true});
+  buildBinList(); scheduleSave();
+}
+window.cutMediaNewBin = cutMediaNewBin;
+
+function cutMediaToggleBin(id){
+  const bin = (S.cut.bins||[]).find(b=>b.id===id);
+  if(bin) bin.open = !bin.open;
+  buildBinList();
+}
+window.cutMediaToggleBin = cutMediaToggleBin;
+
+function cutMediaDeleteBin(id){
+  S.cut.bins = (S.cut.bins||[]).filter(b=>b.id!==id);
+  if(S.cut.mediaBins){
+    Object.keys(S.cut.mediaBins).forEach(k=>{ if(S.cut.mediaBins[k]===id) delete S.cut.mediaBins[k]; });
   }
-  document.body.appendChild(menu);
-  setTimeout(()=>document.addEventListener('click',()=>menu.remove(),{once:true}),10);
+  buildBinList(); scheduleSave();
 }
+window.cutMediaDeleteBin = cutMediaDeleteBin;
 
-function setActiveShape(shapeId){
-  const btn = document.getElementById('vt-shape');
-  if(btn){
-    btn.dataset.shape = shapeId;
-    const ico = btn.querySelector('#vt-shape-icon');
-    if(ico) ico.outerHTML = SHAPE_ICONS[shapeId].replace('<svg','<svg id="vt-shape-icon"');
-  }
-  _activeShape = shapeId;
-  setCutTool('shape');
-}
-let _activeShape = 'rect';
 
-// ── RESIZABLE TOOLBAR SIDEBAR ────────────────────────────────
-function initToolbarResize(){
-  const handle = document.getElementById('tl-sidebar-resize');
-  const sidebar = document.getElementById('tl-tools-sidebar');
-  if(!handle || !sidebar) return;
-  let dragging=false, startX=0, startW=0;
-  handle.addEventListener('mousedown', e=>{
-    dragging=true; startX=e.clientX; startW=sidebar.offsetWidth;
-    document.body.style.cursor='ew-resize';
-    e.preventDefault();
-  });
-  document.addEventListener('mousemove', e=>{
-    if(!dragging) return;
-    const newW = Math.max(36, Math.min(120, startW + (e.clientX - startX)));
-    sidebar.style.width = newW + 'px';
-    sidebar.classList.toggle('wide', newW >= 70);
-  });
-  document.addEventListener('mouseup', ()=>{ if(dragging){ dragging=false; document.body.style.cursor=''; } });
-}
-
-// ── TOOL SWITCHER ───────────────────────────────────────────
-function setCutTool(tool){
-  _activeTool = tool;
-  document.querySelectorAll('.vt-btn').forEach(b => b.classList.toggle('active', b.dataset.tool===tool));
-  // Update cursor on preview
-  const screen = document.getElementById('cut-screen');
-  if(screen){
-    const cursors = {select:'default',text:'text',shape:'crosshair',pen:'crosshair',split:'col-resize'};
-    screen.style.cursor = cursors[tool] || 'default';
-  }
-  // If text tool clicked — open text overlay dialog at playhead
-  if(tool==='text' && window.showTextDialog){
-    showTextDialog();
-    setTimeout(()=>setCutTool('select'),200); // revert after
-  }
-  // If shape tool — open shape dialog
-  if(tool==='shape' && window.showShapeDialog){
-    showShapeDialog();
-    setTimeout(()=>setCutTool('select'),200);
-  }
-}
-window.setCutTool = setCutTool;
-
-// ── PEN TOOL ENGINE ─────────────────────────────────────────
-// Manages anchor points on the preview canvas for custom shapes
-let _penPoints = [];   // [{x,y,cpx,cpy}] normalized 0-1
-let _penActive  = false;
-
-function initPenTool(screen){
-  if(!screen || screen._penInit) return;
-  screen._penInit = true;
-
-  screen.addEventListener('click', e => {
-    if(_activeTool !== 'pen') return;
-    const r   = screen.getBoundingClientRect();
-    const nx  = (e.clientX - r.left)  / r.width;
-    const ny  = (e.clientY - r.top)   / r.height;
-
-    if(_penPoints.length > 2 && Math.hypot(nx-_penPoints[0].x, ny-_penPoints[0].y) < 0.03){
-      // Close path — create shape overlay
-      _closePenPath();
-      return;
-    }
-    _penPoints.push({x:nx, y:ny, cpx:nx, cpy:ny});
-    _drawPenOverlay(screen);
-  });
-
-  screen.addEventListener('mousemove', e => {
-    if(_activeTool !== 'pen' || !_penPoints.length) return;
-    const r  = screen.getBoundingClientRect();
-    const nx = (e.clientX - r.left)  / r.width;
-    const ny = (e.clientY - r.top)   / r.height;
-    _drawPenOverlay(screen, nx, ny);
-  });
-
-  screen.addEventListener('keydown', e => {
-    if(e.code==='Escape' && _activeTool==='pen'){
-      _penPoints = [];
-      const ov = document.getElementById('pen-overlay-svg');
-      if(ov) ov.remove();
-    }
-  });
-}
-
-function _drawPenOverlay(screen, curX, curY){
-  let svg = document.getElementById('pen-overlay-svg');
-  if(!svg){
-    svg = document.createElementNS('http://www.w3.org/2000/svg','svg');
-    svg.id = 'pen-overlay-svg';
-    svg.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;pointer-events:none;z-index:50';
-    screen.appendChild(svg);
-  }
-  svg.innerHTML = '';
-  const W = screen.clientWidth, H = screen.clientHeight;
-
-  // Draw path
-  if(_penPoints.length > 1){
-    const d = _penPoints.map((p,i) =>
-      i===0 ? 'M'+Math.round(p.x*W)+' '+Math.round(p.y*H)
-             : 'L'+Math.round(p.x*W)+' '+Math.round(p.y*H)
-    ).join(' ');
-    const path = document.createElementNS('http://www.w3.org/2000/svg','path');
-    path.setAttribute('d', d + (curX!==undefined ? ' L'+Math.round(curX*W)+' '+Math.round(curY*H) : ''));
-    path.setAttribute('stroke','#E8590C');
-    path.setAttribute('stroke-width','2');
-    path.setAttribute('fill','none');
-    path.setAttribute('stroke-dasharray','4 2');
-    svg.appendChild(path);
-  }
-
-  // Draw anchor points
-  _penPoints.forEach((p,i) => {
-    const cx = Math.round(p.x*W), cy = Math.round(p.y*H);
-    const circle = document.createElementNS('http://www.w3.org/2000/svg','circle');
-    circle.setAttribute('cx', cx); circle.setAttribute('cy', cy); circle.setAttribute('r','5');
-    circle.setAttribute('fill', i===0?'#3fb950':'#E8590C');
-    circle.setAttribute('stroke','#fff'); circle.setAttribute('stroke-width','1.5');
-    svg.appendChild(circle);
-  });
-
-  // Preview line to cursor
-  if(curX !== undefined && _penPoints.length > 0){
-    const last = _penPoints[_penPoints.length-1];
-    const line = document.createElementNS('http://www.w3.org/2000/svg','line');
-    line.setAttribute('x1',Math.round(last.x*W)); line.setAttribute('y1',Math.round(last.y*H));
-    line.setAttribute('x2',Math.round(curX*W));   line.setAttribute('y2',Math.round(curY*H));
-    line.setAttribute('stroke','rgba(232,89,12,0.5)'); line.setAttribute('stroke-width','1');
-    svg.appendChild(line);
-    // Show "close" indicator near first point
-    if(_penPoints.length>2 && Math.hypot(curX-_penPoints[0].x,curY-_penPoints[0].y)<0.03){
-      const cl = document.createElementNS('http://www.w3.org/2000/svg','circle');
-      cl.setAttribute('cx',Math.round(_penPoints[0].x*W)); cl.setAttribute('cy',Math.round(_penPoints[0].y*H));
-      cl.setAttribute('r','9'); cl.setAttribute('stroke','#3fb950'); cl.setAttribute('stroke-width','2');
-      cl.setAttribute('fill','none');
-      svg.appendChild(cl);
-    }
-  }
-}
-
-function _closePenPath(){
-  if(_penPoints.length < 2) return;
-  // Convert pen points to a SVG path shape overlay
-  if(window.showShapeFromPen) window.showShapeFromPen(_penPoints);
-  _penPoints = [];
-  const svg = document.getElementById('pen-overlay-svg');
-  if(svg) svg.remove();
-  setCutTool('select');
-}
-window.initPenTool = initPenTool;
-
-// Wire pen tool to cut-screen after buildCut
-function _wirePenTool(){
-  const screen = document.getElementById('cut-screen');
-  if(screen) initPenTool(screen);
-}
-
-// ── KEYBOARD TOOL SHORTCUTS ──────────────────────────────────
-// Wired into the global keydown handler (V=select, P=pen, T=text, R=rect)
-
-// ── TRACK MUTE / VISIBILITY ─────────────────────────────────
-function toggleTrackMute(trackIdx){
-  if(!S.cut.mutedTracks) S.cut.mutedTracks={};
-  S.cut.mutedTracks[trackIdx] = !S.cut.mutedTracks[trackIdx];
-  const isMuted = S.cut.mutedTracks[trackIdx];
-  // Apply mute to live audio elements
-  S.cut.clips.filter(c=>c.track===trackIdx).forEach(c=>{
-    const item=S.cut.media[c.mediaIdx];
-    if(item?.url&&_audioEls[item.url]) _audioEls[item.url].muted = !!isMuted;
-  });
-  // Apply mute to main video element if it's on this track
-  const mv=$('cut-main-vid');
-  if(mv){
-    const ci=parseInt(mv.dataset.clipIdx||'-1');
-    if(!isNaN(ci)&&S.cut.clips[ci]?.track===trackIdx) mv.muted=!!isMuted;
-  }
-  // Rebuild labels to update icon state (lightweight, no full re-render)
-  rebuildTrackLabels();
-  cutSaveHistory('track_mute');
-  notify(isMuted?'Track muted':'Track unmuted','#3fb950');
-}
-window.toggleTrackMute = toggleTrackMute;
-
-function toggleTrackVisibility(trackIdx){
-  if(!S.cut.hiddenTracks) S.cut.hiddenTracks={};
-  S.cut.hiddenTracks[trackIdx] = !S.cut.hiddenTracks[trackIdx];
-  const isHidden = S.cut.hiddenTracks[trackIdx];
-  // Rebuild labels + sync preview
-  rebuildTrackLabels();
-  syncCutVid();
-  cutSaveHistory('track_visibility');
-  notify(isHidden?'Track hidden':'Track visible','#3fb950');
-}
-window.toggleTrackVisibility = toggleTrackVisibility;
-
-function cutBinDragStart(e,i){S.cut._drag=i;e.dataTransfer.setData('text/plain',''+i);e.dataTransfer.effectAllowed='copy';}
 function cutSelMedia(i){S.cut.selMedia=i;document.querySelectorAll('.mbin-item').forEach((el,idx)=>el.classList.toggle('sel',idx===i));}
 function cutAddToTL(i) {
   const item=S.cut.media[i]; if(!item) return;
@@ -2999,15 +2252,25 @@ function cutAddToTL(i) {
     const ends = S.cut.clips.filter(c=>c.track===track).map(c=>c.start+c.dur);
     startSec = ends.length ? Math.max(...ends)+0.01 : 0;
   } else {
-    // Find first video track (lowest index = V1) that is empty or has space at end
-    track = 0;
-    for(let vt=0; vt<S.cut.videoTracks; vt++){
-      const clipsOnTrack = S.cut.clips.filter(c=>c.type==='video'&&c.track===vt);
-      if(clipsOnTrack.length===0){ track=vt; break; } // empty track found
-      track = vt; // keep going, use last tried
+    // Smart append: use the last-active video track (where last clip was added)
+    // If user has a selected clip, use that track. Otherwise use track with last clip end.
+    if(S.cut.sel !== null && S.cut.sel !== undefined && S.cut.clips[S.cut.sel]?.type==='video'){
+      track = S.cut.clips[S.cut.sel].track;
+    } else if(window._lastActiveVideoTrack !== undefined){
+      track = window._lastActiveVideoTrack;
+    } else {
+      // Find track with latest clip end (most recently worked on track)
+      let latestEnd = -1;
+      track = 0;
+      for(let vt=0; vt<S.cut.videoTracks; vt++){
+        const ends2 = S.cut.clips.filter(c=>c.type==='video'&&c.track===vt).map(c=>c.start+c.dur);
+        const trackEnd = ends2.length ? Math.max(...ends2) : 0;
+        if(trackEnd > latestEnd){ latestEnd=trackEnd; track=vt; }
+      }
     }
     const ends = S.cut.clips.filter(c=>c.track===track).map(c=>c.start+c.dur);
     startSec = ends.length ? Math.max(...ends)+0.01 : 0;
+    window._lastActiveVideoTrack = track;
   }
   S.cut.clips.push({mediaIdx:i,name:item.name,type:item.type,track,start:startSec,dur:Math.max(item.duration||5,0.5),fileStart:0,color:item.type==='video'?'rgba(88,166,255,0.8)':item.type==='audio'?'rgba(210,153,34,0.8)':'rgba(63,185,80,0.8)'});
   // If video file, also add linked audio clip on first audio track
@@ -6498,8 +5761,8 @@ setTimeout(() => {
         const primaryCi = window._mv.ci;
         const primaryClip = S.cut.clips[primaryCi];
         if(!primaryClip) return;
-        const delta = primaryClip.start - (window._mv._multiOrigStart ?? primaryClip.start);
-        if(!window._mv._multiOrigStart) return;
+        const delta = primaryClip.start - (window._mv._multiOrigins?.[primaryCi] ?? primaryClip.start);
+        if(!window._mv._multiOrigins) return;
         window._selectedClips.forEach(ci => {
           if(ci === primaryCi) return;
           const c = S.cut.clips[ci];
@@ -6634,6 +5897,11 @@ function _cutEnterSoftFullscreen(){
   const rpanel  = document.querySelector('.cut-rpanel');
   const tl      = document.getElementById('cut-tl');
   if(preview){ preview.dataset.fsStyle = preview.style.cssText; preview.style.cssText='position:fixed;inset:0;z-index:1500;background:#000;display:flex;flex-direction:column'; }
+  // Ensure video fills screen preserving aspect ratio
+  const _fsFrame = document.getElementById('cut-viewport-frame');
+  if(_fsFrame){ _fsFrame.dataset.fsFrStyle = _fsFrame.style.cssText; _fsFrame.style.cssText='width:100%;height:100%;display:flex;align-items:center;justify-content:center'; }
+  const _fsMv = document.getElementById('cut-main-vid');
+  if(_fsMv){ _fsMv.dataset.fsMvStyle = _fsMv.style.cssText; _fsMv.style.objectFit='contain'; _fsMv.style.width='100%'; _fsMv.style.height='100%'; }
   if(lpanel) { lpanel.dataset.fsDis = lpanel.style.display; lpanel.style.display='none'; }
   if(rpanel) { rpanel.dataset.fsDis = rpanel.style.display; rpanel.style.display='none'; }
   if(tl)     { tl.dataset.fsDis    = tl.style.display;     tl.style.display='none'; }
@@ -6646,6 +5914,10 @@ function _cutExitSoftFullscreen(){
   const rpanel  = document.querySelector('.cut-rpanel');
   const tl      = document.getElementById('cut-tl');
   if(preview && preview.dataset.fsStyle !== undefined){ preview.style.cssText = preview.dataset.fsStyle; delete preview.dataset.fsStyle; }
+  const _fsFrameE = document.getElementById('cut-viewport-frame');
+  if(_fsFrameE && _fsFrameE.dataset.fsFrStyle !== undefined){ _fsFrameE.style.cssText = _fsFrameE.dataset.fsFrStyle; delete _fsFrameE.dataset.fsFrStyle; }
+  const _fsMvE = document.getElementById('cut-main-vid');
+  if(_fsMvE && _fsMvE.dataset.fsMvStyle !== undefined){ _fsMvE.style.cssText = _fsMvE.dataset.fsMvStyle; delete _fsMvE.dataset.fsMvStyle; }
   if(lpanel && lpanel.dataset.fsDis !== undefined){ lpanel.style.display = lpanel.dataset.fsDis; delete lpanel.dataset.fsDis; }
   if(rpanel && rpanel.dataset.fsDis !== undefined){ rpanel.style.display = rpanel.dataset.fsDis; delete rpanel.dataset.fsDis; }
   if(tl     && tl.dataset.fsDis    !== undefined){ tl.style.display     = tl.dataset.fsDis;     delete tl.dataset.fsDis; }
