@@ -1304,9 +1304,11 @@ html, body { width: 100%; height: 100%; overflow: hidden; font-family: 'DM Sans'
   min-height: 18px;
   background: #1C1C1C;
   position: relative;
-  overflow: hidden;
+  overflow: hidden;  /* clip marks outside visible area */
   border-bottom: 0.5px solid rgba(255,255,255,0.06);
 }
+/* Inner ruler content - shifted by JS via translateX to sync with timeline scroll */
+#tl-ruler { will-change: transform; }
 
 .ruler-mark {
   position: absolute;

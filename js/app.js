@@ -3257,6 +3257,9 @@ function renderCutTimeline() {
     ruler.innerHTML = Array.from({length:Math.floor(_actualDur/_step)+1},(_,i)=>i*_step)
       .map(s=>'<div class="ruler-mark" style="left:'+Math.round(s*PPS)+'px"><span>'+fmtTC(s)+'</span></div>')
       .join('');
+    // Re-apply scroll offset immediately so ruler stays in sync after re-render
+    const _sc2 = document.getElementById('tl-scroll');
+    if(_sc2) ruler.style.transform = `translateX(-${_sc2.scrollLeft}px)`;
   }
 
   // Update tl-rows container width
@@ -4311,7 +4314,10 @@ function cutTogglePlay(){
         if(!_freezeActive) vidEl.volume = Math.min(1, vidGain);
         updateCutPH();
         // Check if we've reached end of THIS CLIP (fileStart + dur = end position in file)
-        const clipEndInFile = (clipNow.fileStart||0) + clipNow.dur;
+        // clipEndInFile = file position when this clip's content ends
+        // = fileStart + (timelineDur / speed) because slow clips play fewer source frames
+        const _cspd = clipNow.speed || 1;
+        const clipEndInFile = (clipNow.fileStart||0) + clipNow.dur / _cspd;
         if(vidEl.currentTime >= clipEndInFile - 0.05){
           const currentEnd = clipNow.start + clipNow.dur;
           // If a frame_hold immediately follows this clip, jump to it instead of skipping
@@ -4361,8 +4367,8 @@ function cutTogglePlay(){
           }
         }
       } else if(clipNow&&vidEl&&vidEl.paused&&S.cut.playing&&!S.cut._scrubbing&&!_freezeActive){
-        const clipEndFile2=(clipNow.fileStart||0)+clipNow.dur;
-        // Only restart if ph is still INSIDE this clip AND video not at end
+        const _cspd2 = clipNow.speed || 1;
+        const clipEndFile2=(clipNow.fileStart||0)+clipNow.dur/_cspd2;
         const _phInClip = S.cut.ph>=clipNow.start && S.cut.ph<clipNow.start+clipNow.dur-0.1;
         const _vidNotEnd = vidEl.currentTime < clipEndFile2-0.1;
         if(_phInClip && _vidNotEnd){
@@ -5094,7 +5100,8 @@ function syncCutVid(){
   mv.dataset.clipIdx = String(activeCI);
 
   if(!S.cut.playing){
-    const targetTime = (active.fileStart||0) + Math.max(0, ph - active.start);
+    const _spd3 = active.speed || 1;
+    const targetTime = (active.fileStart||0) + Math.max(0, (ph - active.start) / _spd3);
     if(Math.abs(mv.currentTime - targetTime) > 0.02) mv.currentTime = targetTime;
     if(!mv.paused) mv.pause();
   }
@@ -5297,10 +5304,13 @@ function setupTimelineScrollSync(){
   if(!scroll || scroll._syncAttached) return;
   scroll._syncAttached = true;
   scroll.addEventListener('scroll', () => {
-    // Sync ruler horizontal position
+    // Ruler: shift the inner content left by scrollLeft so marks stay aligned
+    const rulerInner = document.getElementById('tl-ruler-inner') || $('tl-ruler');
+    if(rulerInner) rulerInner.style.transform = `translateX(-${scroll.scrollLeft}px)`;
+    // Also update the ruler container's scrollLeft if it's a scroll container
     const ruler = $('tl-ruler');
-    if(ruler) ruler.scrollLeft = scroll.scrollLeft;
-    // Sync sidebar labels vertical position (alignment fix)
+    if(ruler && ruler !== rulerInner) ruler.scrollLeft = scroll.scrollLeft;
+    // Sync sidebar labels vertical position
     const labels = document.getElementById('tl-track-labels');
     if(labels) labels.scrollTop = scroll.scrollTop;
   }, { passive: true });
