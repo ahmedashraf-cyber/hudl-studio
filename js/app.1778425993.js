@@ -1505,7 +1505,10 @@ function buildCut() {
           <span id="cut-info">Import media — click drop zone or drag files</span>
           <div style="flex:1"></div>
           <span style="font-family:'DM Mono',monospace;font-size:10px">${S.proj.w}×${S.proj.h} · ${S.proj.fps}fps · ${S.proj.dur}s</span>
+          <button onclick="cutToggleFullscreen()" title="Fullscreen (F)" id="cut-fs-btn" style="background:none;border:none;color:rgba(255,255,255,0.5);cursor:pointer;padding:4px 6px;margin-left:6px;font-size:14px;line-height:1;border-radius:4px;transition:color .15s" onmouseover="this.style.color='#fff'" onmouseout="this.style.color='rgba(255,255,255,0.5)'">&#x26F6;</button>
         </div>
+        <!-- Resize handle between preview and timeline -->
+        <div id="cut-pv-resize" style="height:5px;background:transparent;cursor:ns-resize;flex-shrink:0;position:relative;z-index:20" onmouseenter="this.style.background='rgba(232,89,12,0.4)'" onmouseleave="this.style.background='transparent'"></div>
         <div class="cut-screen" id="cut-screen">
           <div id="cut-viewport-frame">
             <canvas id="cut-cvs"></canvas>
@@ -1649,6 +1652,7 @@ function buildCut() {
     setupPlayheadDrag();
     syncCutVid();
     if(window.renderOverlayTimeline) window.renderOverlayTimeline();
+    setupMarqueeSelect();
   },100);
 }
 
@@ -6369,3 +6373,304 @@ setTimeout(() => {
 
 // Auto-init canvas when cut editor loads
 setTimeout(initMonitorCanvas, 1500);
+
+
+
+// ════════════════════════════════════════════════════════════════
+// FEATURE 1: MARQUEE MULTI-SELECT
+// Drag on empty timeline area to draw selection box
+// Selects all clips inside the box — move them together
+// ════════════════════════════════════════════════════════════════
+
+window._selectedClips = new Set(); // indices of selected clips
+
+function setupMarqueeSelect(){
+  const scroll = document.getElementById('tl-scroll');
+  if(!scroll || scroll._marqueeSetup) return;
+  scroll._marqueeSetup = true;
+
+  let marqueeEl = null;
+  let startX = 0, startY = 0;
+  let dragging = false;
+
+  scroll.addEventListener('mousedown', e => {
+    // Only activate on empty timeline area (not on clips or handles)
+    const target = e.target;
+    if(target.closest('.tl-clip') || target.closest('.tl-overlay-clip') ||
+       target.closest('.playhead') || target.closest('.effect-bar') ||
+       target.closest('.clip-resize-l') || target.closest('.clip-resize-r')) return;
+    if(e.button !== 0) return;
+
+    const rect = scroll.getBoundingClientRect();
+    startX = e.clientX - rect.left + scroll.scrollLeft;
+    startY = e.clientY - rect.top  + scroll.scrollTop;
+    dragging = true;
+    e.preventDefault();
+
+    // Create marquee box
+    marqueeEl = document.createElement('div');
+    marqueeEl.id = 'tl-marquee';
+    marqueeEl.style.cssText = [
+      'position:absolute',
+      `left:${startX}px`, `top:${startY}px`,
+      'width:0', 'height:0',
+      'border:1.5px dashed rgba(232,89,12,0.9)',
+      'background:rgba(232,89,12,0.08)',
+      'pointer-events:none',
+      'z-index:50',
+      'border-radius:2px',
+    ].join(';');
+    document.getElementById('tl-rows')?.appendChild(marqueeEl);
+
+    document.addEventListener('mousemove', onMarqueeMove);
+    document.addEventListener('mouseup', onMarqueeUp);
+  });
+
+  function onMarqueeMove(e){
+    if(!dragging || !marqueeEl) return;
+    const rect = scroll.getBoundingClientRect();
+    const curX = e.clientX - rect.left + scroll.scrollLeft;
+    const curY = e.clientY - rect.top  + scroll.scrollTop;
+    const x = Math.min(startX, curX);
+    const y = Math.min(startY, curY);
+    const w = Math.abs(curX - startX);
+    const h = Math.abs(curY - startY);
+    marqueeEl.style.left   = x + 'px';
+    marqueeEl.style.top    = y + 'px';
+    marqueeEl.style.width  = w + 'px';
+    marqueeEl.style.height = h + 'px';
+
+    // Live highlight clips inside box
+    const secStart = x / PPS;
+    const secEnd   = (x + w) / PPS;
+    const rowH = 30;
+    const trackStart = Math.floor(y / rowH);
+    const trackEnd   = Math.floor((y + h) / rowH);
+
+    window._selectedClips = new Set();
+    S.cut.clips.forEach((c, i) => {
+      const cEnd = c.start + c.dur;
+      const inTime  = c.start < secEnd && cEnd > secStart;
+      const inTrack = c.track >= trackStart && c.track <= trackEnd;
+      if(inTime && inTrack) window._selectedClips.add(i);
+    });
+    _highlightSelected();
+  }
+
+  function onMarqueeUp(){
+    dragging = false;
+    document.removeEventListener('mousemove', onMarqueeMove);
+    document.removeEventListener('mouseup', onMarqueeUp);
+    if(marqueeEl){ marqueeEl.remove(); marqueeEl = null; }
+    // If only one clip selected, use normal sel
+    if(window._selectedClips.size === 1){
+      const [ci] = window._selectedClips;
+      window._selectedClips.clear();
+      if(window._selectClip) _selectClip(ci);
+    } else if(window._selectedClips.size > 1){
+      S.cut.sel = null; // no single selection when multi
+      _highlightSelected();
+      const n = window._selectedClips.size;
+      notify(`${n} clips selected — drag any to move all`, '#E8590C');
+    }
+  }
+}
+window.setupMarqueeSelect = setupMarqueeSelect;
+
+function _highlightSelected(){
+  document.querySelectorAll('.tl-clip').forEach(el => {
+    const ci = parseInt(el.dataset.ci);
+    const isSelected = window._selectedClips?.has(ci) || S.cut.sel === ci;
+    el.classList.toggle('selected', isSelected);
+  });
+}
+
+// Override clipMoveMove to move ALL selected clips together
+const _origClipMoveMove = window.clipMoveMove;
+// Wrap after app loads
+setTimeout(() => {
+  const orig = window.clipMoveMove;
+  if(orig && !orig._multiHooked){
+    window.clipMoveMove = function(e){
+      orig(e);
+      // If multi-select active, move all other selected clips by the same delta
+      if(window._selectedClips?.size > 1 && window._mv){
+        const primaryCi = window._mv.ci;
+        const primaryClip = S.cut.clips[primaryCi];
+        if(!primaryClip) return;
+        const delta = primaryClip.start - (window._mv._multiOrigStart ?? primaryClip.start);
+        if(!window._mv._multiOrigStart) return;
+        window._selectedClips.forEach(ci => {
+          if(ci === primaryCi) return;
+          const c = S.cut.clips[ci];
+          if(c && window._mv._multiOrigins?.[ci] !== undefined){
+            c.start = Math.max(0, window._mv._multiOrigins[ci] + delta);
+          }
+        });
+      }
+    };
+    window.clipMoveMove._multiHooked = true;
+  }
+
+  // Store origins when drag starts
+  const origStart = window.clipMoveStart;
+  if(origStart && !origStart._multiHooked){
+    window.clipMoveStart = function(e, ci){
+      origStart(e, ci);
+      if(window._selectedClips?.size > 1){
+        window._mv._multiOrigStart = S.cut.clips[ci]?.start;
+        window._mv._multiOrigins = {};
+        window._selectedClips.forEach(idx => {
+          if(S.cut.clips[idx]) window._mv._multiOrigins[idx] = S.cut.clips[idx].start;
+        });
+      }
+    };
+    window.clipMoveStart._multiHooked = true;
+  }
+}, 500);
+
+// Clear multi-select when clicking empty area
+document.addEventListener('click', e => {
+  if(!e.target.closest('#tl-scroll') && !e.target.closest('#tl-rows')) return;
+  if(e.target.closest('.tl-clip') || e.target.closest('.tl-overlay-clip')) return;
+  if(window._selectedClips?.size > 0){
+    window._selectedClips.clear();
+    document.querySelectorAll('.tl-clip.selected').forEach(el => el.classList.remove('selected'));
+  }
+});
+
+// ════════════════════════════════════════════════════════════════
+// FEATURE 2: RESIZABLE PREVIEW — drag handle between preview & timeline
+// ════════════════════════════════════════════════════════════════
+
+function setupPreviewResize(){
+  const handle = document.getElementById('cut-pv-resize');
+  const preview = document.querySelector('.cut-preview');
+  const tl = document.getElementById('cut-tl');
+  if(!handle || !preview || !tl || handle._resizeSetup) return;
+  handle._resizeSetup = true;
+
+  let resizing = false, startY = 0, startPvH = 0;
+
+  handle.addEventListener('mousedown', e => {
+    e.preventDefault();
+    resizing = true;
+    startY = e.clientY;
+    startPvH = preview.offsetHeight;
+    document.body.style.cursor = 'ns-resize';
+    document.body.style.userSelect = 'none';
+
+    const onMove = mv => {
+      if(!resizing) return;
+      const dy = mv.clientY - startY;
+      const newH = Math.max(120, Math.min(window.innerHeight * 0.75, startPvH + dy));
+      preview.style.height = newH + 'px';
+      preview.style.flex = 'none';
+      // Trigger canvas resize
+      if(window.applyCanvasAspectRatio) applyCanvasAspectRatio(S.proj.w||1920, S.proj.h||1080);
+      if(window.drawMonitorOverlays) drawMonitorOverlays();
+    };
+    const onUp = () => {
+      resizing = false;
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+      document.removeEventListener('mousemove', onMove);
+      document.removeEventListener('mouseup', onUp);
+    };
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup', onUp);
+  });
+
+  // Double-click handle = reset to default
+  handle.addEventListener('dblclick', () => {
+    preview.style.height = '';
+    preview.style.flex = '1';
+    if(window.applyCanvasAspectRatio) applyCanvasAspectRatio(S.proj.w||1920, S.proj.h||1080);
+  });
+}
+window.setupPreviewResize = setupPreviewResize;
+setTimeout(setupPreviewResize, 600);
+
+// ════════════════════════════════════════════════════════════════
+// FEATURE 3: FULLSCREEN PREVIEW MODE
+// F key or button — shows only the preview, hides everything else
+// ════════════════════════════════════════════════════════════════
+
+let _cutFsActive = false;
+
+function cutToggleFullscreen(){
+  const cutApp = document.getElementById('cut-app');
+  const screen = document.getElementById('cut-screen');
+  if(!cutApp || !screen) return;
+
+  _cutFsActive = !_cutFsActive;
+
+  if(_cutFsActive){
+    // Enter fullscreen-ish: use native Fullscreen API on the screen element
+    if(screen.requestFullscreen){
+      screen.requestFullscreen().catch(() => _cutEnterSoftFullscreen());
+    } else {
+      _cutEnterSoftFullscreen();
+    }
+  } else {
+    // Exit
+    if(document.fullscreenElement){
+      document.exitFullscreen().catch(()=>{});
+    }
+    _cutExitSoftFullscreen();
+  }
+
+  // Update button icon
+  const btn = document.getElementById('cut-fs-btn');
+  if(btn) btn.innerHTML = _cutFsActive ? '&#x2715;' : '&#x26F6;';
+  btn?.setAttribute('title', _cutFsActive ? 'Exit Fullscreen (F or Esc)' : 'Fullscreen (F)');
+}
+window.cutToggleFullscreen = cutToggleFullscreen;
+
+function _cutEnterSoftFullscreen(){
+  // Soft fallback: expand preview to cover full app
+  const preview = document.querySelector('.cut-preview');
+  const lpanel  = document.querySelector('.cut-lpanel');
+  const rpanel  = document.querySelector('.cut-rpanel');
+  const tl      = document.getElementById('cut-tl');
+  if(preview){ preview.dataset.fsStyle = preview.style.cssText; preview.style.cssText='position:fixed;inset:0;z-index:1500;background:#000;display:flex;flex-direction:column'; }
+  if(lpanel) { lpanel.dataset.fsDis = lpanel.style.display; lpanel.style.display='none'; }
+  if(rpanel) { rpanel.dataset.fsDis = rpanel.style.display; rpanel.style.display='none'; }
+  if(tl)     { tl.dataset.fsDis    = tl.style.display;     tl.style.display='none'; }
+  setTimeout(()=>{ if(window.applyCanvasAspectRatio) applyCanvasAspectRatio(S.proj.w||1920,S.proj.h||1080); if(window.drawMonitorOverlays) drawMonitorOverlays(); },100);
+}
+
+function _cutExitSoftFullscreen(){
+  const preview = document.querySelector('.cut-preview');
+  const lpanel  = document.querySelector('.cut-lpanel');
+  const rpanel  = document.querySelector('.cut-rpanel');
+  const tl      = document.getElementById('cut-tl');
+  if(preview && preview.dataset.fsStyle !== undefined){ preview.style.cssText = preview.dataset.fsStyle; delete preview.dataset.fsStyle; }
+  if(lpanel && lpanel.dataset.fsDis !== undefined){ lpanel.style.display = lpanel.dataset.fsDis; delete lpanel.dataset.fsDis; }
+  if(rpanel && rpanel.dataset.fsDis !== undefined){ rpanel.style.display = rpanel.dataset.fsDis; delete rpanel.dataset.fsDis; }
+  if(tl     && tl.dataset.fsDis    !== undefined){ tl.style.display     = tl.dataset.fsDis;     delete tl.dataset.fsDis; }
+  setTimeout(()=>{ if(window.applyCanvasAspectRatio) applyCanvasAspectRatio(S.proj.w||1920,S.proj.h||1080); if(window.drawMonitorOverlays) drawMonitorOverlays(); },100);
+  _cutFsActive = false;
+  const btn = document.getElementById('cut-fs-btn');
+  if(btn){ btn.innerHTML='&#x26F6;'; btn.title='Fullscreen (F)'; }
+}
+
+// Exit soft fullscreen when native fullscreen exits
+document.addEventListener('fullscreenchange', () => {
+  if(!document.fullscreenElement && _cutFsActive){
+    _cutExitSoftFullscreen();
+  }
+});
+
+// Keyboard: F = toggle fullscreen, Esc = exit
+document.addEventListener('keydown', e => {
+  if(e.target.tagName==='INPUT'||e.target.tagName==='TEXTAREA') return;
+  if(S?.app !== 'cut') return;
+  if(e.code==='KeyF' && !e.ctrlKey && !e.metaKey && !e.shiftKey){
+    e.preventDefault();
+    cutToggleFullscreen();
+  }
+  if(e.code==='Escape' && _cutFsActive){
+    if(!document.fullscreenElement) _cutExitSoftFullscreen();
+  }
+}, true);

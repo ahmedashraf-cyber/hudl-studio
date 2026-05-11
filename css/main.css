@@ -1787,3 +1787,22 @@ html, body { width: 100%; height: 100%; overflow: hidden; font-family: 'DM Sans'
   height: 56px; /* tl-header(38px) + ruler(18px) */
   flex-shrink: 0;
 }
+
+/* -- Marquee Selection ---------------------------------------- */
+#tl-marquee {
+  position: absolute;
+  border: 1.5px dashed rgba(232,89,12,0.9);
+  background: rgba(232,89,12,0.08);
+  pointer-events: none;
+  z-index: 50;
+  border-radius: 2px;
+}
+.tl-clip.selected { outline: 2px solid #E8590C !important; outline-offset: -1px; }
+
+/* -- Fullscreen preview --------------------------------------- */
+#cut-screen:-webkit-full-screen { background:#000; width:100vw; height:100vh; }
+#cut-screen:fullscreen           { background:#000; width:100vw; height:100vh; }
+
+/* -- Preview resize handle ------------------------------------ */
+#cut-pv-resize { height:5px; background:transparent; cursor:ns-resize; flex-shrink:0; z-index:20; transition:background .15s; }
+#cut-pv-resize:hover { background:rgba(232,89,12,0.4); }
