@@ -4280,11 +4280,12 @@ function cutTogglePlay(){
             _cutTick = requestAnimationFrame(playFrame);
             return;
           }
-          // nextClip: strictly AFTER currentEnd, exclude by object identity AND position
+          // nextClip: must start strictly AFTER currentEnd
           const nextClip = S.cut.clips
-            .filter(c=>c.type==='video' && c!==clipNow
-              && c.start >= currentEnd-0.05  // at or after end of current clip
-              && !(c.start===clipNow.start && c.dur===clipNow.dur)) // not same position
+            .filter(c => c.type==='video'
+              && c !== clipNow
+              && c.start > currentEnd - 0.03
+              && c.start < currentEnd + 300)
             .sort((a,b)=>a.start-b.start)[0];
           if(nextClip){
             const item=S.cut.media[nextClip.mediaIdx];
@@ -4301,19 +4302,23 @@ function cutTogglePlay(){
               updateCutPH();
             }
           } else {
-            // No next clip — stop at the end of the last clip
-            stopCutPlay();
-            // Set playhead to exact end of this clip
-            S.cut.ph = clipNow.start + clipNow.dur;
-            updateCutPH();
+            // No next video clip - pause video, let audio-only mode continue if needed
             vidEl.pause();
+            S.cut.ph = clipNow.start + clipNow.dur + 0.01;
+            updateCutPH();
+            const _maxPh = S.cut.clips.length
+              ? Math.max(...S.cut.clips.map(c=>c.start+c.dur))
+              : S.proj.dur;
+            if(S.cut.ph >= _maxPh){ stopCutPlay(); S.cut.ph=_maxPh; updateCutPH(); }
             return;
           }
         }
       } else if(clipNow&&vidEl&&vidEl.paused&&S.cut.playing&&!S.cut._scrubbing&&!_freezeActive){
-        // Video stalled — restart only if still within clip bounds AND not in freeze
         const clipEndFile2=(clipNow.fileStart||0)+clipNow.dur;
-        if(vidEl.currentTime < clipEndFile2-0.1){
+        // Only restart if ph is still INSIDE this clip AND video not at end
+        const _phInClip = S.cut.ph>=clipNow.start && S.cut.ph<clipNow.start+clipNow.dur-0.1;
+        const _vidNotEnd = vidEl.currentTime < clipEndFile2-0.1;
+        if(_phInClip && _vidNotEnd){
           vidEl.playbackRate=clipNow.speed||1;
           vidEl.play().catch(()=>{});
         }
