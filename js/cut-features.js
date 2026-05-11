@@ -9,38 +9,50 @@ const SNAP_PX = 15; // magnetic pull radius in pixels
 // edgeType: 'start' or 'end' — which edge of the dragged clip
 window.getSnapPoint = function(dragPx, excludeClipIdx, edgeType){
   if(!window._snapEnabled) return null;
-  const PPS   = window.PPS || 60;
-  const S     = window.S;
+  const PPS = window.PPS || 60;
+  const S   = window.S;
   if(!S?.cut) return null;
 
-  const snapPoints = []; // array of {px, label}
+  // Rebuild cache when excludeClipIdx changes (new drag started)
+  if(window._snapCache?.excludeIdx !== excludeClipIdx || !window._snapCache){
+    const pts = [];
+    pts.push({ px: 0, label: 'start' });
+    pts.push({ px: S.cut.ph * PPS, label: 'playhead' });
+    S.cut.clips.forEach((c, i) => {
+      if(i === excludeClipIdx) return;
+      pts.push({ px: c.start * PPS,           label: 'clip start' });
+      pts.push({ px: (c.start+c.dur) * PPS,   label: 'clip end'   });
+    });
+    // Sort ascending so binary search is possible
+    pts.sort((a,b)=>a.px-b.px);
+    window._snapCache = { excludeIdx: excludeClipIdx, pts };
+  }
 
-  // 1. Playhead
-  snapPoints.push({ px: S.cut.ph * PPS, label: 'playhead' });
-
-  // 2. All clip edges (skip the dragged clip to avoid self-snap)
-  S.cut.clips.forEach((c, i) => {
-    if(i === excludeClipIdx) return;
-    snapPoints.push({ px: c.start * PPS,         label: 'V' + (c.track+1) + ' start' });
-    snapPoints.push({ px: (c.start + c.dur) * PPS, label: 'V' + (c.track+1) + ' end'   });
+  // Binary search: find closest point
+  const pts = window._snapCache.pts;
+  let lo=0, hi=pts.length-1, closest=null, minDist=SNAP_PX+1, snapLabel='';
+  while(lo<=hi){
+    const mid=(lo+hi)>>1;
+    const d=Math.abs(pts[mid].px-dragPx);
+    if(d<minDist){ minDist=d; closest=pts[mid].px; snapLabel=pts[mid].label; }
+    if(pts[mid].px<dragPx) lo=mid+1; else hi=mid-1;
+  }
+  // Also check neighbours (binary search may miss adjacent equal-distance points)
+  [lo, hi, lo-1, hi+1].forEach(k=>{
+    if(k<0||k>=pts.length) return;
+    const d=Math.abs(pts[k].px-dragPx);
+    if(d<minDist){ minDist=d; closest=pts[k].px; snapLabel=pts[k].label; }
   });
 
-  // 3. Project start (time 0)
-  snapPoints.push({ px: 0, label: 'start' });
-
-  // Find closest snap point within SNAP_PX
-  let closest = null, minDist = SNAP_PX + 1, snapLabel = '';
-  snapPoints.forEach(sp => {
-    const d = Math.abs(dragPx - sp.px);
-    if(d < minDist){ minDist = d; closest = sp.px; snapLabel = sp.label; }
-  });
-
-  if(closest !== null){
+  if(closest!==null){
     window._lastSnapLabel = snapLabel;
     return closest / PPS;
   }
   return null;
 };
+
+// Invalidate snap cache when timeline changes
+window._invalidateSnapCache = function(){ window._snapCache = null; };
 
 // Show snap indicator — bright cyan vertical line spanning full timeline height
 window.showSnapLine = function(timeSec){

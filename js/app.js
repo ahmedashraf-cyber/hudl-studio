@@ -3322,6 +3322,7 @@ function clipMoveStart(e,ci){
   }
 
   // ── Normal drag: move the clip ──
+  window._snapCache = null;
   _mv = {
     ci,
     sx:       e.clientX,
@@ -3397,7 +3398,8 @@ function clipMoveUp(){
 }
 let _rz=null;
 function clipResizeStart(e,ci,edge){
-  S.cut._isResizing = true; // global flag — blocks clip move while resizing
+  S.cut._isResizing = true;
+  window._snapCache = null;
   _rz={ci,edge,sx:e.clientX,origDur:S.cut.clips[ci].dur,origStart:S.cut.clips[ci].start};
   document.addEventListener('mousemove',clipRzMove);
   document.addEventListener('mouseup',clipRzUp);
@@ -4013,7 +4015,9 @@ function cutTogglePlay(){
       if(clipNow&&clipNow.type!=='frame_hold'&&!_fhActiveNow&&vidEl&&!vidEl.paused&&!_freezeActive){
         // Video is driving — read current position (not during freeze — ph is driven by clock then)
         // ph = clip timeline start + (currentTime - fileStart)
-        S.cut.ph=clipNow.start+(vidEl.currentTime-(clipNow.fileStart||0))/(clipNow.speed||1); // ph tracks real time, divided by speed to get timeline time
+        if(!S.cut._scrubbing && !(window._seekLockUntil && Date.now()<window._seekLockUntil)){
+          S.cut.ph=clipNow.start+(vidEl.currentTime-(clipNow.fileStart||0))/(clipNow.speed||1);
+        }
         // Ensure playbackRate matches clip speed
         const targetRate=Math.max(0.1,clipNow.speed||1);
         if(Math.abs(vidEl.playbackRate-targetRate)>0.01) vidEl.playbackRate=targetRate;
@@ -4038,8 +4042,9 @@ function cutTogglePlay(){
             _cutTick = requestAnimationFrame(playFrame);
             return;
           }
+          const _nowIdx = S.cut.clips.indexOf(clipNow);
           const nextClip = S.cut.clips
-            .filter(c=>c.type==='video' && c!==clipNow && c.start >= currentEnd-0.3)
+            .filter((c,_i)=>c.type==='video' && _i!==_nowIdx && c.start > currentEnd-0.05)
             .sort((a,b)=>a.start-b.start)[0];
           if(nextClip){
             const item=S.cut.media[nextClip.mediaIdx];
@@ -4337,6 +4342,8 @@ function syncCutVid(){
     mv.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;object-fit:contain;display:block;z-index:0;';
     mv.addEventListener('timeupdate', () => {
       if(S.cut.playing) return;
+      if(S.cut._scrubbing) return;
+      if(window._seekLockUntil && Date.now() < window._seekLockUntil) return;
       const ci = parseInt(mv.dataset.clipIdx);
       if(isNaN(ci)) return;
       const clip = S.cut.clips[ci];
@@ -4890,6 +4897,7 @@ function setupPlayheadDrag(){
   function onDragTouch(e){e.preventDefault();onDrag(e);}
   function stopDrag(){
     dragging=false;
+    window._seekLockUntil = Date.now() + 400;
     S.cut._scrubbing=false;
     document.removeEventListener('mousemove',onDrag);
     document.removeEventListener('mouseup',stopDrag);
@@ -4959,6 +4967,7 @@ function setupPlayheadDrag(){
     ruler.addEventListener('mousedown',function(e){
       const rect=ruler.getBoundingClientRect();
       S.cut.ph=Math.max(0,Math.min(Math.max(S.proj.dur,S.cut.clips.length?Math.max(...S.cut.clips.map(c=>c.start+c.dur)):0),(e.clientX-rect.left+scroll.scrollLeft)/PPS));
+      window._seekLockUntil = Date.now() + 400;
       updateCutPH();syncCutVid();
       dragging=true;
       S.cut._scrubbing=true;
