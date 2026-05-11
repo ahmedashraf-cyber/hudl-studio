@@ -4715,9 +4715,10 @@ function syncCutVid(){
     return (ph >= _ts && ph < _te) ? tr : null;
   })();
   if((trInWindow || hasEffects || hasActiveOverlays) && (performance.now()-(_freezeExitTime||0)) > 500){
-    mv.style.opacity = '0';     // hidden but display:block so browser decodes
+    mv.style.opacity = '0';
+    mv.style.filter = '';       // clear CSS filter - applied via ctx.filter on canvas instead
     canvas.style.display = 'block';
-    canvas.style.zIndex  = '2';  // canvas covers mv visually
+    canvas.style.zIndex  = '2';
     if(placeholder) placeholder.style.display = 'none'; // hide placeholder in canvas mode
     const projW = S.proj.w||1280, projH = S.proj.h||720;
     if(canvas.width !== projW || canvas.height !== projH){
@@ -4731,8 +4732,9 @@ function syncCutVid(){
     }
     mv.dataset.clipIdx = String(activeCI);
 
-    // Sync position when paused or when video needs seeking
-    const targetT = (active.fileStart||0) + Math.max(0, ph - active.start);
+    // Sync position when paused - divide by speed for speed-modified clips
+    const _spd = active.speed || 1;
+    const targetT = (active.fileStart||0) + Math.max(0, (ph - active.start) / _spd);
     if(!S.cut.playing && Math.abs(mv.currentTime - targetT) > 0.05){
       mv.currentTime = targetT;
     }
@@ -4768,9 +4770,10 @@ function syncCutVid(){
     if(S.cut.playing && mv.paused && !_freezeActive){
       mv.play().catch(()=>{});
     }
-    // Pre-seek when paused
+    // Pre-seek when paused - account for clip speed
     if(!S.cut.playing){
-      const t0 = (active.fileStart||0) + Math.max(0, ph - active.start);
+      const _spd2 = active.speed || 1;
+      const t0 = (active.fileStart||0) + Math.max(0, (ph - active.start) / _spd2);
       if(Math.abs(mv.currentTime - t0) > 0.05) mv.currentTime = t0;
     }
 
@@ -5024,17 +5027,20 @@ function syncCutVid(){
 
       else { _drawVideoFrame(drawSrc, ctx, canvas.width, canvas.height); }
       ctx.restore();
-      // Draw overlays AFTER transition (last layer = topmost)
+      ctx.save(); ctx.filter='none'; ctx.globalAlpha=1; ctx.globalCompositeOperation='source-over';
       if(window.renderOverlaysOnCanvas)
         window.renderOverlaysOnCanvas(ctx, canvas.width, canvas.height, ph, _playedFreezes);
+      ctx.restore();
     } else {
-      // Effects only — apply CSS filter via canvas, then overlays on top
+      // Effects only - filter applied during video draw, reset before overlays
       const filterStr = buildFilterStr(activeCI);
-      ctx.filter = filterStr !== 'none' ? filterStr : 'none';
+      ctx.save(); ctx.filter = filterStr !== 'none' ? filterStr : '';
       try{ _drawVideoFrame(drawSrc,ctx,canvas.width,canvas.height); }catch(e){}
-      ctx.filter = 'none';
+      ctx.restore();
+      ctx.save(); ctx.filter='none'; ctx.globalAlpha=1; ctx.globalCompositeOperation='source-over';
       if(window.renderOverlaysOnCanvas)
         window.renderOverlaysOnCanvas(ctx, canvas.width, canvas.height, ph, _playedFreezes);
+      ctx.restore();
     }
     return;
   }
