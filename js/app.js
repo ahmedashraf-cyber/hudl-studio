@@ -731,58 +731,27 @@ async function startExport(){
   canvas.width=W; canvas.height=H;
   const ctx=canvas.getContext('2d');
 
-  // AudioContext for capturing audio
-  let audioCtx=null, audioDest=null;
-  try{
-    audioCtx=new (window.AudioContext||window.webkitAudioContext)({sampleRate:48000});
-    await audioCtx.resume();
-    audioDest=audioCtx.createMediaStreamDestination();
-    // Build audio chain: sources -> gain -> compressor -> destination
-    // DynamicsCompressor prevents clipping when we boost gain
-    const _exportComp = audioCtx.createDynamicsCompressor();
-    _exportComp.threshold.value = -6;  // start compressing at -6dBFS
-    _exportComp.knee.value      =  6;  // soft knee
-    _exportComp.ratio.value     =  3;  // 3:1 ratio
-    _exportComp.attack.value    =  0.003;
-    _exportComp.release.value   =  0.15;
-    _exportComp.connect(audioDest);
-    // Master gain: 3.5x boost to match editor preview loudness
-    window._exportMasterGain=audioCtx.createGain();
-    window._exportMasterGain.gain.value=3.5;
-    window._exportMasterGain.connect(_exportComp);
-  }catch(err){ console.warn('Audio capture unavailable:',err); }
+  // Audio: preload video/audio elements with NO AudioContext
+  // captureStream() used later to get audio at speaker-level loudness
+  const audioSrcNodes={};
 
   // Preload video elements
   status.textContent='Loading video files...';
   const vidEls={};
-  const audioSrcNodes={};
   for(const clip of videoClips){
     const item=S.cut.media[clip.mediaIdx];
     if(!item?.url||vidEls[clip.mediaIdx]) continue;
     const v=document.createElement('video');
     v.src=item.url; v.crossOrigin='anonymous'; v.preload='auto';
-    v.muted=false; // must be unmuted BEFORE createMediaElementSource
-    v.volume=1.0;
+    v.muted=false;
+    v.volume=clip.volume!==undefined ? Math.min(2, clip.volume/100) : 1.0;
     v.style.display='none';
     document.body.appendChild(v);
-    await new Promise(r=>{v.oncanplaythrough=r;v.onerror=r;setTimeout(r,5000);});
+    await new Promise(r=>{v.oncanplaythrough=r;v.onerror=r;setTimeout(r,8000);});
     vidEls[clip.mediaIdx]=v;
-    // Wire audio — element must already be unmuted for source to carry signal
-    if(audioCtx&&audioDest){
-      try{
-        const src=audioCtx.createMediaElementSource(v);
-        const gain=audioCtx.createGain();
-        // Use clip volume setting (0-200 range -> 0-2.0 gain)
-        const clipVol = clip.volume !== undefined ? clip.volume/100 : 1.0;
-        gain.gain.value = Math.max(0, clipVol);
-        src.connect(gain);
-        gain.connect(window._exportMasterGain||audioDest);
-        audioSrcNodes[clip.mediaIdx]=v;
-      }catch(e){ console.warn('Audio wire failed:',e); }
-    }
   }
 
-  // Preload and wire standalone audio-only clips
+  // Preload standalone audio-only clips
   const audioOnlyClips = S.cut.clips.filter(c=>c.type==='audio'&&!c.linkedToVideo).sort((a,b)=>a.start-b.start);
   const audioEls = {};
   for(const clip of audioOnlyClips){
@@ -791,29 +760,42 @@ async function startExport(){
     if(S.cut.mutedTracks?.[clip.track]) continue;
     const a = document.createElement('audio');
     a.src=item.url; a.crossOrigin='anonymous'; a.preload='auto';
-    a.muted=false; // unmuted BEFORE wiring to AudioContext
-    a.volume=1.0;
+    a.muted=false;
+    a.volume=clip.volume!==undefined ? Math.min(2, clip.volume/100) : 1.0;
     a.style.display='none';
     document.body.appendChild(a);
-    await new Promise(r=>{a.oncanplaythrough=r; a.onerror=r; setTimeout(r,5000);});
+    await new Promise(r=>{a.oncanplaythrough=r;a.onerror=r;setTimeout(r,8000);});
     audioEls[clip.mediaIdx]=a;
-    if(audioCtx&&audioDest){
-      try{
-        const src=audioCtx.createMediaElementSource(a);
-        const gain=audioCtx.createGain();
-        gain.gain.value=clip.volume!==undefined?clip.volume/100:1.0;
-        src.connect(gain);
-        gain.connect(window._exportMasterGain||audioDest);
-      }catch(e){}
-    }
   }
 
-  // Build MediaStream: video from canvas + audio from AudioContext
+  // Build MediaStream: video from canvas + audio from captureStream()
+  // captureStream() captures audio at SPEAKER LEVEL -- matches editor loudness exactly
   const videoStream=canvas.captureStream(fps);
-  let finalStream=videoStream;
-  if(audioCtx&&audioDest&&audioDest.stream.getAudioTracks().length>0){
-    finalStream=new MediaStream([...videoStream.getVideoTracks(),...audioDest.stream.getAudioTracks()]);
-  }
+  const allAudioTracks = [];
+  // Collect audio from ALL loaded video elements via captureStream
+  Object.values(vidEls).forEach(v=>{
+    if(v.captureStream){
+      try{
+        const vs=v.captureStream();
+        vs.getAudioTracks().forEach(t=>allAudioTracks.push(t));
+      }catch(e){}
+    }
+  });
+  // Collect audio from standalone audio elements
+  Object.values(audioEls).forEach(a=>{
+    if(a.captureStream){
+      try{
+        const as2=a.captureStream();
+        as2.getAudioTracks().forEach(t=>allAudioTracks.push(t));
+      }catch(e){}
+    }
+  });
+  const finalStream = allAudioTracks.length > 0
+    ? new MediaStream([...videoStream.getVideoTracks(), ...allAudioTracks])
+    : videoStream;
+
+  // Choose codec: prefer H264/AAC (MP4-compatible) if browser supports it
+
 
   // Choose codec: prefer H264/AAC (MP4-compatible) if browser supports it
   const fmt = document.getElementById('exp-format')?.value || 'webm';
@@ -839,7 +821,6 @@ async function startExport(){
     Object.values(vidEls).forEach(v=>{try{v.pause();v.src='';document.body.contains(v)&&document.body.removeChild(v);}catch(e){}});
     Object.values(audioEls).forEach(a=>{try{a.pause();a.src='';document.body.contains(a)&&document.body.removeChild(a);}catch(e){}});
     window._exportMasterGain=null;
-    if(audioCtx) audioCtx.close();
     await new Promise(r=>setTimeout(r,300));
     const blob=new Blob(chunks,{type:mimeType});
     const url=URL.createObjectURL(blob);
