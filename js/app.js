@@ -5277,9 +5277,9 @@ function setupPlayheadDrag(){
   const ruler=$('tl-ruler');
   if(ruler && !ruler._listenerAttached){
     ruler._listenerAttached=true;
+    function _getRulerTime(ev){ const _sr=scroll.getBoundingClientRect(); return (ev.clientX-_sr.left+scroll.scrollLeft)/PPS; }
     ruler.addEventListener('mousedown',function(e){
-      const rect=ruler.getBoundingClientRect();
-      S.cut.ph=Math.max(0,Math.min(Math.max(S.proj.dur,S.cut.clips.length?Math.max(...S.cut.clips.map(c=>c.start+c.dur)):0),(e.clientX-rect.left+scroll.scrollLeft)/PPS));
+      S.cut.ph=Math.max(0,Math.min(Math.max(S.proj.dur,S.cut.clips.length?Math.max(...S.cut.clips.map(c=>c.start+c.dur)):0),_getRulerTime(e)));
       window._seekLockUntil = Date.now() + 800;
       updateCutPH();syncCutVid();
       dragging=true;
@@ -5288,7 +5288,7 @@ function setupPlayheadDrag(){
       if(mv2&&!mv2.paused) mv2.pause();
       document.addEventListener('mousemove',function moveRuler(e){
         if(!dragging)return;
-        S.cut.ph=Math.max(0,Math.min(Math.max(S.proj.dur,S.cut.clips.length?Math.max(...S.cut.clips.map(c=>c.start+c.dur)):0),(e.clientX-rect.left+scroll.scrollLeft)/PPS));
+        S.cut.ph=Math.max(0,Math.min(Math.max(S.proj.dur,S.cut.clips.length?Math.max(...S.cut.clips.map(c=>c.start+c.dur)):0),_getRulerTime(e)));
         const phEl=$('cut-ph');if(phEl)phEl.style.left=Math.round(S.cut.ph*PPS)+'px';
         const tc2=fmtFull(S.cut.ph,S.proj.fps);
         const a2=$('cut-pv-tc');if(a2)a2.textContent=tc2;
