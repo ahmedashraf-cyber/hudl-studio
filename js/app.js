@@ -672,8 +672,8 @@ function showExportModal(){
     window._exportMasterStream = _mv.captureStream ? _mv.captureStream() : null;
     window._exportMasterAudioTracks = window._exportMasterStream
       ? window._exportMasterStream.getAudioTracks() : [];
-    // Pause after getting tracks
-    setTimeout(()=>{ try{_mv.pause(); _mv.currentTime=0;}catch(e){}; }, 200);
+    // Keep playing - startExport will seek/control it
+    // Pausing here kills the audio track before recorder.start()
   }catch(e){ console.warn('showExportModal audio setup:', e); }
   document.querySelectorAll('#export-modal').forEach(m=>m.remove());
   const videoClips=S.cut.clips.filter(c=>c.type==='video').sort((a,b)=>a.start-b.start);
@@ -780,25 +780,27 @@ async function startExport(){
     v.remove();
   }
 
-  // Single master video element - this is what captureStream() runs on
-  const masterVid = document.createElement('video');
-  masterVid.muted = false;
-  masterVid.volume = 1.0;
-  masterVid.style.display = 'none';
-  document.body.appendChild(masterVid);
-
-  // Use the audio stream pre-captured in showExportModal (user gesture)
-  // masterVid and masterAudioTracks were created synchronously in the click handler
+  // Use the SAME video element from showExportModal - it already has captureStream() wired
+  // Creating a new element breaks the audio track connection
   const masterAudioTracks = window._exportMasterAudioTracks || [];
   console.log('Export audio tracks from gesture:', masterAudioTracks.length,
     masterAudioTracks.map(t=>t.readyState+'/'+t.enabled).join(','));
 
-  // Load first clip into masterVid
+  // Reuse the element that captureStream was called on
+  const masterVid = window._exportMasterVid || document.createElement('video');
+  if(!window._exportMasterVid){ document.body.appendChild(masterVid); }
+  masterVid.muted = false;
+  masterVid.volume = 1.0;
+
+  // Load first clip into masterVid (same element, captureStream stays connected)
   const _firstClip = videoClips[0];
   const _firstItem = S.cut.media[_firstClip.mediaIdx];
-  masterVid.src = _firstItem?.url || '';
+  if(masterVid.src !== (_firstItem?.url||'')){
+    masterVid.src = _firstItem?.url || '';
+    await new Promise(r=>{masterVid.oncanplaythrough=r;masterVid.onerror=r;setTimeout(r,8000);});
+  }
   masterVid.currentTime = _firstClip.fileStart || 0;
-  await new Promise(r=>{masterVid.oncanplaythrough=r;masterVid.onerror=r;setTimeout(r,8000);});
+  await new Promise(r=>{const h=()=>{masterVid.removeEventListener('seeked',h);r();}; masterVid.addEventListener('seeked',h); setTimeout(r,2000);});
   masterVid.pause();
 
   // Preload standalone audio-only clips
@@ -838,9 +840,9 @@ async function startExport(){
     ? new MediaStream([...videoStream.getVideoTracks(), ..._allExportAudio])
     : videoStream;
 
-  // vidEls alias for renderFrame compatibility (single element, all clips use it)
+  // vidEls alias for renderFrame compatibility
   const vidEls = { _master: masterVid };
-  window._exportMasterVid = masterVid;
+  // Do NOT overwrite window._exportMasterVid - it must stay as the gesture-captured element
   window._exportMasterGain = null;
 
 
@@ -882,7 +884,9 @@ async function startExport(){
     notify('✓ Export downloaded — '+fname+' ('+(mimeType.includes('mp4')?'MP4':'WebM')+')','#3fb950');
   };
 
-  recorder.start(500); // collect every 500ms for stable chunks
+  // Start recorder while masterVid is still playing = audio track is live
+  // Then immediately seek to correct start position
+  recorder.start(500);
   status.textContent='Rendering with audio...';
 
   const dt=1/fps;
