@@ -860,14 +860,29 @@ async function startExport(){
 
   window._exportMasterGain=null;
   let lastClipIdx=-1, lastActiveVid=null;
-  // Track which video element is "current" globally for audio routing
-  window._exportMasterVid = _firstVid || Object.values(vidEls)[0] || null;
 
-  // ── RENDER ENGINE ──
-  // Frame-accurate: seek to each frame, draw, advance t
-  // Uses requestAnimationFrame + drawImage for smooth frames
+  // Seek masterVid to first clip start position for A/V sync
+  const _firstClip = videoClips[0];
+  if(masterVid && _firstClip){
+    const _firstItem = S.cut.media[_firstClip.mediaIdx];
+    if(_firstItem?.url && masterVid.src !== _firstItem.url){
+      masterVid.src = _firstItem.url;
+      masterVid.dataset.exportMediaIdx = String(_firstClip.mediaIdx);
+      await new Promise(r=>{masterVid.oncanplaythrough=r;masterVid.onerror=r;setTimeout(r,5000);});
+    }
+    masterVid.currentTime = _firstClip.fileStart || 0;
+    masterVid.volume = 1.0; masterVid.muted = false;
+    await new Promise(r=>{const h=()=>{masterVid.removeEventListener('seeked',h);r();}; masterVid.addEventListener('seeked',h); setTimeout(r,2000);});
+  }
+  window._exportMasterVid = masterVid;
+
+  // Start recorder THEN play masterVid at same moment = perfect A/V sync from frame 0
   status.textContent='Rendering...';
   recorder.start(500);
+  if(masterVid && _firstClip){
+    try{ await masterVid.play(); }catch(e){ console.warn('masterVid play:', e); }
+    lastActiveVid = masterVid; lastClipIdx = 0;
+  }
 
   let t=0;
   const startWall=Date.now();
@@ -916,14 +931,13 @@ async function startExport(){
             vid.muted=false;
             vid.volume=clip.volume!==undefined?Math.min(1,clip.volume/100):1.0;
             vid.playbackRate=_spd;
-            if(Math.abs(vid.currentTime-fileTime)>0.1){
-              vid.currentTime=fileTime;
-              await new Promise(r=>{
-                const h=()=>{vid.removeEventListener('seeked',h);r();};
-                vid.addEventListener('seeked',h);
-                setTimeout(r,2000);
-              });
-            }
+            // Always seek to exact position to keep audio in sync
+            vid.currentTime=fileTime;
+            await new Promise(r=>{
+              const h=()=>{vid.removeEventListener('seeked',h);r();};
+              vid.addEventListener('seeked',h);
+              setTimeout(r,2000);
+            });
             if(vid.paused) try{await vid.play();}catch(e){}
           }
           if(vid.readyState>=2) ctx.drawImage(vid,0,0,W,H);
@@ -948,9 +962,10 @@ async function startExport(){
       if(t>=ac.start&&t<ac.start+ac.dur){
         const aT=(ac.fileStart||0)+Math.max(0,t-ac.start);
         a.muted=false;
+        // Seek if paused or drifted more than 0.3s
         if(a.paused){a.currentTime=aT; try{a.play();}catch(e){}}
-        else if(Math.abs(a.currentTime-aT)>0.5) a.currentTime=aT;
-      } else if(!a.paused) a.pause();
+        else if(Math.abs(a.currentTime-aT)>0.3) a.currentTime=aT;
+      } else if(!a.paused){ a.pause(); }
     }
 
     // ── Progress ──
