@@ -651,29 +651,43 @@ window.doSave = async function() {
 window.doExport = function() { showExportModal(); };
 
 function showExportModal(){
-  // Create masterVid and call play() synchronously in user gesture
-  // This unlocks the audio stream BEFORE any async code runs
+  // AudioContext Master Bus approach:
+  // All audio elements connect to one AudioContext graph -> single stereo stream
+  // This is the only reliable cross-element audio mixing in the browser
   try{
-    if(window._exportMasterVid){ try{window._exportMasterVid.pause();window._exportMasterVid.remove();}catch(e){} }
-    const _mv = document.createElement('video');
-    _mv.muted = false; _mv.volume = 1.0;
-    _mv.style.display = 'none';
-    // Use the first video clip's URL if available
+    if(window._exportMasterVid){ try{window._exportMasterVid.pause(); if(document.body.contains(window._exportMasterVid)) window._exportMasterVid.remove();}catch(e){} }
+    if(window._exportAudioCtx){ try{window._exportAudioCtx.close();}catch(e){} window._exportAudioCtx=null; }
+
+    // Create AudioContext in user gesture (48kHz = broadcast standard)
+    const _ctx = new (window.AudioContext||window.webkitAudioContext)({sampleRate:48000});
+    window._exportAudioCtx = _ctx;
+
+    // Master bus: all video+audio elements route here
+    const _masterGain = _ctx.createGain();
+    _masterGain.gain.value = 1.0;
+    const _dest = _ctx.createMediaStreamDestination();
+    _masterGain.connect(_dest);
+    window._exportAudioDest = _dest;
+    window._exportMasterGain = _masterGain;
+    window._exportAudioStream = _dest.stream;
+
+    // Create masterVid and connect its audio to the master bus
     const _vclips = S?.cut?.clips?.filter(c=>c.type==='video') || [];
     const _firstUrl = _vclips.length ? S?.cut?.media?.[_vclips[0].mediaIdx]?.url : null;
+    const _mv = document.createElement('video');
+    _mv.muted = false; _mv.volume = 1.0; _mv.style.display='none';
     if(_firstUrl) _mv.src = _firstUrl;
-    else _mv.src = ''; // empty src still unlocks the stream
     document.body.appendChild(_mv);
-    // play() in user gesture = unlocks audio autoplay
+    const _mvSrc = _ctx.createMediaElementSource(_mv);
+    _mvSrc.connect(_masterGain);
+    window._exportMasterVid = _mv;
+    window._exportMasterVidSource = _mvSrc;
+
+    // Unlock AudioContext with play() in user gesture
     const _playP = _mv.play();
     if(_playP) _playP.catch(()=>{});
-    // captureStream() immediately while element is in play() chain
-    window._exportMasterVid = _mv;
-    window._exportMasterStream = _mv.captureStream ? _mv.captureStream() : null;
-    window._exportMasterAudioTracks = window._exportMasterStream
-      ? window._exportMasterStream.getAudioTracks() : [];
-    // Keep playing - startExport will seek/control it
-    // Pausing here kills the audio track before recorder.start()
+
+    console.log('Export AudioContext ready:', _ctx.sampleRate+'Hz,', _dest.stream.getAudioTracks().length,'tracks');
   }catch(e){ console.warn('showExportModal audio setup:', e); }
   document.querySelectorAll('#export-modal').forEach(m=>m.remove());
   const videoClips=S.cut.clips.filter(c=>c.type==='video').sort((a,b)=>a.start-b.start);
@@ -780,19 +794,17 @@ async function startExport(){
     v.remove();
   }
 
-  // Use the SAME video element from showExportModal - it already has captureStream() wired
-  // Creating a new element breaks the audio track connection
-  const masterAudioTracks = window._exportMasterAudioTracks || [];
-  console.log('Export audio tracks from gesture:', masterAudioTracks.length,
-    masterAudioTracks.map(t=>t.readyState+'/'+t.enabled).join(','));
+  // AudioContext Master Bus: all audio routes through one graph -> one stereo stream
+  const _audioCtx = window._exportAudioCtx;
+  const _masterBus = window._exportMasterGain;
+  const _audioDest = window._exportAudioDest;
 
-  // Reuse the element that captureStream was called on
+  // masterVid: the element created in showExportModal, already connected to master bus
   const masterVid = window._exportMasterVid || document.createElement('video');
-  if(!window._exportMasterVid){ document.body.appendChild(masterVid); }
-  masterVid.muted = false;
-  masterVid.volume = 1.0;
+  if(!window._exportMasterVid) document.body.appendChild(masterVid);
+  masterVid.muted = false; masterVid.volume = 1.0;
 
-  // Load first clip into masterVid (same element, captureStream stays connected)
+  // Load first clip into masterVid
   const _firstClip = videoClips[0];
   const _firstItem = S.cut.media[_firstClip.mediaIdx];
   if(masterVid.src !== (_firstItem?.url||'')){
@@ -800,50 +812,48 @@ async function startExport(){
     await new Promise(r=>{masterVid.oncanplaythrough=r;masterVid.onerror=r;setTimeout(r,8000);});
   }
   masterVid.currentTime = _firstClip.fileStart || 0;
-  await new Promise(r=>{const h=()=>{masterVid.removeEventListener('seeked',h);r();}; masterVid.addEventListener('seeked',h); setTimeout(r,2000);});
-  masterVid.pause();
+  await new Promise(r=>{
+    const h=()=>{masterVid.removeEventListener('seeked',h);r();};
+    masterVid.addEventListener('seeked',h); setTimeout(r,2000);
+  });
 
-  // Preload standalone audio-only clips
+  // Preload standalone audio-only clips AND wire each through the master bus
   const audioOnlyClips = S.cut.clips
     .filter(c=>c.type==='audio'&&!c.linkedToVideo)
     .sort((a,b)=>a.start-b.start);
-  const audioEls = {};
+  const audioEls = {}; // mediaIdx -> HTMLAudioElement
+  const _audioSources = []; // keep refs to prevent GC
   for(const clip of audioOnlyClips){
     const item = S.cut.media[clip.mediaIdx];
     if(!item?.url || audioEls[clip.mediaIdx]) continue;
     if(S.cut.mutedTracks?.[clip.track]) continue;
     const a = document.createElement('audio');
-    a.src=item.url; a.preload='auto';
-    a.muted=false; a.volume=1.0; a.style.display='none';
+    a.src=item.url; a.preload='auto'; a.muted=false; a.volume=1.0; a.style.display='none';
     document.body.appendChild(a);
     await new Promise(r=>{a.oncanplaythrough=r;a.onerror=r;setTimeout(r,8000);});
+    // Wire through AudioContext master bus if available
+    if(_audioCtx && _masterBus){
+      try{
+        const _src = _audioCtx.createMediaElementSource(a);
+        _src.connect(_masterBus);
+        _audioSources.push(_src);
+      }catch(e){}
+    }
     audioEls[clip.mediaIdx] = a;
   }
 
-  // Collect standalone audio tracks the same way
-  const allAudioTracks = [...masterAudioTracks];
-  for(const a of Object.values(audioEls)){
-    try{
-      await a.play();
-      const as2 = a.captureStream ? a.captureStream() : null;
-      if(as2) as2.getAudioTracks().forEach(t=>{ if(t.readyState==='live') allAudioTracks.push(t); });
-      a.pause(); a.currentTime = 0;
-    }catch(e){}
-  }
-
-  // Build final stream: canvas video + audio tracks from user gesture
+  // Build final MediaStream:
+  // Video: canvas captureStream
+  // Audio: AudioContext MediaStreamDestination (all sources mixed)
   const videoStream = canvas.captureStream(fps);
-  const _allExportAudio = [...masterAudioTracks, ...allAudioTracks]
-    .filter(t => t.readyState === 'live' || t.enabled);
-  console.log('Final export audio tracks:', _allExportAudio.length);
-  const finalStream = _allExportAudio.length > 0
-    ? new MediaStream([...videoStream.getVideoTracks(), ..._allExportAudio])
+  const _audioTracks = _audioDest ? _audioDest.stream.getAudioTracks() : [];
+  console.log('Export audio: AudioContext tracks:', _audioTracks.length, '48kHz master bus');
+  const finalStream = _audioTracks.length > 0
+    ? new MediaStream([...videoStream.getVideoTracks(), ..._audioTracks])
     : videoStream;
 
-  // vidEls alias for renderFrame compatibility
   const vidEls = { _master: masterVid };
-  // Do NOT overwrite window._exportMasterVid - it must stay as the gesture-captured element
-  window._exportMasterGain = null;
+  window._exportMasterGain = _masterBus;
 
 
     // Choose codec: prefer H264/AAC (MP4-compatible) if browser supports it
@@ -870,6 +880,8 @@ async function startExport(){
     if(window._exportMasterVid){try{window._exportMasterVid.pause();window._exportMasterVid.src='';if(document.body.contains(window._exportMasterVid))document.body.removeChild(window._exportMasterVid);}catch(e){}window._exportMasterVid=null;}
     Object.values(audioEls).forEach(a=>{try{a.pause();a.src='';document.body.contains(a)&&document.body.removeChild(a);}catch(e){}});
     window._exportMasterGain=null;
+    if(window._exportAudioCtx){ try{window._exportAudioCtx.close();}catch(e){} window._exportAudioCtx=null; }
+    window._exportAudioDest=null; window._exportAudioStream=null;
     await new Promise(r=>setTimeout(r,300));
     const blob=new Blob(chunks,{type:mimeType});
     const url=URL.createObjectURL(blob);
@@ -884,8 +896,11 @@ async function startExport(){
     notify('✓ Export downloaded — '+fname+' ('+(mimeType.includes('mp4')?'MP4':'WebM')+')','#3fb950');
   };
 
-  // Start recorder while masterVid is still playing = audio track is live
-  // Then immediately seek to correct start position
+  // Resume AudioContext if suspended (browser may suspend it)
+  if(window._exportAudioCtx && window._exportAudioCtx.state === 'suspended'){
+    await window._exportAudioCtx.resume();
+  }
+  // Start recorder - AudioContext is routing all audio to the stream
   recorder.start(500);
   status.textContent='Rendering with audio...';
 
