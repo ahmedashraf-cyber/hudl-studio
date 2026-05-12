@@ -792,33 +792,39 @@ async function startExport(){
   const videoStream = canvas.captureStream(fps);
   let finalStream = videoStream;
 
-  if(_firstVid){
+  // Audio capture strategy:
+  // - Use a SINGLE masterVid element for all clips (one continuous audio stream)
+  // - Play it, captureStream() while playing = live audio track
+  // - All clips play through this same element; audio track stays live throughout
+  const masterVid = _firstVid || document.createElement('video');
+  if(!_firstVid) document.body.appendChild(masterVid);
+  masterVid.muted = false; masterVid.volume = 1.0;
+  window._exportMasterVid = masterVid;
+
+  if(masterVid){
     try{
-      _firstVid.currentTime = 0;
-      await _firstVid.play();
-      // captureStream while element is hot
-      const allAudioTracks=[];
-      Object.values(vidEls).forEach(v=>{
+      masterVid.currentTime = 0;
+      await masterVid.play();
+      // captureStream() WHILE PLAYING = audio tracks are live
+      const _ms = masterVid.captureStream ? masterVid.captureStream() : null;
+      const allAudioTracks = _ms ? _ms.getAudioTracks().filter(t=>t.readyState==='live') : [];
+      // Also capture audio-only elements
+      for(const a of Object.values(audioEls)){
         try{
-          if(v.captureStream){
-            const s=v.captureStream();
-            s.getAudioTracks().forEach(t=>{ if(t.readyState==='live') allAudioTracks.push(t); });
-          }
+          await a.play();
+          const _as = a.captureStream ? a.captureStream() : null;
+          if(_as) _as.getAudioTracks().forEach(t=>{ if(t.readyState==='live') allAudioTracks.push(t); });
+          a.pause(); a.currentTime=0;
         }catch(e){}
-      });
-      Object.values(audioEls).forEach(a=>{
-        try{
-          if(a.captureStream){
-            const s=a.captureStream();
-            s.getAudioTracks().forEach(t=>{ if(t.readyState==='live') allAudioTracks.push(t); });
-          }
-        }catch(e){}
-      });
-      _firstVid.pause(); _firstVid.currentTime=0;
+      }
+      masterVid.pause(); masterVid.currentTime=0;
       if(allAudioTracks.length>0){
         finalStream=new MediaStream([...videoStream.getVideoTracks(),...allAudioTracks]);
+        console.log('Export audio tracks:', allAudioTracks.length);
+      } else {
+        console.warn('No live audio tracks captured - video will be silent');
       }
-    }catch(e){ console.warn('audio capture:', e); }
+    }catch(e){ console.warn('audio capture error:', e); }
   }
 
   // ── Codec selection ──
@@ -896,19 +902,25 @@ async function startExport(){
       // Find video clip at time t
       const clip=videoClips.find(c=>t>=c.start&&t<c.start+c.dur);
       if(clip){
-        const vid=vidEls[clip.mediaIdx];
+        // Use masterVid for ALL clips - single continuous audio stream
+        const vid = window._exportMasterVid;
         const clipIdx=videoClips.indexOf(clip);
         if(vid){
-          // On clip change: seek to correct position
           if(clipIdx!==lastClipIdx){
-            if(lastActiveVid&&lastActiveVid!==vid&&!lastActiveVid.paused) lastActiveVid.pause();
+            if(lastActiveVid&&!lastActiveVid.paused) lastActiveVid.pause();
             lastActiveVid=vid; lastClipIdx=clipIdx;
+            const clipItem=S.cut.media[clip.mediaIdx];
+            // Switch source if different file
+            if(vid.dataset.exportMediaIdx!==String(clip.mediaIdx)){
+              vid.src=clipItem?.url||'';
+              vid.dataset.exportMediaIdx=String(clip.mediaIdx);
+              await new Promise(r=>{vid.oncanplaythrough=r;vid.onerror=r;setTimeout(r,5000);});
+            }
             const _spd=clip.speed||1;
             const fileTime=(clip.fileStart||0)+Math.max(0,(t-clip.start)*_spd);
             vid.muted=false;
             vid.volume=clip.volume!==undefined?Math.min(1,clip.volume/100):1.0;
             vid.playbackRate=_spd;
-            // Only seek if not already close
             if(Math.abs(vid.currentTime-fileTime)>0.1){
               vid.currentTime=fileTime;
               await new Promise(r=>{
@@ -919,7 +931,6 @@ async function startExport(){
             }
             if(vid.paused) try{await vid.play();}catch(e){}
           }
-          // Draw current frame
           if(vid.readyState>=2) ctx.drawImage(vid,0,0,W,H);
         }
       } else {
