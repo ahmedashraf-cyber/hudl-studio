@@ -1143,7 +1143,7 @@ const MENUS = {
         const _sc=document.getElementById('tl-scroll');
         const _ph=S.cut.ph||0;
         const _vw=_sc?_sc.clientWidth:800;
-        PPS=Math.min(600,PPS*1.25);
+        PPS=Math.min(600,PPS*1.25); window.PPS=PPS;
         window._snapCache=null;
         renderCutTimeline();
         if(_sc) _sc.scrollLeft=Math.max(0,_ph*PPS-_vw*0.4);
@@ -1152,7 +1152,7 @@ const MENUS = {
         const _sc=document.getElementById('tl-scroll');
         const _ph=S.cut.ph||0;
         const _vw=_sc?_sc.clientWidth:800;
-        PPS=Math.max(8,PPS*0.8);
+        PPS=Math.max(8,PPS*0.8); window.PPS=PPS;
         window._snapCache=null;
         renderCutTimeline();
         if(_sc) _sc.scrollLeft=Math.max(0,_ph*PPS-_vw*0.4);
@@ -1161,7 +1161,7 @@ const MENUS = {
         const _sc=document.getElementById('tl-scroll');
         const _ph=S.cut.ph||0;
         const _vw=_sc?_sc.clientWidth:800;
-        PPS=60;
+        PPS=60; window.PPS=PPS;
         window._snapCache=null;
         renderCutTimeline();
         if(_sc) _sc.scrollLeft=Math.max(0,_ph*PPS-_vw*0.4);
@@ -5233,7 +5233,7 @@ function setupPlayheadDrag(){
         const mouseX=e.clientX-rect2.left+tlScroll2.scrollLeft;
         const mouseTime=mouseX/PPS;
         const oldPPS=PPS;
-        PPS=Math.max(8,Math.min(600,PPS*(e.deltaY<0?1.18:0.85)));
+        PPS=Math.max(8,Math.min(600,PPS*(e.deltaY<0?1.18:0.85))); window.PPS=PPS;
         window._snapCache=null;
         // Keep mouse position fixed after zoom
         tlScroll2.scrollLeft=Math.max(0,mouseTime*PPS-(e.clientX-rect2.left));
@@ -5712,7 +5712,7 @@ document.addEventListener('keydown', e => {
     if(e.code==='Equal'||e.code==='NumpadAdd'){e.preventDefault();
       const sc=$('tl-scroll');if(sc){
         const phPx=S.cut.ph*PPS-sc.scrollLeft;
-        PPS=Math.min(600,PPS*1.25);
+        PPS=Math.min(600,PPS*1.25); window.PPS=PPS;
         sc.scrollLeft=Math.max(0,S.cut.ph*PPS-phPx);
         renderCutTimeline();
       }
@@ -5720,7 +5720,7 @@ document.addEventListener('keydown', e => {
     if(e.code==='Minus'||e.code==='NumpadSubtract'){e.preventDefault();
       const sc=$('tl-scroll');if(sc){
         const phPx=S.cut.ph*PPS-sc.scrollLeft;
-        PPS=Math.max(8,PPS*0.8);
+        PPS=Math.max(8,PPS*0.8); window.PPS=PPS;
         sc.scrollLeft=Math.max(0,S.cut.ph*PPS-phPx);
         renderCutTimeline();
       }
