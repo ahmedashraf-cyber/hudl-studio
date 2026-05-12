@@ -861,28 +861,22 @@ async function startExport(){
   window._exportMasterGain=null;
   let lastClipIdx=-1, lastActiveVid=null;
 
-  // Seek masterVid to first clip start position for A/V sync
+  // CRITICAL: Do NOT change masterVid.src here - it kills the captureStream audio track
+  // The audio track was captured in showExportModal; just seek masterVid to t=0 position
   const _firstClip = videoClips[0];
-  if(masterVid && _firstClip){
-    const _firstItem = S.cut.media[_firstClip.mediaIdx];
-    if(_firstItem?.url && masterVid.src !== _firstItem.url){
-      masterVid.src = _firstItem.url;
-      masterVid.dataset.exportMediaIdx = String(_firstClip.mediaIdx);
-      await new Promise(r=>{masterVid.oncanplaythrough=r;masterVid.onerror=r;setTimeout(r,5000);});
-    }
-    masterVid.currentTime = _firstClip.fileStart || 0;
+  if(masterVid){
     masterVid.volume = 1.0; masterVid.muted = false;
-    await new Promise(r=>{const h=()=>{masterVid.removeEventListener('seeked',h);r();}; masterVid.addEventListener('seeked',h); setTimeout(r,2000);});
+    // Seek to start - don't change src
+    if(masterVid.readyState >= 1 && masterVid.currentTime !== 0){
+      masterVid.currentTime = _firstClip?.fileStart || 0;
+    }
   }
   window._exportMasterVid = masterVid;
 
-  // Start recorder THEN play masterVid at same moment = perfect A/V sync from frame 0
+  // recorder.start begins recording - audio track is live from the gesture-captured stream
   status.textContent='Rendering...';
   recorder.start(500);
-  if(masterVid && _firstClip){
-    try{ await masterVid.play(); }catch(e){ console.warn('masterVid play:', e); }
-    lastActiveVid = masterVid; lastClipIdx = 0;
-  }
+  // renderFrame will seek and play masterVid at the right position when first clip starts
 
   let t=0;
   const startWall=Date.now();
@@ -912,35 +906,44 @@ async function startExport(){
       // Find video clip at time t
       const clip=videoClips.find(c=>t>=c.start&&t<c.start+c.dur);
       if(clip){
-        // Use masterVid for ALL clips - single continuous audio stream
-        const vid = window._exportMasterVid;
+        // Use per-media vidEls for VIDEO DRAWING (not masterVid - that's audio only)
+        const drawVid = vidEls[clip.mediaIdx];
+        // masterVid handles audio - sync it separately
+        const audioVid = window._exportMasterVid;
         const clipIdx=videoClips.indexOf(clip);
-        if(vid){
+        if(drawVid){
           if(clipIdx!==lastClipIdx){
-            if(lastActiveVid&&!lastActiveVid.paused) lastActiveVid.pause();
-            lastActiveVid=vid; lastClipIdx=clipIdx;
-            const clipItem=S.cut.media[clip.mediaIdx];
-            // Switch source if different file
-            if(vid.dataset.exportMediaIdx!==String(clip.mediaIdx)){
-              vid.src=clipItem?.url||'';
-              vid.dataset.exportMediaIdx=String(clip.mediaIdx);
-              await new Promise(r=>{vid.oncanplaythrough=r;vid.onerror=r;setTimeout(r,5000);});
-            }
+            if(lastActiveVid&&lastActiveVid!==drawVid&&!lastActiveVid.paused) lastActiveVid.pause();
+            lastActiveVid=drawVid; lastClipIdx=clipIdx;
             const _spd=clip.speed||1;
             const fileTime=(clip.fileStart||0)+Math.max(0,(t-clip.start)*_spd);
-            vid.muted=false;
-            vid.volume=clip.volume!==undefined?Math.min(1,clip.volume/100):1.0;
-            vid.playbackRate=_spd;
-            // Always seek to exact position to keep audio in sync
-            vid.currentTime=fileTime;
+            drawVid.muted=true; // muted - audio comes from masterVid
+            drawVid.volume=0;
+            drawVid.playbackRate=_spd;
+            drawVid.currentTime=fileTime;
             await new Promise(r=>{
-              const h=()=>{vid.removeEventListener('seeked',h);r();};
-              vid.addEventListener('seeked',h);
+              const h=()=>{drawVid.removeEventListener('seeked',h);r();};
+              drawVid.addEventListener('seeked',h);
               setTimeout(r,2000);
             });
-            if(vid.paused) try{await vid.play();}catch(e){}
+            if(drawVid.paused) try{await drawVid.play();}catch(e){}
+            // Sync masterVid (audio) to same position - change src if needed
+            if(audioVid){
+              const clipItem=S.cut.media[clip.mediaIdx];
+              if(audioVid.dataset.exportMediaIdx!==String(clip.mediaIdx)){
+                audioVid.src=clipItem?.url||'';
+                audioVid.dataset.exportMediaIdx=String(clip.mediaIdx);
+                await new Promise(r=>{audioVid.oncanplaythrough=r;audioVid.onerror=r;setTimeout(r,5000);});
+              }
+              audioVid.currentTime=fileTime;
+              audioVid.volume=clip.volume!==undefined?Math.min(1,clip.volume/100):1.0;
+              audioVid.muted=false;
+              audioVid.playbackRate=_spd;
+              await new Promise(r=>{const h=()=>{audioVid.removeEventListener('seeked',h);r();}; audioVid.addEventListener('seeked',h); setTimeout(r,2000);});
+              if(audioVid.paused) try{await audioVid.play();}catch(e){}
+            }
           }
-          if(vid.readyState>=2) ctx.drawImage(vid,0,0,W,H);
+          if(drawVid.readyState>=2) ctx.drawImage(drawVid,0,0,W,H);
         }
       } else {
         // Black gap between clips
