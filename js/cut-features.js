@@ -1173,7 +1173,8 @@ function renderOverlayTimeline(){
 
   if(!window._overlays || !window._overlays.length) return;
 
-  const PPS = window.PPS || 60;
+  const getPPS = () => window.PPS || 60;
+  const PPS = getPPS();
   const _S = window.S;
   const _videoTracks = _S?.cut?.videoTracks || 1;
 
@@ -1299,25 +1300,26 @@ function renderOverlayTimeline(){
       const origTrack_ov = ov.track || 0;
       const onMove = mv => {
         moved = true;
-        const dx = (mv.clientX - startX) / PPS;
+        const _curPPS = getPPS();
+        const dx = (mv.clientX - startX) / _curPPS;
         const dy = mv.clientY - startY_ov;
         const workOv = dupOv || ov;
         if(isLeftTrim && !dupOv){
           let _ns = Math.max(0, Math.min(origStart + dx, origEnd - 0.1));
-          const _ss = window.getSnapPoint ? window.getSnapPoint(_ns*PPS,-1,'start') : null;
+          const _ss = window.getSnapPoint ? window.getSnapPoint(_ns*_curPPS,-1,'start') : null;
           if(_ss!==null){_ns=_ss;window.showSnapLine&&window.showSnapLine(_ss);}
           else{window.hideSnapLine&&window.hideSnapLine();}
           workOv.startTime = _ns;
         } else if(isRightTrim && !dupOv){
           let _ne = Math.max(origEnd + dx, origStart + 0.1);
-          const _se = window.getSnapPoint ? window.getSnapPoint(_ne*PPS,-1,'end') : null;
+          const _se = window.getSnapPoint ? window.getSnapPoint(_ne*_curPPS,-1,'end') : null;
           if(_se!==null){_ne=_se;window.showSnapLine&&window.showSnapLine(_se);}
           else{window.hideSnapLine&&window.hideSnapLine();}
           workOv.endTime = _ne;
         } else {
           const dur = origEnd - origStart;
           let _rawStart = Math.max(0, origStart + dx);
-          const _snap = window.getSnapPoint ? window.getSnapPoint(_rawStart*PPS,-1,'start') : null;
+          const _snap = window.getSnapPoint ? window.getSnapPoint(_rawStart*_curPPS,-1,'start') : null;
           if(_snap!==null){_rawStart=_snap;window.showSnapLine&&window.showSnapLine(_snap);}
           else{window.hideSnapLine&&window.hideSnapLine();}
           workOv.startTime = _rawStart;
@@ -1339,8 +1341,8 @@ function renderOverlayTimeline(){
         const movEl = dupOv
           ? (document.querySelector('[data-ov-id="'+dupOv.id+'"]') || targetEl)
           : el;
-        movEl.style.left  = Math.round(workOv.startTime * PPS) + 'px';
-        movEl.style.width = Math.max(4, Math.round((workOv.endTime - workOv.startTime) * PPS)) + 'px';
+        movEl.style.left  = Math.round(workOv.startTime * _curPPS) + 'px';
+        movEl.style.width = Math.max(4, Math.round((workOv.endTime - workOv.startTime) * _curPPS)) + 'px';
         if(window.syncCutVid) syncCutVid();
       };
       const onUp = () => {
