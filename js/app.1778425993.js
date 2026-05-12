@@ -748,7 +748,9 @@ async function startExport(){
 
   const videoClips=S.cut.clips.filter(c=>c.type==='video').sort((a,b)=>a.start-b.start);
   if(!videoClips.length){notify('No video clips on timeline','#E31837');btn.disabled=false;btn.textContent='▶ Export';return;}
-  const totalDur=Math.max(...videoClips.map(c=>c.start+c.dur));
+  const _allClipEnds = S.cut.clips.map(c=>c.start+c.dur);
+  const _allOvEnds   = (window._overlays||[]).map(o=>o.endTime||0);
+  const totalDur = Math.max(S.proj.dur||0, ..._allClipEnds, ..._allOvEnds);
   const dt=1/fps;
 
   // Offscreen canvas - draw every frame here then capture
@@ -957,7 +959,10 @@ async function startExport(){
     t+=dt;
     // Schedule next frame — use setTimeout(0) for maximum speed
     // (faster than real-time is fine for canvas+captureStream)
-    setTimeout(renderFrame, 0);
+    // Real-time pacing: captureStream captures at wall-clock rate
+    // Rendering faster than real-time = shorter output video
+    const _wt = startWall + t * 1000;
+    setTimeout(renderFrame, Math.max(0, _wt - Date.now()));
   }
 
   await renderFrame();
