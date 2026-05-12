@@ -792,39 +792,34 @@ async function startExport(){
   const videoStream = canvas.captureStream(fps);
   let finalStream = videoStream;
 
-  // Audio capture strategy:
-  // - Use a SINGLE masterVid element for all clips (one continuous audio stream)
-  // - Play it, captureStream() while playing = live audio track
-  // - All clips play through this same element; audio track stays live throughout
-  const masterVid = _firstVid || document.createElement('video');
-  if(!_firstVid) document.body.appendChild(masterVid);
+  // Audio: use tracks captured in showExportModal (user gesture = Export button click)
+  // showExportModal calls play()+captureStream() synchronously = always live tracks
+  const masterAudioTracks = window._exportMasterAudioTracks || [];
+  console.log('Export audio from gesture:', masterAudioTracks.length,
+    masterAudioTracks.map(t=>t.readyState+'/'+t.enabled).join(','));
+
+  // masterVid = the element created in showExportModal (already has captureStream wired)
+  const masterVid = window._exportMasterVid || _firstVid || document.createElement('video');
+  if(!window._exportMasterVid) document.body.appendChild(masterVid);
   masterVid.muted = false; masterVid.volume = 1.0;
   window._exportMasterVid = masterVid;
 
-  if(masterVid){
+  // Also collect audio-only track streams
+  const allAudioTracks = [...masterAudioTracks];
+  for(const a of Object.values(audioEls)){
     try{
-      masterVid.currentTime = 0;
-      await masterVid.play();
-      // captureStream() WHILE PLAYING = audio tracks are live
-      const _ms = masterVid.captureStream ? masterVid.captureStream() : null;
-      const allAudioTracks = _ms ? _ms.getAudioTracks().filter(t=>t.readyState==='live') : [];
-      // Also capture audio-only elements
-      for(const a of Object.values(audioEls)){
-        try{
-          await a.play();
-          const _as = a.captureStream ? a.captureStream() : null;
-          if(_as) _as.getAudioTracks().forEach(t=>{ if(t.readyState==='live') allAudioTracks.push(t); });
-          a.pause(); a.currentTime=0;
-        }catch(e){}
-      }
-      masterVid.pause(); masterVid.currentTime=0;
-      if(allAudioTracks.length>0){
-        finalStream=new MediaStream([...videoStream.getVideoTracks(),...allAudioTracks]);
-        console.log('Export audio tracks:', allAudioTracks.length);
-      } else {
-        console.warn('No live audio tracks captured - video will be silent');
-      }
-    }catch(e){ console.warn('audio capture error:', e); }
+      await a.play();
+      const _as = a.captureStream ? a.captureStream() : null;
+      if(_as) _as.getAudioTracks().forEach(t=>{ if(t.readyState==='live') allAudioTracks.push(t); });
+      a.pause(); a.currentTime=0;
+    }catch(e){}
+  }
+
+  if(allAudioTracks.length>0){
+    finalStream=new MediaStream([...videoStream.getVideoTracks(),...allAudioTracks]);
+    console.log('Final export audio tracks:', allAudioTracks.length);
+  } else {
+    console.warn('No audio tracks - exporting video only');
   }
 
   // ── Codec selection ──
