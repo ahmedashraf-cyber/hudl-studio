@@ -734,9 +734,9 @@ function showExportModal(){
 }
 
 async function startExport(){
-  window._exportFileName = (document.getElementById('exp-filename')?.value||'export').trim().replace(/[^\w\s-]/g,'_');
-  const qParts=(document.getElementById('exp-quality').value||'1920,1080,8000000').split(',');
-  const W=parseInt(qParts[0])||1920, H=parseInt(qParts[1])||1080, BR=parseInt(qParts[2])||8000000;
+  window._exportFileName = (document.getElementById('exp-filename')?.value||'export').trim().replace(/[^\w\s-]/g,'').replace(/\s+/g,'_')||'export';
+  const qParts=(document.getElementById('exp-quality').value||'1920,1080,4000000').split(',');
+  const W=parseInt(qParts[0])||1920, H=parseInt(qParts[1])||1080, BR=parseInt(qParts[2])||4000000;
   const fps=parseInt(document.getElementById('exp-fps').value)||30;
   const btn=document.getElementById('exp-btn');
   const progressDiv=document.getElementById('exp-progress');
@@ -748,92 +748,115 @@ async function startExport(){
 
   const videoClips=S.cut.clips.filter(c=>c.type==='video').sort((a,b)=>a.start-b.start);
   if(!videoClips.length){notify('No video clips on timeline','#E31837');btn.disabled=false;btn.textContent='▶ Export';return;}
-  const _allClipEnds = S.cut.clips.map(c=>c.start+c.dur);
-  const _allOvEnds   = (window._overlays||[]).map(o=>o.endTime||0);
-  const totalDur = Math.max(S.proj.dur||0, ..._allClipEnds, ..._allOvEnds);
-  const dt=1/fps;
+  // totalDur = max of ALL content: all clips, overlays, project duration
+  const _allEnds = S.cut.clips.map(c=>c.start+c.dur);
+  const _ovEnds  = (window._overlays||[]).map(o=>o.endTime||0);
+  const totalDur = Math.max(S.proj.dur||0, ..._allEnds, ..._ovEnds);
 
-  // Offscreen canvas - draw every frame here then capture
+  // Offscreen canvas for video frames
   const canvas=document.createElement('canvas');
   canvas.width=W; canvas.height=H;
   const ctx=canvas.getContext('2d');
 
-  // ── Load all unique media files ──
-  status.textContent='Loading media...';
-  const vidEls={}; // mediaIdx -> <video>
-  for(const clip of videoClips){
-    const item=S.cut.media[clip.mediaIdx];
-    if(!item?.url||vidEls[clip.mediaIdx]) continue;
-    const v=document.createElement('video');
-    v.src=item.url; v.preload='auto'; v.muted=false; v.volume=1.0;
-    v.playsInline=true; v.style.display='none';
+
+  // EXPORT AUDIO v3: single video element approach
+  // One element = one captureStream() = continuous audio in MediaRecorder
+  // No AudioContext, no suspended state issues, no multi-track mixing problems
+  status.textContent='Loading video files...';
+
+  // Build unique media list for preloading
+  const _mediaUrls = {};
+  videoClips.forEach(c=>{
+    const item = S.cut.media[c.mediaIdx];
+    if(item?.url) _mediaUrls[c.mediaIdx] = item.url;
+  });
+
+  // Preload all media by creating temporary elements to warm the browser cache
+  for(const [idx, url] of Object.entries(_mediaUrls)){
+    const v = document.createElement('video');
+    v.src = url; v.preload = 'auto'; v.muted = true; v.style.display='none';
     document.body.appendChild(v);
-    await new Promise(r=>{v.oncanplaythrough=r;v.onerror=r;setTimeout(r,10000);});
-    vidEls[clip.mediaIdx]=v;
+    await new Promise(r=>{v.oncanplaythrough=r;v.onerror=r;setTimeout(r,8000);});
+    v.remove();
   }
 
-  // Standalone audio clips
-  const audioOnlyClips=S.cut.clips.filter(c=>c.type==='audio'&&!c.linkedToVideo).sort((a,b)=>a.start-b.start);
-  const audioEls={};
-  for(const clip of audioOnlyClips){
-    const item=S.cut.media[clip.mediaIdx];
-    if(!item?.url||audioEls[clip.mediaIdx]||S.cut.mutedTracks?.[clip.track]) continue;
-    const a=document.createElement('audio');
-    a.src=item.url; a.preload='auto'; a.muted=false; a.volume=1.0; a.style.display='none';
-    document.body.appendChild(a);
-    await new Promise(r=>{a.oncanplaythrough=r;a.onerror=r;setTimeout(r,8000);});
-    audioEls[clip.mediaIdx]=a;
-  }
+  // Single master video element - this is what captureStream() runs on
+  const masterVid = document.createElement('video');
+  masterVid.muted = false;
+  masterVid.volume = 1.0;
+  masterVid.style.display = 'none';
+  document.body.appendChild(masterVid);
 
-  // ── Build MediaStream ──
-  // Play first video briefly to unlock audio stream (must be after awaits, but we need audio)
-  // The trick: captureStream() on a playing element gives live audio
-  const _firstVid = Object.values(vidEls)[0];
-  const videoStream = canvas.captureStream(fps);
-  let finalStream = videoStream;
-
-  // Audio: use tracks captured in showExportModal (user gesture = Export button click)
-  // showExportModal calls play()+captureStream() synchronously = always live tracks
+  // Use the audio stream pre-captured in showExportModal (user gesture)
+  // masterVid and masterAudioTracks were created synchronously in the click handler
   const masterAudioTracks = window._exportMasterAudioTracks || [];
-  console.log('Export audio from gesture:', masterAudioTracks.length,
+  console.log('Export audio tracks from gesture:', masterAudioTracks.length,
     masterAudioTracks.map(t=>t.readyState+'/'+t.enabled).join(','));
 
-  // masterVid = the element created in showExportModal (already has captureStream wired)
-  const masterVid = window._exportMasterVid || _firstVid || document.createElement('video');
-  if(!window._exportMasterVid) document.body.appendChild(masterVid);
-  masterVid.muted = false; masterVid.volume = 1.0;
-  window._exportMasterVid = masterVid;
+  // Load first clip into masterVid
+  const _firstClip = videoClips[0];
+  const _firstItem = S.cut.media[_firstClip.mediaIdx];
+  masterVid.src = _firstItem?.url || '';
+  masterVid.currentTime = _firstClip.fileStart || 0;
+  await new Promise(r=>{masterVid.oncanplaythrough=r;masterVid.onerror=r;setTimeout(r,8000);});
+  masterVid.pause();
 
-  // Also collect audio-only track streams
+  // Preload standalone audio-only clips
+  const audioOnlyClips = S.cut.clips
+    .filter(c=>c.type==='audio'&&!c.linkedToVideo)
+    .sort((a,b)=>a.start-b.start);
+  const audioEls = {};
+  for(const clip of audioOnlyClips){
+    const item = S.cut.media[clip.mediaIdx];
+    if(!item?.url || audioEls[clip.mediaIdx]) continue;
+    if(S.cut.mutedTracks?.[clip.track]) continue;
+    const a = document.createElement('audio');
+    a.src=item.url; a.preload='auto';
+    a.muted=false; a.volume=1.0; a.style.display='none';
+    document.body.appendChild(a);
+    await new Promise(r=>{a.oncanplaythrough=r;a.onerror=r;setTimeout(r,8000);});
+    audioEls[clip.mediaIdx] = a;
+  }
+
+  // Collect standalone audio tracks the same way
   const allAudioTracks = [...masterAudioTracks];
   for(const a of Object.values(audioEls)){
     try{
       await a.play();
-      const _as = a.captureStream ? a.captureStream() : null;
-      if(_as) _as.getAudioTracks().forEach(t=>{ if(t.readyState==='live') allAudioTracks.push(t); });
-      a.pause(); a.currentTime=0;
+      const as2 = a.captureStream ? a.captureStream() : null;
+      if(as2) as2.getAudioTracks().forEach(t=>{ if(t.readyState==='live') allAudioTracks.push(t); });
+      a.pause(); a.currentTime = 0;
     }catch(e){}
   }
 
-  if(allAudioTracks.length>0){
-    finalStream=new MediaStream([...videoStream.getVideoTracks(),...allAudioTracks]);
-    console.log('Final export audio tracks:', allAudioTracks.length);
-  } else {
-    console.warn('No audio tracks - exporting video only');
-  }
+  // Build final stream: canvas video + audio tracks from user gesture
+  const videoStream = canvas.captureStream(fps);
+  const _allExportAudio = [...masterAudioTracks, ...allAudioTracks]
+    .filter(t => t.readyState === 'live' || t.enabled);
+  console.log('Final export audio tracks:', _allExportAudio.length);
+  const finalStream = _allExportAudio.length > 0
+    ? new MediaStream([...videoStream.getVideoTracks(), ..._allExportAudio])
+    : videoStream;
 
-  // ── Codec selection ──
-  const fmt=document.getElementById('exp-format')?.value||'webm';
+  // vidEls alias for renderFrame compatibility (single element, all clips use it)
+  const vidEls = { _master: masterVid };
+  window._exportMasterVid = masterVid;
+  window._exportMasterGain = null;
+
+
+    // Choose codec: prefer H264/AAC (MP4-compatible) if browser supports it
+  const fmt = document.getElementById('exp-format')?.value || 'webm';
   let mimeType;
-  if(fmt==='mp4'){
-    const mp4Types=['video/mp4;codecs=avc1.42E01E,mp4a.40.2','video/mp4;codecs=h264,aac','video/mp4'];
-    mimeType=mp4Types.find(m=>MediaRecorder.isTypeSupported(m));
+  if(fmt === 'mp4'){
+    // Try H264+AAC for true MP4 content — supported in Chrome
+    const mp4Types = ['video/mp4;codecs=avc1.42E01E,mp4a.40.2','video/mp4;codecs=h264,aac','video/mp4'];
+    mimeType = mp4Types.find(m=>MediaRecorder.isTypeSupported(m));
   }
   if(!mimeType){
-    const webmTypes=['video/webm;codecs=vp9,opus','video/webm;codecs=vp8,opus','video/webm'];
-    mimeType=webmTypes.find(m=>MediaRecorder.isTypeSupported(m))||'video/webm';
+    // Fallback: VP9+Opus WebM
+    const webmTypes = ['video/webm;codecs=vp9,opus','video/webm;codecs=vp8,opus','video/webm'];
+    mimeType = webmTypes.find(m=>MediaRecorder.isTypeSupported(m)) || 'video/webm';
   }
-
   const recorder=new MediaRecorder(finalStream,{mimeType,videoBitsPerSecond:BR,audioBitsPerSecond:320000});
   const chunks=[];
   recorder.ondataavailable=e=>{if(e.data&&e.data.size>0)chunks.push(e.data);};
@@ -841,152 +864,138 @@ async function startExport(){
   recorder.onstop=async()=>{
     status.textContent='Packaging download...';
     bar.style.width='100%';
-    Object.values(vidEls).forEach(v=>{try{v.pause();v.src='';v.remove();}catch(e){}});
-    Object.values(audioEls).forEach(a=>{try{a.pause();a.src='';a.remove();}catch(e){}});
-    window._exportMasterVid=null; window._exportMasterGain=null;
+    // Cleanup video and audio elements
+    if(window._exportMasterVid){try{window._exportMasterVid.pause();window._exportMasterVid.src='';if(document.body.contains(window._exportMasterVid))document.body.removeChild(window._exportMasterVid);}catch(e){}window._exportMasterVid=null;}
+    Object.values(audioEls).forEach(a=>{try{a.pause();a.src='';document.body.contains(a)&&document.body.removeChild(a);}catch(e){}});
+    window._exportMasterGain=null;
     await new Promise(r=>setTimeout(r,300));
     const blob=new Blob(chunks,{type:mimeType});
     const url=URL.createObjectURL(blob);
-    const a2=document.createElement('a');
-    a2.href=url;
+    const a=document.createElement('a');
+    a.href=url;
     const fname=(S.currentProject?.name||'export').replace(/[^\w\s-]/g,'').trim().replace(/\s+/g,'_');
-    const ext=mimeType.includes('mp4')?'mp4':'webm';
-    a2.download=fname+'_'+W+'x'+H+'_'+fps+'fps.'+ext;
-    document.body.appendChild(a2); a2.click(); document.body.removeChild(a2);
+    const ext = mimeType.includes('mp4') ? 'mp4' : 'webm';
+    a.download = fname+'_'+W+'x'+H+'_'+fps+'fps.'+ext;
+    document.body.appendChild(a); a.click(); document.body.removeChild(a);
     setTimeout(()=>URL.revokeObjectURL(url),30000);
     document.getElementById('export-modal')?.remove();
     notify('✓ Export downloaded — '+fname+' ('+(mimeType.includes('mp4')?'MP4':'WebM')+')','#3fb950');
   };
 
-  window._exportMasterGain=null;
-  let lastClipIdx=-1, lastActiveVid=null;
+  recorder.start(500); // collect every 500ms for stable chunks
+  status.textContent='Rendering with audio...';
 
-  // CRITICAL: Do NOT change masterVid.src here - it kills the captureStream audio track
-  // The audio track was captured in showExportModal; just seek masterVid to t=0 position
-  const _firstClip = videoClips[0];
-  if(masterVid){
-    masterVid.volume = 1.0; masterVid.muted = false;
-    // Seek to start - don't change src
-    if(masterVid.readyState >= 1 && masterVid.currentTime !== 0){
-      masterVid.currentTime = _firstClip?.fileStart || 0;
-    }
-  }
-  window._exportMasterVid = masterVid;
-
-  // recorder.start begins recording - audio track is live from the gesture-captured stream
-  status.textContent='Rendering...';
-  recorder.start(500);
-  // renderFrame will seek and play masterVid at the right position when first clip starts
-
+  const dt=1/fps;
   let t=0;
-  const startWall=Date.now();
+  let lastActiveVid=null;
+  const startTs=Date.now();
+
+  // ── Smooth render: let video play naturally, capture frames at real-time rate ──
+  // Seek once to start, then just drawImage() each frame — no per-frame seeks
+  let lastClipIdx = -1;
 
   async function renderFrame(){
-    // End condition
     if(t > totalDur + dt){
-      if(lastActiveVid&&!lastActiveVid.paused) lastActiveVid.pause();
-      Object.values(audioEls).forEach(a=>{try{a.pause();}catch(e){}});
-      await new Promise(r=>setTimeout(r,600)); // flush final chunks
-      if(recorder.state!=='inactive') recorder.stop();
+      if(lastActiveVid && !lastActiveVid.paused){ lastActiveVid.pause(); }
+      Object.values(audioEls).forEach(a=>{ try{a.pause();}catch(e){} });
+      await new Promise(r=>setTimeout(r,400)); // flush audio buffer
+      recorder.stop();
       return;
     }
 
-    // ── Draw frame ──
-    ctx.fillStyle='#000'; ctx.fillRect(0,0,W,H);
-
-    // Frame hold
-    const fhNow=S.cut.clips.find(c=>c.type==='frame_hold'&&t>=c.start&&t<c.start+c.dur);
+    // Frame hold: draw frozen frame independently of source clip
+    const fhNow = S.cut.clips.find(c => c.type==='frame_hold' && t>=c.start && t<c.start+c.dur);
     if(fhNow){
-      if(fhNow._imgData&&(!fhNow._img||!fhNow._img.complete)){
-        fhNow._img=new Image(); fhNow._img.src=fhNow._imgData;
+      if(fhNow._imgData && (!fhNow._img || !fhNow._img.complete)){
+        fhNow._img = new Image(); fhNow._img.src = fhNow._imgData;
       }
-      if(fhNow._img&&fhNow._img.complete) ctx.drawImage(fhNow._img,0,0,W,H);
-      if(lastActiveVid&&!lastActiveVid.paused) lastActiveVid.pause();
-    } else {
-      // Find video clip at time t
-      const clip=videoClips.find(c=>t>=c.start&&t<c.start+c.dur);
-      if(clip){
-        // Use per-media vidEls for VIDEO DRAWING (not masterVid - that's audio only)
-        const drawVid = vidEls[clip.mediaIdx];
-        // masterVid handles audio - sync it separately
-        const audioVid = window._exportMasterVid;
-        const clipIdx=videoClips.indexOf(clip);
-        if(drawVid){
-          if(clipIdx!==lastClipIdx){
-            if(lastActiveVid&&lastActiveVid!==drawVid&&!lastActiveVid.paused) lastActiveVid.pause();
-            lastActiveVid=drawVid; lastClipIdx=clipIdx;
-            const _spd=clip.speed||1;
-            const fileTime=(clip.fileStart||0)+Math.max(0,(t-clip.start)*_spd);
-            drawVid.muted=true; // muted - audio comes from masterVid
-            drawVid.volume=0;
-            drawVid.playbackRate=_spd;
-            drawVid.currentTime=fileTime;
-            await new Promise(r=>{
-              const h=()=>{drawVid.removeEventListener('seeked',h);r();};
-              drawVid.addEventListener('seeked',h);
-              setTimeout(r,2000);
-            });
-            if(drawVid.paused) try{await drawVid.play();}catch(e){}
-            // Sync masterVid (audio) to same position - change src if needed
-            if(audioVid){
-              const clipItem=S.cut.media[clip.mediaIdx];
-              if(audioVid.dataset.exportMediaIdx!==String(clip.mediaIdx)){
-                audioVid.src=clipItem?.url||'';
-                audioVid.dataset.exportMediaIdx=String(clip.mediaIdx);
-                await new Promise(r=>{audioVid.oncanplaythrough=r;audioVid.onerror=r;setTimeout(r,5000);});
-              }
-              audioVid.currentTime=fileTime;
-              audioVid.volume=clip.volume!==undefined?Math.min(1,clip.volume/100):1.0;
-              audioVid.muted=false;
-              audioVid.playbackRate=_spd;
-              await new Promise(r=>{const h=()=>{audioVid.removeEventListener('seeked',h);r();}; audioVid.addEventListener('seeked',h); setTimeout(r,2000);});
-              if(audioVid.paused) try{await audioVid.play();}catch(e){}
-            }
-          }
-          if(drawVid.readyState>=2) ctx.drawImage(drawVid,0,0,W,H);
+      ctx.fillStyle='#000'; ctx.fillRect(0,0,W,H);
+      // 1. Draw frozen frame
+      if(fhNow._img && fhNow._img.complete) ctx.drawImage(fhNow._img,0,0,W,H);
+      if(lastActiveVid && !lastActiveVid.paused) lastActiveVid.pause();
+      // 2. Render overlays on top of frozen frame during export
+      const fhActiveOvs = (window._overlays||[]).filter(o => t>=o.startTime && t<o.endTime);
+      if(fhActiveOvs.length && window.renderOverlaysOnCanvas){
+        window.renderOverlaysOnCanvas(ctx, W, H, t, new Set());
+      }
+      const pct2=Math.min(98,Math.round((t/totalDur)*100));
+      bar.style.width=pct2+'%';
+      status.textContent='Rendering: '+pct2+'% (Frame Hold)';
+      t+=dt;
+      const wt2=startTs+t*1000; const d2=Math.max(0,wt2-Date.now());
+      setTimeout(renderFrame,d2); return;
+    }
+
+    const clip = videoClips.find(c => t >= c.start && t < c.start + c.dur);
+
+    if(clip){
+      const vid = window._exportMasterVid;
+      const clipIdx = videoClips.indexOf(clip);
+      const clipItem = S.cut.media[clip.mediaIdx];
+
+      if(clipIdx !== lastClipIdx){
+        if(lastActiveVid && !lastActiveVid.paused) lastActiveVid.pause();
+        lastActiveVid = vid;
+        lastClipIdx = clipIdx;
+        if(vid.dataset.exportMediaIdx !== String(clip.mediaIdx)){
+          vid.src = clipItem?.url || '';
+          // no crossOrigin for blob URLs
+          vid.dataset.exportMediaIdx = String(clip.mediaIdx);
+          await new Promise(r=>{vid.oncanplaythrough=r;vid.onerror=r;setTimeout(r,5000);});
         }
-      } else {
-        // Black gap between clips
-        if(lastActiveVid&&!lastActiveVid.paused) lastActiveVid.pause();
-        lastClipIdx=-1;
+        const fileTime = (clip.fileStart||0) + Math.max(0, t - clip.start);
+        vid.muted = false;
+        vid.volume = clip.volume !== undefined ? Math.min(1, clip.volume/100) : 1.0;
+        vid.currentTime = fileTime;
+        await new Promise(r=>{
+          const h = ()=>{ vid.removeEventListener('seeked',h); r(); };
+          vid.addEventListener('seeked', h);
+          setTimeout(r, 1000);
+        });
+        try{ await vid.play(); }catch(e){}
       }
+
+      ctx.fillStyle = '#000';
+      ctx.fillRect(0, 0, W, H);
+      try{ ctx.drawImage(vid, 0, 0, W, H); }catch(e){}
+      // Render overlays on top of video frame (text, shapes, etc.)
+      if((window._overlays||[]).some(o=>t>=o.startTime&&t<o.endTime) && window.renderOverlaysOnCanvas){
+        window.renderOverlaysOnCanvas(ctx, W, H, t, new Set());
+      }
+
+    } else {
+      ctx.fillStyle = '#000';
+      ctx.fillRect(0, 0, W, H);
+      if(lastActiveVid && !lastActiveVid.paused){ lastActiveVid.pause(); lastActiveVid = null; }
+      lastClipIdx = -1;
     }
 
-    // ── Draw overlays on top ──
-    const activeOvs=(window._overlays||[]).filter(o=>t>=o.startTime&&t<o.endTime);
-    if(activeOvs.length&&window.renderOverlaysOnCanvas){
-      window.renderOverlaysOnCanvas(ctx,W,H,t,new Set());
-    }
-
-    // ── Standalone audio sync ──
+    // ── Standalone audio clips ──
     for(const ac of audioOnlyClips){
       if(S.cut.mutedTracks?.[ac.track]) continue;
-      const a=audioEls[ac.mediaIdx]; if(!a) continue;
-      if(t>=ac.start&&t<ac.start+ac.dur){
-        const aT=(ac.fileStart||0)+Math.max(0,t-ac.start);
-        a.muted=false;
-        // Seek if paused or drifted more than 0.3s
-        if(a.paused){a.currentTime=aT; try{a.play();}catch(e){}}
-        else if(Math.abs(a.currentTime-aT)>0.3) a.currentTime=aT;
+      const a = audioEls[ac.mediaIdx]; if(!a) continue;
+      if(t >= ac.start && t < ac.start + ac.dur){
+        const aT = (ac.fileStart||0) + Math.max(0, t - ac.start);
+        a.muted = false;
+        if(a.paused){ a.currentTime = aT; try{ a.play(); }catch(e){} }
+        else if(Math.abs(a.currentTime - aT) > 0.5) a.currentTime = aT;
       } else if(!a.paused){ a.pause(); }
     }
 
     // ── Progress ──
-    const pct=Math.min(98,Math.round((t/totalDur)*100));
-    bar.style.width=pct+'%';
-    const elapsed=(Date.now()-startWall)/1000;
-    const rate=elapsed>0.5?t/elapsed:fps/30;
-    const rem=rate>0?(totalDur-t)/rate:0;
-    status.textContent=`Rendering: ${pct}% · ${t.toFixed(1)}s/${totalDur.toFixed(1)}s`;
-    if(rem>1) eta.textContent=`~${Math.ceil(rem)}s remaining`;
+    const pct = Math.min(98, Math.round((t / totalDur) * 100));
+    bar.style.width = pct + '%';
+    const elapsed = (Date.now() - startTs) / 1000;
+    const rate = elapsed > 0.5 ? t / elapsed : 1;
+    const rem = rate > 0 ? (totalDur - t) / rate : 0;
+    status.textContent = `Rendering: ${pct}% · ${t.toFixed(1)}s / ${totalDur.toFixed(1)}s`;
+    if(rem > 1) eta.textContent = `~${Math.ceil(rem)}s remaining`;
 
-    t+=dt;
-    // Schedule next frame — use setTimeout(0) for maximum speed
-    // (faster than real-time is fine for canvas+captureStream)
-    // Real-time pacing: captureStream captures at wall-clock rate
-    // Rendering faster than real-time = shorter output video
-    const _wt = startWall + t * 1000;
-    setTimeout(renderFrame, Math.max(0, _wt - Date.now()));
+    t += dt;
+    // Schedule next frame at exact wall-clock target
+    const wallTarget = startTs + t * 1000;
+    const delay = Math.max(0, wallTarget - Date.now());
+    setTimeout(renderFrame, delay);
   }
 
   await renderFrame();
