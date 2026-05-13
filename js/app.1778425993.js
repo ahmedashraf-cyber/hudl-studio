@@ -968,10 +968,13 @@ async function startExport(){
         if(drawVid){
           drawVid.playbackRate=_spd;
           drawVid.currentTime=fileTime;
-          _transitionPending=true;
-          const _done=()=>{_transitionPending=false; if(drawVid.paused) drawVid.play().catch(()=>{});};
-          drawVid.addEventListener('seeked',function _sh(){ drawVid.removeEventListener('seeked',_sh); _done(); });
-          setTimeout(_done,2000);
+          // Seek fires async - drawVid.readyState drops to <2 during seek
+          // Draw path uses readyState check so last-good frame is held automatically
+          drawVid.addEventListener('seeked',function _sh(){
+            drawVid.removeEventListener('seeked',_sh);
+            if(drawVid.paused) drawVid.play().catch(()=>{});
+          });
+          setTimeout(()=>{ if(drawVid.paused) drawVid.play().catch(()=>{}); },2000);
         }
 
         if(audioVid){
@@ -989,16 +992,23 @@ async function startExport(){
           } else { _syncAudio(); }
         }
       } else {
-        if(drawVid&&!_transitionPending&&Math.abs(drawVid.currentTime-fileTime)>0.15)
+        if(drawVid&&Math.abs(drawVid.currentTime-fileTime)>0.15)
           drawVid.currentTime=fileTime;
       }
 
-      ctx.fillStyle='#000'; ctx.fillRect(0,0,W,H);
-      if(drawVid&&drawVid.readyState>=2&&!_transitionPending){
-        try{ ctx.drawImage(drawVid,0,0,W,H); }catch(e){}
-        try{ _lastGoodFrame=ctx.getImageData(0,0,W,H); }catch(e){}
+      // Draw: try live frame first, fall back to last-good (never black)
+      if(drawVid&&drawVid.readyState>=2){
+        try{ ctx.drawImage(drawVid,0,0,W,H); _lastGoodFrame=null; }catch(e){}
       } else if(_lastGoodFrame){
+        // Hold last good frame - no black injection
         ctx.putImageData(_lastGoodFrame,0,0);
+      } else {
+        // Only truly first frame with no content
+        ctx.fillStyle='#000'; ctx.fillRect(0,0,W,H);
+      }
+      // Save last good after successful draw
+      if(drawVid&&drawVid.readyState>=2){
+        try{ _lastGoodFrame=ctx.getImageData(0,0,W,H); }catch(e){}
       }
     } else {
       if(lastActiveVid&&!lastActiveVid.paused) lastActiveVid.pause();
