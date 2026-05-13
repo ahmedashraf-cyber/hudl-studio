@@ -762,10 +762,11 @@ async function startExport(){
 
   const videoClips=S.cut.clips.filter(c=>c.type==='video').sort((a,b)=>a.start-b.start);
   if(!videoClips.length){notify('No video clips on timeline','#E31837');btn.disabled=false;btn.textContent='▶ Export';return;}
-  // totalDur = max of ALL content: all clips, overlays, project duration
+  // totalDur = last asset out-point ONLY (hard cap)
+  // S.proj.dur is workspace size, NOT content length - never use it here
   const _allEnds = S.cut.clips.map(c=>c.start+c.dur);
   const _ovEnds  = (window._overlays||[]).map(o=>o.endTime||0);
-  const totalDur = Math.max(S.proj.dur||0, ..._allEnds, ..._ovEnds);
+  const totalDur = Math.max(0.1, ..._allEnds, ..._ovEnds);
 
   // Offscreen canvas for video frames
   const canvas=document.createElement('canvas');
@@ -914,11 +915,10 @@ async function startExport(){
   let lastClipIdx = -1;
 
   async function renderFrame(){
-    if(t > totalDur + dt){
+    if(t >= totalDur){  // strict - no phantom frames past last asset
       if(lastActiveVid && !lastActiveVid.paused){ lastActiveVid.pause(); }
       Object.values(audioEls).forEach(a=>{ try{a.pause();}catch(e){} });
-      await new Promise(r=>setTimeout(r,400)); // flush audio buffer
-      recorder.stop();
+      if(recorder.state!=='inactive') recorder.stop(); // stop immediately = no trailing black frames
       return;
     }
 
