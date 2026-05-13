@@ -779,20 +779,31 @@ async function startExport(){
   // No AudioContext, no suspended state issues, no multi-track mixing problems
   status.textContent='Loading video files...';
 
-  // Build unique media list for preloading
-  const _mediaUrls = {};
-  videoClips.forEach(c=>{
-    const item = S.cut.media[c.mediaIdx];
-    if(item?.url) _mediaUrls[c.mediaIdx] = item.url;
-  });
-
-  // Preload all media by creating temporary elements to warm the browser cache
-  for(const [idx, url] of Object.entries(_mediaUrls)){
+  // Per-media persistent video elements for DRAWING (muted, visual only)
+  // These stay loaded throughout export - no src changes = no black gaps
+  const drawEls = {}; // mediaIdx -> <video> (muted, for ctx.drawImage)
+  status.textContent = 'Pre-loading media...';
+  const _uniqueMediaIdxs = [...new Set(videoClips.map(c=>c.mediaIdx))];
+  for(const mIdx of _uniqueMediaIdxs){
+    const item = S.cut.media[mIdx];
+    if(!item?.url) continue;
     const v = document.createElement('video');
-    v.src = url; v.preload = 'auto'; v.muted = true; v.style.display='none';
+    v.src = item.url;
+    v.preload = 'auto';
+    v.muted = true;  // muted - audio comes from masterVid via AudioContext
+    v.volume = 0;
+    v.style.display = 'none';
+    v.playsInline = true;
     document.body.appendChild(v);
-    await new Promise(r=>{v.oncanplaythrough=r;v.onerror=r;setTimeout(r,8000);});
-    v.remove();
+    // Wait for full readiness - no timeout shortcuts for large files
+    await new Promise(r=>{
+      if(v.readyState >= 4){ r(); return; }
+      v.oncanplaythrough = r;
+      v.onerror = r;
+      setTimeout(r, 15000); // 15s max for large files
+    });
+    drawEls[mIdx] = v;
+    status.textContent = 'Pre-loading: ' + (Object.keys(drawEls).length) + '/' + _uniqueMediaIdxs.length;
   }
 
   // AudioContext Master Bus: all audio routes through one graph -> one stereo stream
@@ -853,7 +864,7 @@ async function startExport(){
     ? new MediaStream([...videoStream.getVideoTracks(), ..._audioTracks])
     : videoStream;
 
-  const vidEls = { _master: masterVid };
+  const vidEls = drawEls; // persistent per-media elements for video drawing
   window._exportMasterGain = _masterBus;
 
 
@@ -948,45 +959,79 @@ async function startExport(){
     const clip = videoClips.find(c => t >= c.start && t < c.start + c.dur);
 
     if(clip){
-      const vid = window._exportMasterVid;
+      const _spd = clip.speed || 1;
+      const fileTime = (clip.fileStart||0) + Math.max(0,(t - clip.start)*_spd);
       const clipIdx = videoClips.indexOf(clip);
-      const clipItem = S.cut.media[clip.mediaIdx];
+
+      // drawVid: persistent pre-loaded element (muted) for canvas drawing
+      const drawVid = vidEls[clip.mediaIdx];
+      // audioVid: masterVid routed through AudioContext for sound
+      const audioVid = window._exportMasterVid;
 
       if(clipIdx !== lastClipIdx){
-        if(lastActiveVid && !lastActiveVid.paused) lastActiveVid.pause();
-        lastActiveVid = vid;
+        // Pause previous draw element
+        if(lastActiveVid && lastActiveVid !== drawVid && !lastActiveVid.paused)
+          lastActiveVid.pause();
+        lastActiveVid = drawVid;
         lastClipIdx = clipIdx;
-        if(vid.dataset.exportMediaIdx !== String(clip.mediaIdx)){
-          vid.src = clipItem?.url || '';
-          // no crossOrigin for blob URLs
-          vid.dataset.exportMediaIdx = String(clip.mediaIdx);
-          await new Promise(r=>{vid.oncanplaythrough=r;vid.onerror=r;setTimeout(r,5000);});
+
+        // Seek drawVid (already loaded, just seek - no src change)
+        if(drawVid){
+          drawVid.playbackRate = _spd;
+          if(Math.abs(drawVid.currentTime - fileTime) > 0.08){
+            drawVid.currentTime = fileTime;
+            await new Promise(r=>{
+              const h=()=>{drawVid.removeEventListener('seeked',h);r();};
+              drawVid.addEventListener('seeked',h);
+              setTimeout(r,3000);
+            });
+          }
+          if(drawVid.paused) try{await drawVid.play();}catch(e){}
         }
-        const fileTime = (clip.fileStart||0) + Math.max(0, t - clip.start);
-        vid.muted = false;
-        vid.volume = clip.volume !== undefined ? Math.min(1, clip.volume/100) : 1.0;
-        vid.currentTime = fileTime;
-        await new Promise(r=>{
-          const h = ()=>{ vid.removeEventListener('seeked',h); r(); };
-          vid.addEventListener('seeked', h);
-          setTimeout(r, 1000);
-        });
-        try{ await vid.play(); }catch(e){}
+
+        // Sync audioVid (masterVid) - switch src only if different media file
+        if(audioVid){
+          const clipItem = S.cut.media[clip.mediaIdx];
+          if(audioVid.dataset.exportMediaIdx !== String(clip.mediaIdx)){
+            audioVid.src = clipItem?.url || '';
+            audioVid.dataset.exportMediaIdx = String(clip.mediaIdx);
+            await new Promise(r=>{audioVid.oncanplaythrough=r;audioVid.onerror=r;setTimeout(r,8000);});
+          }
+          audioVid.currentTime = fileTime;
+          audioVid.volume = clip.volume!==undefined ? Math.min(1,clip.volume/100) : 1.0;
+          audioVid.muted = false;
+          audioVid.playbackRate = _spd;
+          await new Promise(r=>{
+            const h=()=>{audioVid.removeEventListener('seeked',h);r();};
+            audioVid.addEventListener('seeked',h);
+            setTimeout(r,3000);
+          });
+          if(audioVid.paused) try{await audioVid.play();}catch(e){}
+        }
+      } else {
+        // Same clip - keep drawVid playing naturally (no per-frame seeks)
+        // Only re-seek if drift > 200ms to handle speed changes
+        if(drawVid && Math.abs(drawVid.currentTime - fileTime) > 0.2){
+          drawVid.currentTime = fileTime;
+        }
       }
 
-      ctx.fillStyle = '#000';
-      ctx.fillRect(0, 0, W, H);
-      try{ ctx.drawImage(vid, 0, 0, W, H); }catch(e){}
-      // Render overlays on top of video frame (text, shapes, etc.)
+      // Draw frame - use last good frame if element not ready
+      ctx.fillStyle = '#000'; ctx.fillRect(0,0,W,H);
+      if(drawVid && drawVid.readyState >= 2) ctx.drawImage(drawVid,0,0,W,H);
+      // Overlays on top
       if((window._overlays||[]).some(o=>t>=o.startTime&&t<o.endTime) && window.renderOverlaysOnCanvas){
-        window.renderOverlaysOnCanvas(ctx, W, H, t, new Set());
+        window.renderOverlaysOnCanvas(ctx,W,H,t,new Set());
       }
 
     } else {
-      ctx.fillStyle = '#000';
-      ctx.fillRect(0, 0, W, H);
-      if(lastActiveVid && !lastActiveVid.paused){ lastActiveVid.pause(); lastActiveVid = null; }
+      // Gap between clips - hold last frame instead of black
+      if(lastActiveVid && !lastActiveVid.paused) lastActiveVid.pause();
       lastClipIdx = -1;
+      // Draw overlays even during gaps
+      if((window._overlays||[]).some(o=>t>=o.startTime&&t<o.endTime) && window.renderOverlaysOnCanvas){
+        window.renderOverlaysOnCanvas(ctx,W,H,t,new Set());
+      }
     }
 
     // ── Standalone audio clips ──
