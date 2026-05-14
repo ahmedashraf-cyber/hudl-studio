@@ -334,7 +334,12 @@ window.openProject = async function(id) {
     S.proj = { w: project.width||1920, h: project.height||1080, fps: project.fps||30, dur: project.duration||30 };
 
     // Restore Cut state from saved Firestore state
-    const cs = project.state?.cut || {};
+    // project.state is stored as JSON string (via JSON.stringify in saveProjectState)
+    const _stateRaw = project.state;
+    const _stateParsed = typeof _stateRaw === 'string'
+      ? (() => { try{ return JSON.parse(_stateRaw); }catch(e){ return {}; } })()
+      : (_stateRaw || {});
+    const cs = _stateParsed?.cut || {};
 
     // ── Restore media files from IndexedDB ──
     let restoredMedia = [];
