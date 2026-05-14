@@ -638,6 +638,9 @@ window.doSave = async function() {
           thumbnail: m.thumbnail || null
         }))
       }
+    }, {
+      // Persist workspace settings so refresh restores exact state
+      fps: S.proj.fps, width: S.proj.w, height: S.proj.h, duration: S.proj.dur
     });
     if (si) { si.textContent = '● Saved'; si.style.color = 'var(--grn)'; }
     notify('Saved', '#3fb950');

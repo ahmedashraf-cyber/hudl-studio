@@ -33,11 +33,20 @@ async function getUserProjects(userId) {
   return docs;
 }
 
-async function saveProjectState(projectId, state) {
-  await db.collection('projects').doc(projectId).update({
+async function saveProjectState(projectId, state, projSettings) {
+  // state = cut/canvas data; projSettings = optional {fps, width, height, duration}
+  const update = {
     state: JSON.stringify(state),
     updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
-  });
+  };
+  // Persist any changed project settings back to the document
+  if(projSettings){
+    if(projSettings.fps)      update.fps      = projSettings.fps;
+    if(projSettings.width)    update.width    = projSettings.width;
+    if(projSettings.height)   update.height   = projSettings.height;
+    if(projSettings.duration) update.duration = projSettings.duration;
+  }
+  await db.collection('projects').doc(projectId).update(update);
 }
 
 async function loadProject(projectId) {
