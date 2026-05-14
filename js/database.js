@@ -1,11 +1,21 @@
 // Database functions using Firebase compat SDK (window.db is set in firebase-config.js)
 
-async function createProject(userId, name, type) {
-  const ref = await db.collection('projects').add({
-    userId, name, type,
-    createdAt: firebase.firestore.FieldValue.serverTimestamp(),
-    updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
-  });
+async function createProject(userId, data) {
+  // Accept either (userId, name, type) old style or (userId, {name, appType, ...}) new style
+  let doc;
+  if(typeof data === 'string'){
+    // Old style: createProject(uid, name, type) - kept for compat
+    const type = arguments[2];
+    doc = { userId, name: data, appType: type||'cut',
+            width:1920, height:1080, fps:30, duration:30 };
+  } else {
+    doc = { userId, ...data };
+    // Ensure no undefined fields (Firestore rejects them)
+    Object.keys(doc).forEach(k => { if(doc[k]===undefined) delete doc[k]; });
+  }
+  doc.createdAt = firebase.firestore.FieldValue.serverTimestamp();
+  doc.updatedAt  = firebase.firestore.FieldValue.serverTimestamp();
+  const ref = await db.collection('projects').add(doc);
   return ref.id;
 }
 
