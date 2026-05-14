@@ -683,11 +683,13 @@ function showExportModal(){
     const _mvSrc = _ctx.createMediaElementSource(_mv);
     _mvSrc.connect(_gain);
 
-    // Step 5: play() in gesture = unlocks media autoplay for export
+    // Step 5: play() in gesture = unlocks AudioContext (not for audio output)
+    // _mv is MUTED - drawEls will be the actual audio sources during export
+    // We only need _mv to trigger the user-gesture unlock
+    _mv.muted = true; // mute: only used to unlock AudioContext, not for audio output
     const _playP = _mv.play();
     if(_playP) _playP.catch(()=>{});
 
-    // Store everything - DO NOT pause masterVid here
     window._exportAudioCtx   = _ctx;
     window._exportMasterGain = _gain;
     window._exportAudioDest  = _dest;
@@ -820,12 +822,9 @@ async function startExport(){
     status.textContent='Pre-loading: '+(Object.keys(drawEls).length)+'/'+_uniqueIdxs.length;
   }
 
-  // Single master video element - this is what captureStream() runs on
-  const masterVid = document.createElement('video');
-  masterVid.muted = false;
-  masterVid.volume = 1.0;
-  masterVid.style.display = 'none';
-  document.body.appendChild(masterVid);
+  // masterVid is from showExportModal (already muted, only used for AudioContext unlock)
+  // drawEls handle all video+audio during rendering
+  const masterVid = window._exportMasterVid; // reference only, not used in renderFrame
 
   // Use AudioContext stream from showExportModal gesture
   // AudioContext was created AND resumed synchronously in the Export button click
@@ -838,13 +837,8 @@ async function startExport(){
   // Resume AudioContext again in case browser suspended between modal open and export click
   if(_audioCtx && _audioCtx.state==='suspended') _audioCtx.resume();
 
-  // Load first clip into masterVid
-  const _firstClip = videoClips[0];
-  const _firstItem = S.cut.media[_firstClip.mediaIdx];
-  masterVid.src = _firstItem?.url || '';
-  masterVid.currentTime = _firstClip.fileStart || 0;
-  await new Promise(r=>{masterVid.oncanplaythrough=r;masterVid.onerror=r;setTimeout(r,8000);});
-  masterVid.pause();
+  // drawEls[firstClip.mediaIdx] is already loaded and connected to AudioContext
+  // No need to load masterVid separately
 
   // Preload standalone audio-only clips
   const audioOnlyClips = S.cut.clips
@@ -863,16 +857,7 @@ async function startExport(){
     audioEls[clip.mediaIdx] = a;
   }
 
-  // Collect standalone audio tracks the same way
-  const allAudioTracks = [...masterAudioTracks];
-  for(const a of Object.values(audioEls)){
-    try{
-      await a.play();
-      const as2 = a.captureStream ? a.captureStream() : null;
-      if(as2) as2.getAudioTracks().forEach(t=>{ if(t.readyState==='live') allAudioTracks.push(t); });
-      a.pause(); a.currentTime = 0;
-    }catch(e){}
-  }
+  // Standalone audio clips are connected via AudioContext (below) - no captureStream needed
 
   // Also connect standalone audio elements to the AudioContext master bus
   if(_audioCtx && _masterGain){
@@ -880,11 +865,11 @@ async function startExport(){
       try{ const _as=_audioCtx.createMediaElementSource(a); _as.connect(_masterGain); }catch(e){}
     }
   }
-  // Build final stream: canvas video + AudioContext destination (all sources mixed)
+  // Build final stream: canvas video + AudioContext master bus output
+  // Single clean audio stream from AudioContext - no duplicates
   const videoStream = canvas.captureStream(fps);
-  const _audioTracks = _audioDest ? _audioDest.stream.getAudioTracks() :
-    [...masterAudioTracks,...allAudioTracks].filter(t=>t.readyState==='live'||t.enabled);
-  console.log('Final export audio tracks:', _audioTracks.length);
+  const _audioTracks = _audioDest ? _audioDest.stream.getAudioTracks() : [];
+  console.log('Final export: videoTracks='+videoStream.getVideoTracks().length+' audioTracks='+_audioTracks.length);
   const finalStream = _audioTracks.length > 0
     ? new MediaStream([...videoStream.getVideoTracks(), ..._audioTracks])
     : videoStream;
