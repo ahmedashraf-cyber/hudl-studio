@@ -4640,14 +4640,14 @@ function syncCutVid(){
   const screen = $('cut-screen');
   if(!screen) return;
 
-  // Find active video clip at current playhead
+  // Find ALL active video clips at playhead, sorted by track index (V1=0 bottom, V(n) top)
   const videoClips = S.cut.clips.filter(c => c.type === 'video' || c.type === 'frame_hold');
-  // frame_hold takes priority — when a frame hold exists at ph, show it instead of video
-  const _allAtPh = videoClips.filter(c =>
-    ph >= c.start && ph < c.start + c.dur && !S.cut.hiddenTracks?.[c.track]
-  );
+  const _allAtPh = videoClips
+    .filter(c => ph >= c.start && ph < c.start + c.dur && !S.cut.hiddenTracks?.[c.track])
+    .sort((a,b) => (a.track||0) - (b.track||0)); // lower track index = drawn first (underneath)
+  // Primary active clip for audio/seek: highest track with video (frame_hold takes priority)
   const active = _allAtPh.find(c => c.type === 'frame_hold') ||
-                 _allAtPh.find(c => c.type === 'video') || null;
+                 _allAtPh.slice().reverse().find(c => c.type === 'video') || null;
 
   // Ensure pool vids exist for all clips
   videoClips.forEach(c => {
@@ -5099,11 +5099,20 @@ function syncCutVid(){
         window.renderOverlaysOnCanvas(ctx, canvas.width, canvas.height, ph, _playedFreezes);
       ctx.restore();
     } else {
-      // Effects only - filter applied during video draw, reset before overlays
-      const filterStr = buildFilterStr(activeCI);
-      ctx.save(); ctx.filter = filterStr !== 'none' ? filterStr : '';
-      try{ _drawVideoFrame(drawSrc,ctx,canvas.width,canvas.height); }catch(e){}
-      ctx.restore();
+      // Multi-track compositing: draw each active clip in track order (V1 bottom, Vn top)
+      ctx.clearRect(0,0,canvas.width,canvas.height);
+      ctx.fillStyle='#000'; ctx.fillRect(0,0,canvas.width,canvas.height);
+      _allAtPh.forEach(layerClip => {
+        const layerCI = S.cut.clips.indexOf(layerClip);
+        const layerItem = S.cut.media[layerClip.mediaIdx];
+        const layerSrc = layerItem?.url ? getPoolVid(layerItem.url) : null;
+        if(!layerSrc || layerSrc.readyState < 2) return;
+        const layerFilter = buildFilterStr(layerCI);
+        ctx.save();
+        ctx.filter = layerFilter !== 'none' ? layerFilter : '';
+        try{ _drawVideoFrame(layerSrc, ctx, canvas.width, canvas.height); }catch(e){}
+        ctx.restore();
+      });
       ctx.save(); ctx.filter='none'; ctx.globalAlpha=1; ctx.globalCompositeOperation='source-over';
       if(window.renderOverlaysOnCanvas)
         window.renderOverlaysOnCanvas(ctx, canvas.width, canvas.height, ph, _playedFreezes);

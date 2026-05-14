@@ -23,7 +23,12 @@ window.getSnapPoint = function(dragPx, excludeClipIdx, edgeType){
       pts.push({ px: c.start * PPS,           label: 'clip start' });
       pts.push({ px: (c.start+c.dur) * PPS,   label: 'clip end'   });
     });
-    // Sort ascending so binary search is possible
+    // Add overlay start/end points as snap anchors
+    (window._overlays||[]).forEach(o => {
+      pts.push({ px: (o.startTime||0) * PPS, label: 'overlay start' });
+      pts.push({ px: (o.endTime||0)   * PPS, label: 'overlay end'   });
+    });
+    // Sort ascending so binary search works
     pts.sort((a,b)=>a.px-b.px);
     window._snapCache = { excludeIdx: excludeClipIdx, pps: PPS, pts };
   }
