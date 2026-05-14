@@ -928,8 +928,7 @@ async function startExport(){
   // Non-blocking state machine renderer
   // No await inside loop - seeks use event callbacks
   // Last-good frame held during transitions to prevent black frames
-  let _lastGoodFrame = null;
-  let _transitionPending = false;
+  // Canvas naturally holds last drawn frame - no need for getImageData copies
 
   function renderFrame(){
     if(t >= totalDur){
@@ -992,28 +991,22 @@ async function startExport(){
           } else { _syncAudio(); }
         }
       } else {
-        if(drawVid&&Math.abs(drawVid.currentTime-fileTime)>0.15)
-          drawVid.currentTime=fileTime;
+        // Same clip playing naturally - NO seeks during playback
+        // Seeking during playback is the #1 cause of black frames and stutter
+        // The video plays at playbackRate - let it run, just drawImage each frame
       }
 
-      // Draw: try live frame first, fall back to last-good (never black)
+      // Draw current frame if element is ready
+      // If not ready (mid-seek on clip change): canvas keeps previous frame = no black
       if(drawVid&&drawVid.readyState>=2){
-        try{ ctx.drawImage(drawVid,0,0,W,H); _lastGoodFrame=null; }catch(e){}
-      } else if(_lastGoodFrame){
-        // Hold last good frame - no black injection
-        ctx.putImageData(_lastGoodFrame,0,0);
-      } else {
-        // Only truly first frame with no content
-        ctx.fillStyle='#000'; ctx.fillRect(0,0,W,H);
+        try{ ctx.drawImage(drawVid,0,0,W,H); }catch(e){}
       }
-      // Save last good after successful draw
-      if(drawVid&&drawVid.readyState>=2){
-        try{ _lastGoodFrame=ctx.getImageData(0,0,W,H); }catch(e){}
-      }
+      // Note: no getImageData/putImageData - canvas already holds last drawn frame
+      // captureStream reads the canvas directly without any copies needed
     } else {
       if(lastActiveVid&&!lastActiveVid.paused) lastActiveVid.pause();
       lastClipIdx=-1;
-      if(_lastGoodFrame) ctx.putImageData(_lastGoodFrame,0,0);
+      // Canvas keeps last frame - no black gap between clips
     }
 
     if((window._overlays||[]).some(o=>t>=o.startTime&&t<o.endTime)&&window.renderOverlaysOnCanvas)
