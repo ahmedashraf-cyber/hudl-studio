@@ -651,57 +651,89 @@ window.doSave = async function() {
 window.doExport = function() { showExportModal(); };
 
 function showExportModal(){
-  // Create masterVid and call play() synchronously in user gesture
-  // This unlocks the audio stream BEFORE any async code runs
+  // AudioContext approach: works reliably with user-uploaded blob URLs
+  // captureStream() gives 0 audio tracks on unplayed video - AudioContext is the correct API
   try{
-    if(window._exportMasterVid){ try{window._exportMasterVid.pause();window._exportMasterVid.remove();}catch(e){} }
-    const _mv = document.createElement('video');
-    _mv.muted = false; _mv.volume = 1.0;
-    _mv.style.display = 'none';
-    // Use the first video clip's URL if available
-    const _vclips = S?.cut?.clips?.filter(c=>c.type==='video') || [];
+    // Clean up previous export session
+    if(window._exportMasterVid){ try{window._exportMasterVid.pause(); if(document.body.contains(window._exportMasterVid)) window._exportMasterVid.remove();}catch(e){} }
+    if(window._exportAudioCtx){ try{window._exportAudioCtx.close();}catch(e){} window._exportAudioCtx=null; }
+
+    // Step 1: Create AudioContext IN the gesture handler (synchronous)
+    const _ctx = new (window.AudioContext||window.webkitAudioContext)({sampleRate:48000});
+
+    // Step 2: resume() MUST be called synchronously in the same gesture call stack
+    // AudioContext starts 'suspended' - resume() here unlocks it permanently
+    _ctx.resume(); // synchronous call in gesture = Chrome allows it
+
+    // Step 3: Create master bus
+    const _gain = _ctx.createGain();
+    _gain.gain.value = 1.0;
+    const _dest = _ctx.createMediaStreamDestination();
+    _gain.connect(_dest);
+
+    // Step 4: Create masterVid and connect to AudioContext
+    const _vclips = (S?.cut?.clips||[]).filter(c=>c.type==='video');
     const _firstUrl = _vclips.length ? S?.cut?.media?.[_vclips[0].mediaIdx]?.url : null;
+    const _mv = document.createElement('video');
+    _mv.muted = false; _mv.volume = 1.0; _mv.style.display='none';
     if(_firstUrl) _mv.src = _firstUrl;
-    else _mv.src = ''; // empty src still unlocks the stream
     document.body.appendChild(_mv);
-    // play() in user gesture = unlocks audio autoplay
+
+    // Connect element to AudioContext BEFORE play()
+    const _mvSrc = _ctx.createMediaElementSource(_mv);
+    _mvSrc.connect(_gain);
+
+    // Step 5: play() in gesture = unlocks media autoplay for export
     const _playP = _mv.play();
     if(_playP) _playP.catch(()=>{});
-    // captureStream() immediately while element is in play() chain
-    window._exportMasterVid = _mv;
-    window._exportMasterStream = _mv.captureStream ? _mv.captureStream() : null;
-    window._exportMasterAudioTracks = window._exportMasterStream
-      ? window._exportMasterStream.getAudioTracks() : [];
-    // Pause after getting tracks
-    setTimeout(()=>{ try{_mv.pause(); _mv.currentTime=0;}catch(e){}; }, 200);
-  }catch(e){ console.warn('showExportModal audio setup:', e); }
+
+    // Store everything - DO NOT pause masterVid here
+    window._exportAudioCtx   = _ctx;
+    window._exportMasterGain = _gain;
+    window._exportAudioDest  = _dest;
+    window._exportMasterVid  = _mv;
+    window._exportMvSrc      = _mvSrc;
+
+    // These are now populated by the AudioContext destination
+    window._exportAudioStream = _dest.stream;
+    // Compatibility: also populate _exportMasterAudioTracks for legacy code paths
+    window._exportMasterAudioTracks = _dest.stream.getAudioTracks();
+
+    console.log('Export AudioContext:', _ctx.sampleRate+'Hz state='+_ctx.state,
+      'dest tracks:', _dest.stream.getAudioTracks().length,
+      'readyStates:', _dest.stream.getAudioTracks().map(t=>t.readyState).join(','));
+  }catch(e){ console.warn('showExportModal audio:', e); }
+
+  // Build and show the export modal UI
   document.querySelectorAll('#export-modal').forEach(m=>m.remove());
   const videoClips=S.cut.clips.filter(c=>c.type==='video').sort((a,b)=>a.start-b.start);
-  const totalDur=videoClips.length?Math.max(...videoClips.map(c=>c.start+c.dur)):0;
+  const _allEnds=S.cut.clips.map(c=>c.start+c.dur);
+  const _ovEnds=(window._overlays||[]).map(o=>o.endTime||0);
+  const totalDur=Math.max(0,..._allEnds,..._ovEnds);
   const modal=document.createElement('div');
   modal.id='export-modal';
   modal.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,0.82);z-index:2000;display:flex;align-items:center;justify-content:center';
   modal.innerHTML=`
     <div style="background:#1e2533;border:1px solid rgba(255,255,255,0.13);border-radius:16px;padding:28px;width:460px;font-family:DM Sans,sans-serif;color:#f0f2f5;box-shadow:0 24px 80px rgba(0,0,0,0.6)">
       <div style="font-size:18px;font-weight:700;margin-bottom:6px">Export Video</div>
-      <div style="font-size:13px;color:#8b949e;margin-bottom:20px">Duration: <strong style="color:#f0f2f5">${totalDur.toFixed(1)}s</strong> · ${videoClips.length} video clip(s)</div>
+      <div style="font-size:13px;color:#8b949e;margin-bottom:20px">Duration: <strong style="color:#f0f2f5">${totalDur.toFixed(1)}s</strong> &middot; ${videoClips.length} video clip(s)</div>
       <div style="margin-bottom:14px">
         <label style="font-size:10px;font-weight:700;color:#8b949e;text-transform:uppercase;letter-spacing:.7px;display:block;margin-bottom:6px">Quality / Resolution</label>
         <select id="exp-quality" style="width:100%;padding:9px 11px;background:#252d3d;border:1px solid rgba(255,255,255,0.11);border-radius:8px;color:#f0f2f5;font-size:13px;outline:none">
-          <option value="3840,2160,8000000">4K Ultra HD (3840×2160) — 8 Mbps</option>
-          <option value="1920,1080,4000000" selected>1080p Full HD (1920×1080) — 4 Mbps</option>
-          <option value="1280,720,2000000">720p HD (1280×720) — 2 Mbps</option>
-          <option value="854,480,1000000">480p SD (854×480) — 1 Mbps</option>
-          <option value="640,360,500000">360p Low (640×360) — 500 Kbps</option>
+          <option value="3840,2160,8000000">4K Ultra HD (3840&#xD7;2160) &mdash; 8 Mbps</option>
+          <option value="1920,1080,4000000" selected>1080p Full HD (1920&#xD7;1080) &mdash; 4 Mbps</option>
+          <option value="1280,720,2000000">720p HD (1280&#xD7;720) &mdash; 2 Mbps</option>
+          <option value="854,480,1000000">480p SD (854&#xD7;480) &mdash; 1 Mbps</option>
+          <option value="640,360,500000">360p Low (640&#xD7;360) &mdash; 500 Kbps</option>
         </select>
       </div>
       <div style="margin-bottom:14px">
         <label style="font-size:10px;font-weight:700;color:#8b949e;text-transform:uppercase;letter-spacing:.7px;display:block;margin-bottom:6px">Frame Rate</label>
         <select id="exp-fps" style="width:100%;padding:9px 11px;background:#252d3d;border:1px solid rgba(255,255,255,0.11);border-radius:8px;color:#f0f2f5;font-size:13px;outline:none">
-          <option value="60">60 fps — Smooth</option>
-          <option value="30" selected>30 fps — Standard</option>
-          <option value="25">25 fps — PAL</option>
-          <option value="24">24 fps — Cinematic</option>
+          <option value="60">60 fps &mdash; Smooth</option>
+          <option value="30" selected>30 fps &mdash; Standard</option>
+          <option value="25">25 fps &mdash; PAL</option>
+          <option value="24">24 fps &mdash; Cinematic</option>
         </select>
       </div>
       <div id="exp-progress" style="display:none;margin-bottom:14px">
@@ -718,16 +750,16 @@ function showExportModal(){
       <div style="margin-bottom:14px">
         <label style="font-size:10px;font-weight:700;color:#8b949e;text-transform:uppercase;letter-spacing:.7px;display:block;margin-bottom:6px">Format</label>
         <select id="exp-format" style="width:100%;padding:9px 11px;background:#252d3d;border:1px solid rgba(255,255,255,0.11);border-radius:8px;color:#f0f2f5;font-size:13px;outline:none">
-          <option value="mp4" selected>MP4 — best compatibility</option>
-          <option value="webm">WebM (VP9) — open format</option>
+          <option value="mp4" selected>MP4 &mdash; best compatibility</option>
+          <option value="webm">WebM (VP9) &mdash; open format</option>
         </select>
       </div>
       <div style="font-size:11px;color:#8b949e;background:rgba(88,166,255,0.07);border:1px solid rgba(88,166,255,0.15);border-radius:6px;padding:8px 10px;margin-bottom:18px">
-        ℹ️ Exports as WebM with all video, audio, and effects. Plays in Chrome and VLC. To convert to MP4 use VLC → Media → Convert.
+        Export includes all video, audio, overlays and effects from your timeline.
       </div>
       <div style="display:flex;justify-content:flex-end;gap:8px">
         <button onclick="document.getElementById('export-modal').remove()" style="padding:9px 20px;border-radius:8px;font-size:13px;font-weight:600;font-family:DM Sans,sans-serif;cursor:pointer;background:transparent;border:1px solid rgba(255,255,255,0.15);color:#8b949e">Cancel</button>
-        <button id="exp-btn" onclick="startExport()" style="padding:9px 20px;border-radius:8px;font-size:13px;font-weight:700;font-family:DM Sans,sans-serif;cursor:pointer;background:#E31837;border:none;color:#fff">▶ Export</button>
+        <button id="exp-btn" onclick="startExport()" style="padding:9px 20px;border-radius:8px;font-size:13px;font-weight:700;font-family:DM Sans,sans-serif;cursor:pointer;background:#E31837;border:none;color:#fff">&#x25B6; Export</button>
       </div>
     </div>`;
   document.body.appendChild(modal);
@@ -787,11 +819,16 @@ async function startExport(){
   masterVid.style.display = 'none';
   document.body.appendChild(masterVid);
 
-  // Use the audio stream pre-captured in showExportModal (user gesture)
-  // masterVid and masterAudioTracks were created synchronously in the click handler
-  const masterAudioTracks = window._exportMasterAudioTracks || [];
-  console.log('Export audio tracks from gesture:', masterAudioTracks.length,
+  // Use AudioContext stream from showExportModal gesture
+  // AudioContext was created AND resumed synchronously in the Export button click
+  const _audioCtx    = window._exportAudioCtx;
+  const _masterGain  = window._exportMasterGain;
+  const _audioDest   = window._exportAudioDest;
+  const masterAudioTracks = _audioDest ? _audioDest.stream.getAudioTracks() : (window._exportMasterAudioTracks||[]);
+  console.log('Export audio: ctx='+(_audioCtx?.state||'null'), 'tracks='+masterAudioTracks.length,
     masterAudioTracks.map(t=>t.readyState+'/'+t.enabled).join(','));
+  // Resume AudioContext again in case browser suspended between modal open and export click
+  if(_audioCtx && _audioCtx.state==='suspended') _audioCtx.resume();
 
   // Load first clip into masterVid
   const _firstClip = videoClips[0];
@@ -829,13 +866,19 @@ async function startExport(){
     }catch(e){}
   }
 
-  // Build final stream: canvas video + audio tracks from user gesture
+  // Also connect standalone audio elements to the AudioContext master bus
+  if(_audioCtx && _masterGain){
+    for(const a of Object.values(audioEls)){
+      try{ const _as=_audioCtx.createMediaElementSource(a); _as.connect(_masterGain); }catch(e){}
+    }
+  }
+  // Build final stream: canvas video + AudioContext destination (all sources mixed)
   const videoStream = canvas.captureStream(fps);
-  const _allExportAudio = [...masterAudioTracks, ...allAudioTracks]
-    .filter(t => t.readyState === 'live' || t.enabled);
-  console.log('Final export audio tracks:', _allExportAudio.length);
-  const finalStream = _allExportAudio.length > 0
-    ? new MediaStream([...videoStream.getVideoTracks(), ..._allExportAudio])
+  const _audioTracks = _audioDest ? _audioDest.stream.getAudioTracks() :
+    [...masterAudioTracks,...allAudioTracks].filter(t=>t.readyState==='live'||t.enabled);
+  console.log('Final export audio tracks:', _audioTracks.length);
+  const finalStream = _audioTracks.length > 0
+    ? new MediaStream([...videoStream.getVideoTracks(), ..._audioTracks])
     : videoStream;
 
   // vidEls alias for renderFrame compatibility (single element, all clips use it)
@@ -868,6 +911,8 @@ async function startExport(){
     if(window._exportMasterVid){try{window._exportMasterVid.pause();window._exportMasterVid.src='';if(document.body.contains(window._exportMasterVid))document.body.removeChild(window._exportMasterVid);}catch(e){}window._exportMasterVid=null;}
     Object.values(audioEls).forEach(a=>{try{a.pause();a.src='';document.body.contains(a)&&document.body.removeChild(a);}catch(e){}});
     window._exportMasterGain=null;
+    if(window._exportAudioCtx){try{window._exportAudioCtx.close();}catch(e){} window._exportAudioCtx=null;}
+    window._exportAudioDest=null; window._exportAudioStream=null;
     await new Promise(r=>setTimeout(r,300));
     const blob=new Blob(chunks,{type:mimeType});
     const url=URL.createObjectURL(blob);
