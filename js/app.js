@@ -651,43 +651,29 @@ window.doSave = async function() {
 window.doExport = function() { showExportModal(); };
 
 function showExportModal(){
-  // AudioContext Master Bus approach:
-  // All audio elements connect to one AudioContext graph -> single stereo stream
-  // This is the only reliable cross-element audio mixing in the browser
+  // Create masterVid and call play() synchronously in user gesture
+  // This unlocks the audio stream BEFORE any async code runs
   try{
-    if(window._exportMasterVid){ try{window._exportMasterVid.pause(); if(document.body.contains(window._exportMasterVid)) window._exportMasterVid.remove();}catch(e){} }
-    if(window._exportAudioCtx){ try{window._exportAudioCtx.close();}catch(e){} window._exportAudioCtx=null; }
-
-    // Create AudioContext in user gesture (48kHz = broadcast standard)
-    const _ctx = new (window.AudioContext||window.webkitAudioContext)({sampleRate:48000});
-    window._exportAudioCtx = _ctx;
-
-    // Master bus: all video+audio elements route here
-    const _masterGain = _ctx.createGain();
-    _masterGain.gain.value = 1.0;
-    const _dest = _ctx.createMediaStreamDestination();
-    _masterGain.connect(_dest);
-    window._exportAudioDest = _dest;
-    window._exportMasterGain = _masterGain;
-    window._exportAudioStream = _dest.stream;
-
-    // Create masterVid and connect its audio to the master bus
+    if(window._exportMasterVid){ try{window._exportMasterVid.pause();window._exportMasterVid.remove();}catch(e){} }
+    const _mv = document.createElement('video');
+    _mv.muted = false; _mv.volume = 1.0;
+    _mv.style.display = 'none';
+    // Use the first video clip's URL if available
     const _vclips = S?.cut?.clips?.filter(c=>c.type==='video') || [];
     const _firstUrl = _vclips.length ? S?.cut?.media?.[_vclips[0].mediaIdx]?.url : null;
-    const _mv = document.createElement('video');
-    _mv.muted = false; _mv.volume = 1.0; _mv.style.display='none';
     if(_firstUrl) _mv.src = _firstUrl;
+    else _mv.src = ''; // empty src still unlocks the stream
     document.body.appendChild(_mv);
-    const _mvSrc = _ctx.createMediaElementSource(_mv);
-    _mvSrc.connect(_masterGain);
-    window._exportMasterVid = _mv;
-    window._exportMasterVidSource = _mvSrc;
-
-    // Unlock AudioContext with play() in user gesture
+    // play() in user gesture = unlocks audio autoplay
     const _playP = _mv.play();
     if(_playP) _playP.catch(()=>{});
-
-    console.log('Export AudioContext ready:', _ctx.sampleRate+'Hz,', _dest.stream.getAudioTracks().length,'tracks');
+    // captureStream() immediately while element is in play() chain
+    window._exportMasterVid = _mv;
+    window._exportMasterStream = _mv.captureStream ? _mv.captureStream() : null;
+    window._exportMasterAudioTracks = window._exportMasterStream
+      ? window._exportMasterStream.getAudioTracks() : [];
+    // Pause after getting tracks
+    setTimeout(()=>{ try{_mv.pause(); _mv.currentTime=0;}catch(e){}; }, 200);
   }catch(e){ console.warn('showExportModal audio setup:', e); }
   document.querySelectorAll('#export-modal').forEach(m=>m.remove());
   const videoClips=S.cut.clips.filter(c=>c.type==='video').sort((a,b)=>a.start-b.start);
@@ -762,11 +748,10 @@ async function startExport(){
 
   const videoClips=S.cut.clips.filter(c=>c.type==='video').sort((a,b)=>a.start-b.start);
   if(!videoClips.length){notify('No video clips on timeline','#E31837');btn.disabled=false;btn.textContent='▶ Export';return;}
-  // totalDur = last asset out-point ONLY (hard cap)
-  // S.proj.dur is workspace size, NOT content length - never use it here
-  const _allEnds = S.cut.clips.map(c=>c.start+c.dur);
-  const _ovEnds  = (window._overlays||[]).map(o=>o.endTime||0);
-  const totalDur = Math.max(0.1, ..._allEnds, ..._ovEnds);
+  // Hard cap at last asset out-point (S.proj.dur is workspace size, not content)
+  const _allEnds=S.cut.clips.map(c=>c.start+c.dur);
+  const _ovEnds=(window._overlays||[]).map(o=>o.endTime||0);
+  const totalDur=Math.max(0.1,..._allEnds,..._ovEnds);
 
   // Offscreen canvas for video frames
   const canvas=document.createElement('canvas');
@@ -779,93 +764,84 @@ async function startExport(){
   // No AudioContext, no suspended state issues, no multi-track mixing problems
   status.textContent='Loading video files...';
 
-  // Per-media persistent video elements for DRAWING (muted, visual only)
-  // These stay loaded throughout export - no src changes = no black gaps
-  const drawEls = {}; // mediaIdx -> <video> (muted, for ctx.drawImage)
-  status.textContent = 'Pre-loading media...';
-  const _uniqueMediaIdxs = [...new Set(videoClips.map(c=>c.mediaIdx))];
-  for(const mIdx of _uniqueMediaIdxs){
-    const item = S.cut.media[mIdx];
-    if(!item?.url) continue;
+  // Build unique media list for preloading
+  const _mediaUrls = {};
+  videoClips.forEach(c=>{
+    const item = S.cut.media[c.mediaIdx];
+    if(item?.url) _mediaUrls[c.mediaIdx] = item.url;
+  });
+
+  // Preload all media by creating temporary elements to warm the browser cache
+  for(const [idx, url] of Object.entries(_mediaUrls)){
     const v = document.createElement('video');
-    v.src = item.url;
-    v.preload = 'auto';
-    v.muted = true;  // muted - audio comes from masterVid via AudioContext
-    v.volume = 0;
-    v.style.display = 'none';
-    v.playsInline = true;
+    v.src = url; v.preload = 'auto'; v.muted = true; v.style.display='none';
     document.body.appendChild(v);
-    // Wait for full readiness - no timeout shortcuts for large files
-    await new Promise(r=>{
-      if(v.readyState >= 4){ r(); return; }
-      v.oncanplaythrough = r;
-      v.onerror = r;
-      setTimeout(r, 15000); // 15s max for large files
-    });
-    drawEls[mIdx] = v;
-    status.textContent = 'Pre-loading: ' + (Object.keys(drawEls).length) + '/' + _uniqueMediaIdxs.length;
+    await new Promise(r=>{v.oncanplaythrough=r;v.onerror=r;setTimeout(r,8000);});
+    v.remove();
   }
 
-  // AudioContext Master Bus: all audio routes through one graph -> one stereo stream
-  const _audioCtx = window._exportAudioCtx;
-  const _masterBus = window._exportMasterGain;
-  const _audioDest = window._exportAudioDest;
+  // Single master video element - this is what captureStream() runs on
+  const masterVid = document.createElement('video');
+  masterVid.muted = false;
+  masterVid.volume = 1.0;
+  masterVid.style.display = 'none';
+  document.body.appendChild(masterVid);
 
-  // masterVid: the element created in showExportModal, already connected to master bus
-  const masterVid = window._exportMasterVid || document.createElement('video');
-  if(!window._exportMasterVid) document.body.appendChild(masterVid);
-  masterVid.muted = false; masterVid.volume = 1.0;
+  // Use the audio stream pre-captured in showExportModal (user gesture)
+  // masterVid and masterAudioTracks were created synchronously in the click handler
+  const masterAudioTracks = window._exportMasterAudioTracks || [];
+  console.log('Export audio tracks from gesture:', masterAudioTracks.length,
+    masterAudioTracks.map(t=>t.readyState+'/'+t.enabled).join(','));
 
   // Load first clip into masterVid
   const _firstClip = videoClips[0];
   const _firstItem = S.cut.media[_firstClip.mediaIdx];
-  if(masterVid.src !== (_firstItem?.url||'')){
-    masterVid.src = _firstItem?.url || '';
-    await new Promise(r=>{masterVid.oncanplaythrough=r;masterVid.onerror=r;setTimeout(r,8000);});
-  }
+  masterVid.src = _firstItem?.url || '';
   masterVid.currentTime = _firstClip.fileStart || 0;
-  await new Promise(r=>{
-    const h=()=>{masterVid.removeEventListener('seeked',h);r();};
-    masterVid.addEventListener('seeked',h); setTimeout(r,2000);
-  });
+  await new Promise(r=>{masterVid.oncanplaythrough=r;masterVid.onerror=r;setTimeout(r,8000);});
+  masterVid.pause();
 
-  // Preload standalone audio-only clips AND wire each through the master bus
+  // Preload standalone audio-only clips
   const audioOnlyClips = S.cut.clips
     .filter(c=>c.type==='audio'&&!c.linkedToVideo)
     .sort((a,b)=>a.start-b.start);
-  const audioEls = {}; // mediaIdx -> HTMLAudioElement
-  const _audioSources = []; // keep refs to prevent GC
+  const audioEls = {};
   for(const clip of audioOnlyClips){
     const item = S.cut.media[clip.mediaIdx];
     if(!item?.url || audioEls[clip.mediaIdx]) continue;
     if(S.cut.mutedTracks?.[clip.track]) continue;
     const a = document.createElement('audio');
-    a.src=item.url; a.preload='auto'; a.muted=false; a.volume=1.0; a.style.display='none';
+    a.src=item.url; a.preload='auto';
+    a.muted=false; a.volume=1.0; a.style.display='none';
     document.body.appendChild(a);
     await new Promise(r=>{a.oncanplaythrough=r;a.onerror=r;setTimeout(r,8000);});
-    // Wire through AudioContext master bus if available
-    if(_audioCtx && _masterBus){
-      try{
-        const _src = _audioCtx.createMediaElementSource(a);
-        _src.connect(_masterBus);
-        _audioSources.push(_src);
-      }catch(e){}
-    }
     audioEls[clip.mediaIdx] = a;
   }
 
-  // Build final MediaStream:
-  // Video: canvas captureStream
-  // Audio: AudioContext MediaStreamDestination (all sources mixed)
+  // Collect standalone audio tracks the same way
+  const allAudioTracks = [...masterAudioTracks];
+  for(const a of Object.values(audioEls)){
+    try{
+      await a.play();
+      const as2 = a.captureStream ? a.captureStream() : null;
+      if(as2) as2.getAudioTracks().forEach(t=>{ if(t.readyState==='live') allAudioTracks.push(t); });
+      a.pause(); a.currentTime = 0;
+    }catch(e){}
+  }
+
+  // Build final stream: canvas video + audio tracks from user gesture
   const videoStream = canvas.captureStream(fps);
-  const _audioTracks = _audioDest ? _audioDest.stream.getAudioTracks() : [];
-  console.log('Export audio: AudioContext tracks:', _audioTracks.length, '48kHz master bus');
-  const finalStream = _audioTracks.length > 0
-    ? new MediaStream([...videoStream.getVideoTracks(), ..._audioTracks])
+  const _allExportAudio = [...masterAudioTracks, ...allAudioTracks]
+    .filter(t => t.readyState === 'live' || t.enabled);
+  console.log('Final export audio tracks:', _allExportAudio.length);
+  const finalStream = _allExportAudio.length > 0
+    ? new MediaStream([...videoStream.getVideoTracks(), ..._allExportAudio])
     : videoStream;
 
-  const vidEls = drawEls; // persistent per-media elements for video drawing
-  window._exportMasterGain = _masterBus;
+  // vidEls alias for renderFrame compatibility (single element, all clips use it)
+  const vidEls = { _master: masterVid };
+  window._exportMasterVid = masterVid;
+  window._exportMasterGain = null;
 
 
     // Choose codec: prefer H264/AAC (MP4-compatible) if browser supports it
@@ -892,8 +868,6 @@ async function startExport(){
     if(window._exportMasterVid){try{window._exportMasterVid.pause();window._exportMasterVid.src='';if(document.body.contains(window._exportMasterVid))document.body.removeChild(window._exportMasterVid);}catch(e){}window._exportMasterVid=null;}
     Object.values(audioEls).forEach(a=>{try{a.pause();a.src='';document.body.contains(a)&&document.body.removeChild(a);}catch(e){}});
     window._exportMasterGain=null;
-    if(window._exportAudioCtx){ try{window._exportAudioCtx.close();}catch(e){} window._exportAudioCtx=null; }
-    window._exportAudioDest=null; window._exportAudioStream=null;
     await new Promise(r=>setTimeout(r,300));
     const blob=new Blob(chunks,{type:mimeType});
     const url=URL.createObjectURL(blob);
@@ -908,12 +882,7 @@ async function startExport(){
     notify('✓ Export downloaded — '+fname+' ('+(mimeType.includes('mp4')?'MP4':'WebM')+')','#3fb950');
   };
 
-  // Resume AudioContext if suspended (browser may suspend it)
-  if(window._exportAudioCtx && window._exportAudioCtx.state === 'suspended'){
-    await window._exportAudioCtx.resume();
-  }
-  // Start recorder - AudioContext is routing all audio to the stream
-  recorder.start(500);
+  recorder.start(500); // collect every 500ms for stable chunks
   status.textContent='Rendering with audio...';
 
   const dt=1/fps;
@@ -925,116 +894,110 @@ async function startExport(){
   // Seek once to start, then just drawImage() each frame — no per-frame seeks
   let lastClipIdx = -1;
 
-  // Non-blocking state machine renderer
-  // No await inside loop - seeks use event callbacks
-  // Last-good frame held during transitions to prevent black frames
-  // Canvas naturally holds last drawn frame - no need for getImageData copies
-
-  function renderFrame(){
-    if(t >= totalDur){
-      Object.values(drawEls||{}).forEach(v=>{try{v.pause();}catch(e){}});
-      Object.values(audioEls||{}).forEach(a=>{try{a.pause();}catch(e){}});
+  async function renderFrame(){
+    if(t >= totalDur){  // exact stop at last asset
+      if(lastActiveVid && !lastActiveVid.paused){ lastActiveVid.pause(); }
+      Object.values(audioEls).forEach(a=>{ try{a.pause();}catch(e){} });
       if(recorder.state!=='inactive') recorder.stop();
       return;
     }
 
-    // Frame hold
-    const fhNow=S.cut.clips.find(c=>c.type==='frame_hold'&&t>=c.start&&t<c.start+c.dur);
+    // Frame hold: draw frozen frame independently of source clip
+    const fhNow = S.cut.clips.find(c => c.type==='frame_hold' && t>=c.start && t<c.start+c.dur);
     if(fhNow){
+      if(fhNow._imgData && (!fhNow._img || !fhNow._img.complete)){
+        fhNow._img = new Image(); fhNow._img.src = fhNow._imgData;
+      }
       ctx.fillStyle='#000'; ctx.fillRect(0,0,W,H);
-      if(fhNow._img&&fhNow._img.complete) ctx.drawImage(fhNow._img,0,0,W,H);
-      if(lastActiveVid&&!lastActiveVid.paused) lastActiveVid.pause();
-      if((window._overlays||[]).some(o=>t>=o.startTime&&t<o.endTime)&&window.renderOverlaysOnCanvas)
-        window.renderOverlaysOnCanvas(ctx,W,H,t,new Set());
+      // 1. Draw frozen frame
+      if(fhNow._img && fhNow._img.complete) ctx.drawImage(fhNow._img,0,0,W,H);
+      if(lastActiveVid && !lastActiveVid.paused) lastActiveVid.pause();
+      // 2. Render overlays on top of frozen frame during export
+      const fhActiveOvs = (window._overlays||[]).filter(o => t>=o.startTime && t<o.endTime);
+      if(fhActiveOvs.length && window.renderOverlaysOnCanvas){
+        window.renderOverlaysOnCanvas(ctx, W, H, t, new Set());
+      }
+      const pct2=Math.min(98,Math.round((t/totalDur)*100));
+      bar.style.width=pct2+'%';
+      status.textContent='Rendering: '+pct2+'% (Frame Hold)';
       t+=dt;
-      setTimeout(renderFrame,Math.max(0,startTs+t*1000-Date.now()));
-      return;
+      const wt2=startTs+t*1000; const d2=Math.max(0,wt2-Date.now());
+      setTimeout(renderFrame,d2); return;
     }
 
-    const clip=videoClips.find(c=>t>=c.start&&t<c.start+c.dur);
+    const clip = videoClips.find(c => t >= c.start && t < c.start + c.dur);
 
     if(clip){
-      const _spd    =clip.speed||1;
-      const fileTime=(clip.fileStart||0)+Math.max(0,(t-clip.start)*_spd);
-      const clipIdx =videoClips.indexOf(clip);
-      const drawVid =drawEls[clip.mediaIdx];
-      const audioVid=window._exportMasterVid;
+      const vid = window._exportMasterVid;
+      const clipIdx = videoClips.indexOf(clip);
+      const clipItem = S.cut.media[clip.mediaIdx];
 
-      if(clipIdx!==lastClipIdx){
-        if(lastActiveVid&&lastActiveVid!==drawVid&&!lastActiveVid.paused) lastActiveVid.pause();
-        lastActiveVid=drawVid; lastClipIdx=clipIdx;
-
-        if(drawVid){
-          drawVid.playbackRate=_spd;
-          drawVid.currentTime=fileTime;
-          // Seek fires async - drawVid.readyState drops to <2 during seek
-          // Draw path uses readyState check so last-good frame is held automatically
-          drawVid.addEventListener('seeked',function _sh(){
-            drawVid.removeEventListener('seeked',_sh);
-            if(drawVid.paused) drawVid.play().catch(()=>{});
-          });
-          setTimeout(()=>{ if(drawVid.paused) drawVid.play().catch(()=>{}); },2000);
+      if(clipIdx !== lastClipIdx){
+        if(lastActiveVid && !lastActiveVid.paused) lastActiveVid.pause();
+        lastActiveVid = vid;
+        lastClipIdx = clipIdx;
+        if(vid.dataset.exportMediaIdx !== String(clip.mediaIdx)){
+          vid.src = clipItem?.url || '';
+          // no crossOrigin for blob URLs
+          vid.dataset.exportMediaIdx = String(clip.mediaIdx);
+          await new Promise(r=>{vid.oncanplaythrough=r;vid.onerror=r;setTimeout(r,5000);});
         }
-
-        if(audioVid){
-          const clipItem=S.cut.media[clip.mediaIdx];
-          const _syncAudio=()=>{
-            audioVid.currentTime=fileTime;
-            audioVid.volume=clip.volume!==undefined?Math.min(1,clip.volume/100):1.0;
-            audioVid.playbackRate=_spd; audioVid.muted=false;
-            if(audioVid.paused) audioVid.play().catch(()=>{});
-          };
-          if(audioVid.dataset.exportMediaIdx!==String(clip.mediaIdx)){
-            audioVid.src=clipItem?.url||'';
-            audioVid.dataset.exportMediaIdx=String(clip.mediaIdx);
-            audioVid.oncanplaythrough=_syncAudio;
-          } else { _syncAudio(); }
-        }
-      } else {
-        // Same clip playing naturally - NO seeks during playback
-        // Seeking during playback is the #1 cause of black frames and stutter
-        // The video plays at playbackRate - let it run, just drawImage each frame
+        const fileTime = (clip.fileStart||0) + Math.max(0, t - clip.start);
+        vid.muted = false;
+        vid.volume = clip.volume !== undefined ? Math.min(1, clip.volume/100) : 1.0;
+        vid.currentTime = fileTime;
+        await new Promise(r=>{
+          const h = ()=>{ vid.removeEventListener('seeked',h); r(); };
+          vid.addEventListener('seeked', h);
+          setTimeout(r, 1000);
+        });
+        try{ await vid.play(); }catch(e){}
       }
 
-      // Draw current frame if element is ready
-      // If not ready (mid-seek on clip change): canvas keeps previous frame = no black
-      if(drawVid&&drawVid.readyState>=2){
-        try{ ctx.drawImage(drawVid,0,0,W,H); }catch(e){}
+      ctx.fillStyle = '#000';
+      ctx.fillRect(0, 0, W, H);
+      try{ ctx.drawImage(vid, 0, 0, W, H); }catch(e){}
+      // Render overlays on top of video frame (text, shapes, etc.)
+      if((window._overlays||[]).some(o=>t>=o.startTime&&t<o.endTime) && window.renderOverlaysOnCanvas){
+        window.renderOverlaysOnCanvas(ctx, W, H, t, new Set());
       }
-      // Note: no getImageData/putImageData - canvas already holds last drawn frame
-      // captureStream reads the canvas directly without any copies needed
+
     } else {
-      if(lastActiveVid&&!lastActiveVid.paused) lastActiveVid.pause();
-      lastClipIdx=-1;
-      // Canvas keeps last frame - no black gap between clips
+      ctx.fillStyle = '#000';
+      ctx.fillRect(0, 0, W, H);
+      if(lastActiveVid && !lastActiveVid.paused){ lastActiveVid.pause(); lastActiveVid = null; }
+      lastClipIdx = -1;
     }
 
-    if((window._overlays||[]).some(o=>t>=o.startTime&&t<o.endTime)&&window.renderOverlaysOnCanvas)
-      window.renderOverlaysOnCanvas(ctx,W,H,t,new Set());
-
+    // ── Standalone audio clips ──
     for(const ac of audioOnlyClips){
       if(S.cut.mutedTracks?.[ac.track]) continue;
-      const a=audioEls[ac.mediaIdx]; if(!a) continue;
-      if(t>=ac.start&&t<ac.start+ac.dur){
-        const aT=(ac.fileStart||0)+Math.max(0,t-ac.start);
-        a.muted=false;
-        if(a.paused){a.currentTime=aT; a.play().catch(()=>{});}
-        else if(Math.abs(a.currentTime-aT)>0.5) a.currentTime=aT;
-      } else if(!a.paused) a.pause();
+      const a = audioEls[ac.mediaIdx]; if(!a) continue;
+      if(t >= ac.start && t < ac.start + ac.dur){
+        const aT = (ac.fileStart||0) + Math.max(0, t - ac.start);
+        a.muted = false;
+        if(a.paused){ a.currentTime = aT; try{ a.play(); }catch(e){} }
+        else if(Math.abs(a.currentTime - aT) > 0.5) a.currentTime = aT;
+      } else if(!a.paused){ a.pause(); }
     }
 
-    const pct=Math.min(99,Math.round((t/totalDur)*100));
-    bar.style.width=pct+'%';
-    const elapsed=(Date.now()-startTs)/1000;
-    const rem=elapsed>0.5?(totalDur-t)*(elapsed/Math.max(t,0.001)):totalDur;
-    status.textContent='Rendering: '+pct+'% - '+t.toFixed(1)+'s / '+totalDur.toFixed(1)+'s';
-    if(rem>1) eta.textContent='~'+Math.ceil(rem)+'s remaining';
+    // ── Progress ──
+    const pct = Math.min(98, Math.round((t / totalDur) * 100));
+    bar.style.width = pct + '%';
+    const elapsed = (Date.now() - startTs) / 1000;
+    const rate = elapsed > 0.5 ? t / elapsed : 1;
+    const rem = rate > 0 ? (totalDur - t) / rate : 0;
+    status.textContent = `Rendering: ${pct}% · ${t.toFixed(1)}s / ${totalDur.toFixed(1)}s`;
+    if(rem > 1) eta.textContent = `~${Math.ceil(rem)}s remaining`;
 
-    t+=dt;
-    setTimeout(renderFrame,Math.max(0,startTs+t*1000-Date.now()));
+    t += dt;
+    // Schedule next frame at exact wall-clock target
+    const wallTarget = startTs + t * 1000;
+    const delay = Math.max(0, wallTarget - Date.now());
+    setTimeout(renderFrame, delay);
   }
 
-  renderFrame();
+  await renderFrame();
 }
 
 
