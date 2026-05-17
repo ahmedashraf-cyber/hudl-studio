@@ -3322,8 +3322,15 @@ function renderCutTimeline() {
       const i=parseInt(e.dataTransfer.getData('text/plain'));
       if(isNaN(i)||i<0||i>=S.cut.media.length)return;
       const item=S.cut.media[i];
+      // Type enforcement: video assets only on video tracks, audio only on audio tracks
+      const isVideoTrack = t < S.cut.videoTracks;
+      const isAudioTrack = t >= S.cut.videoTracks;
+      const isVideoAsset = item.type === 'video';
+      const isAudioAsset = item.type === 'audio';
+      if(isVideoTrack && isAudioAsset){ notify('Audio assets must go on Audio tracks (A1, A2...)','#E31837'); return; }
+      if(isAudioTrack && isVideoAsset){ notify('Video assets must go on Video tracks (V1, V2...)','#E31837'); return; }
       const rect=row.getBoundingClientRect();
-      const start=Math.max(0,(e.clientX-rect.left)/PPS);
+      const start=Math.max(0,(e.clientX-rect.left+document.getElementById('tl-scroll')?.scrollLeft||0)/PPS);
       S.cut.clips.push({mediaIdx:i,name:item.name,type:item.type,track:t,start,dur:Math.max(item.duration||5,0.5),fileStart:0,color:item.type==='video'?'rgba(88,166,255,0.8)':item.type==='audio'?'rgba(210,153,34,0.8)':'rgba(63,185,80,0.8)'});
       // Auto-add audio track for video clips
       if(item.type==='video'&&item.hasAudio!==false){
@@ -3841,6 +3848,16 @@ function rebuildTrackLabels(){
     name.textContent='V'+v+' (Video)';
     d.appendChild(name);
     d.appendChild(makeTrackIcon(true,trackIdx));
+    // Delete track button (only show if more than 1 video track)
+    if(S.cut.videoTracks > 1){
+      const del=document.createElement('button');
+      del.textContent='×'; del.title='Delete track';
+      del.style.cssText='background:none;border:none;color:var(--mu2);cursor:pointer;font-size:11px;padding:1px 3px;opacity:0.5;line-height:1';
+      del.onmouseenter=()=>del.style.opacity='1';
+      del.onmouseleave=()=>del.style.opacity='0.5';
+      del.onclick=e=>{e.stopPropagation();cutDeleteTrack('video',trackIdx);};
+      d.appendChild(del);
+    }
     d.addEventListener('contextmenu',e=>trackLabelContextMenu(e,trackIdx));
     labels.appendChild(d);
   }
@@ -3854,6 +3871,16 @@ function rebuildTrackLabels(){
     name.textContent='A'+a+' (Audio)';
     d.appendChild(name);
     d.appendChild(makeTrackIcon(false,trackIdx));
+    // Delete track button (only show if more than 1 audio track)
+    if(S.cut.audioTracks > 1){
+      const del=document.createElement('button');
+      del.textContent='×'; del.title='Delete track';
+      del.style.cssText='background:none;border:none;color:var(--mu2);cursor:pointer;font-size:11px;padding:1px 3px;opacity:0.5;line-height:1';
+      del.onmouseenter=()=>del.style.opacity='1';
+      del.onmouseleave=()=>del.style.opacity='0.5';
+      del.onclick=e=>{e.stopPropagation();cutDeleteTrack('audio',trackIdx);};
+      d.appendChild(del);
+    }
     d.addEventListener('contextmenu',e=>trackLabelContextMenu(e,trackIdx));
     labels.appendChild(d);
   }
@@ -4039,6 +4066,39 @@ function cutDelete(){
   scheduleSave();
 }
 function cutNewSeq(){S.cut={...S.cut,clips:[],ph:0,playing:false,sel:null};buildCut();notify('New sequence');}
+
+function cutDeleteTrack(type, trackIdx){
+  // Remove all clips on this track
+  const clipsOnTrack = S.cut.clips.filter(c => c.track === trackIdx);
+  if(clipsOnTrack.length > 0){
+    if(!confirm('Delete track and its '+clipsOnTrack.length+' clip(s)?')) return;
+  }
+  S.cut.clips = S.cut.clips.filter(c => c.track !== trackIdx);
+  // Re-index clips on higher tracks of the SAME type only (no cross-boundary shift)
+  if(type === 'video'){
+    if(S.cut.videoTracks <= 1){ notify('Cannot delete last video track','#E31837'); return; }
+    S.cut.clips.forEach(c => {
+      if(c.type === 'video' && c.track > trackIdx) c.track--; // shift down only video clips
+    });
+    // Shift audio clips' track indices down if they were above the deleted video track
+    S.cut.clips.forEach(c => {
+      if(c.type === 'audio' && c.track > trackIdx) c.track--;
+    });
+    S.cut.videoTracks--;
+  } else {
+    if(S.cut.audioTracks <= 1){ notify('Cannot delete last audio track','#E31837'); return; }
+    S.cut.clips.forEach(c => {
+      if(c.type === 'audio' && c.track > trackIdx) c.track--; // shift down only audio clips
+    });
+    S.cut.audioTracks--;
+  }
+  cutSaveHistory('delete_track');
+  rebuildTrackLabels();
+  renderCutTimeline();
+  if(window.renderOverlayTimeline) renderOverlayTimeline();
+  notify((type==='video'?'Video':'Audio')+' track deleted','#3fb950');
+}
+window.cutDeleteTrack = cutDeleteTrack;
 
 function cutAddTrack(type){
   type=type||'video';
