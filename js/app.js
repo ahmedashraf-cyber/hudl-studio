@@ -4892,8 +4892,9 @@ function syncCutVid(){
     .filter(c => ph >= c.start && ph < c.start + c.dur && !S.cut.hiddenTracks?.[c.track])
     .sort((a,b) => (a.track||0) - (b.track||0)); // lower track index = drawn first (underneath)
   // Primary active clip for audio/seek: highest track with video (frame_hold takes priority)
+  // For AUDIO: use highest track. For BASE DRAW: use lowest track (V1 = background).
   const active = _allAtPh.find(c => c.type === 'frame_hold') ||
-                 _allAtPh.slice().reverse().find(c => c.type === 'video') || null;
+                 _allAtPh[0] || null; // lowest track = drawn first as base layer
 
   // Ensure pool vids exist for all clips
   videoClips.forEach(c => {
@@ -5345,9 +5346,10 @@ function syncCutVid(){
         window.renderOverlaysOnCanvas(ctx, canvas.width, canvas.height, ph, _playedFreezes);
       ctx.restore();
     } else {
-      // Multi-track compositing: composite higher-track clips ON TOP of already-drawn primary
-      // Video is already on canvas from base-draw above. No clearRect = transparency preserved.
-      const _abovePrimary = _allAtPh.filter(c => c !== active && (c.track||0) > (active.track||0));
+      // Multi-track compositing: draw ALL clips in ascending track order (V1 bottom → Vn top)
+      // active (lowest track) is already drawn above as the base layer.
+      // Now draw every higher-track clip on top in ascending order.
+      const _abovePrimary = _allAtPh.filter(c => c !== active).sort((a,b)=>(a.track||0)-(b.track||0));
       _abovePrimary.forEach(layerClip => {
         const layerCI = S.cut.clips.indexOf(layerClip);
         const layerItem = S.cut.media[layerClip.mediaIdx];

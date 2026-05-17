@@ -898,7 +898,7 @@ function renderOverlaysOnCanvas(ctx, W, H, currentTime, playedFreezes){
     .filter(o=>currentTime>=o.startTime&&currentTime<o.endTime&&!(o.type==='freeze'&&playedFreezes&&playedFreezes.has(o.id)))
     .sort((a,b)=>{
       const tDiff=(a.track||0)-(b.track||0);
-      if(tDiff!==0) return tDiff; // lower track first (underneath)
+      if(tDiff!==0) return tDiff; // lower track first (underneath), higher track painted last (on top)
       // stable: same track keeps insertion order
       return (window._overlays.indexOf(a))-(window._overlays.indexOf(b));
     });
