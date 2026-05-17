@@ -3843,6 +3843,7 @@ function clipMoveMove(e){
   const _maxTrack = grabbedIsVideo ? S.cut.videoTracks-1 : totalTracks-1;
   const newTrack=Math.max(_minTrack, Math.min(_maxTrack, _mv.origTrack+trackDelta));
   S.cut.clips[_mv.ci].track=newTrack;
+  if(newTrack !== _mv.origTrack) console.log('[Drag] clip track:', _mv.origTrack,'→',newTrack,'(dy='+Math.round(dy)+')');
   // No color mutation during drag - preserve original colors
   // GROUP MOVE: apply BOTH horizontal AND vertical delta to all selected clips
   if(window._selectedClips?.size > 1 && _mv._multiOrigins){
@@ -5079,6 +5080,17 @@ function syncCutVid(){
     }
     return 0;
   });
+
+  // Debug trace — visible in browser console (F12 → Console)
+  if(_masterList.length > 1 && !window._dbgLastLog || window._dbgPh !== ph){
+    window._dbgPh = ph;
+    const _dbgStr = _masterList.map(e =>
+      e.kind==='clip'
+        ? `V${(e.track||0)+1}:[${e.clip.type}:${e.clip.name||'clip'}]`
+        : `V${(e.track||0)+1}:[overlay:${e.overlay.type}]`
+    ).join(' → ');
+    console.log('[Compositor] draw order:', _dbgStr);
+  }
 
   // 2. Decide render mode:
   //    - Single plain video clip with no overlays → use <video> element directly (best perf)

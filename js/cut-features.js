@@ -1381,6 +1381,7 @@ function renderOverlayTimeline(){
           const _trackDelta = -Math.round(dy / _rowH);
           const _newTrack = Math.max(0, Math.min(_maxTrack, origTrack_ov + _trackDelta));
           if(workOv.track !== _newTrack){
+            console.log('[OvDrag] overlay track:', origTrack_ov,'→',_newTrack,'(dy='+Math.round(dy)+')');
             workOv.track = _newTrack;
             renderOverlayTimeline();
           }
