@@ -703,30 +703,49 @@ function setupMarqueeSelection(){
       _mqEl.style.left = x+'px'; _mqEl.style.top = y+'px';
       _mqEl.style.width = w+'px'; _mqEl.style.height = h+'px';
 
-      // Intersection hit-test: select clips that overlap the marquee
+      // Intersection hit-test: select clips AND overlays that overlap the marquee
       const mqLeft = x / PPS, mqRight = (x+w) / PPS;
       const mqTop  = y,        mqBottom = y + h;
       window._selectedClips = new Set();
+      window._selectedOverlays = window._selectedOverlays || new Set();
+      window._selectedOverlays.clear();
+
+      // Hit-test clips
       S.cut.clips.forEach((c, ci) => {
         const clipL = c.start, clipR = c.start + c.dur;
-        // Row Y position: video rows are rendered top-to-bottom as V(n)..V1
-        // trackIdx=videoTracks-1 is at Y=0, trackIdx=0 is at Y=(videoTracks-1)*30
+        // Row Y: video rows top-to-bottom as V(n)..V1; V(n) at Y=0
         let rowTop;
         if(c.track < S.cut.videoTracks){
           rowTop = (S.cut.videoTracks - 1 - c.track) * 30;
         } else {
           rowTop = S.cut.videoTracks * 30 + (c.track - S.cut.videoTracks) * 30;
         }
-        const rowBot = rowTop + 26;
-        // Intersection check (not containment)
+        const rowBot = rowTop + 30; // full row height for easier selection
         const hOverlap = clipL < mqRight && clipR > mqLeft;
         const vOverlap = rowTop < mqBottom && rowBot > mqTop;
         if(hOverlap && vOverlap) window._selectedClips.add(ci);
       });
-      // Visual feedback
+
+      // Hit-test overlays
+      (window._overlays||[]).forEach(ov => {
+        const ovL = ov.startTime, ovR = ov.endTime;
+        const ovTrack = ov.track || 0;
+        const rowTop = (S.cut.videoTracks - 1 - ovTrack) * 30;
+        const rowBot = rowTop + 30;
+        const hOverlap = ovL < mqRight && ovR > mqLeft;
+        const vOverlap = rowTop < mqBottom && rowBot > mqTop;
+        if(hOverlap && vOverlap) window._selectedOverlays.add(ov.id);
+      });
+
+      // Visual feedback for clips
       document.querySelectorAll('.tl-clip:not(.tl-overlay-clip)').forEach(el => {
         const ci = parseInt(el.dataset.ci);
         el.classList.toggle('selected', window._selectedClips.has(ci));
+      });
+      // Visual feedback for overlay clips
+      document.querySelectorAll('.tl-overlay-clip').forEach(el => {
+        const ovId = el.dataset.ovId;
+        el.classList.toggle('selected', window._selectedOverlays.has(ovId));
       });
     };
 
@@ -2563,11 +2582,11 @@ function updatePropsPanel(ci){
   body.innerHTML=`
     <div style="padding:6px 8px 2px;display:flex;align-items:center;gap:6px">
       <div style="width:3px;height:18px;border-radius:2px;background:linear-gradient(180deg,#E8590C,#ff8c42)"></div>
-      <span style="font-size:11px;font-weight:700;color:rgba(255,255,255,0.85)">${c.type==='video'?'Video Clip':c.type==='audio'?'Audio Clip':'Clip'}</span>
+      <span style="font-size:11px;font-weight:700;color:rgba(255,255,255,0.85)">${c.type==='video'?'Video Clip':c.type==='image'?'Image Clip':c.type==='audio'?'Audio Clip':'Clip'}</span>
       <span style="font-size:10px;color:rgba(255,255,255,0.25);flex:1;text-align:right;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${item.name||''}</span>
     </div>
 
-    ${c.type==='video' ? `
+    ${(c.type==='video'||c.type==='image') ? `
     <div style="border:0.5px solid rgba(232,89,12,0.25);border-radius:8px;margin:4px 0;overflow:hidden;background:rgba(232,89,12,0.04)">
       <div style="display:flex;align-items:center;padding:8px 10px;cursor:pointer;user-select:none;gap:8px"
         onclick="const el=document.getElementById('acc-tf-${ci}');el.hidden=!el.hidden;this.querySelector('.acc-chv').style.transform=el.hidden?'rotate(-90deg)':'rotate(0deg)'">
@@ -6135,9 +6154,9 @@ function renderBoundingBox(ci){
   const frame = document.getElementById('cut-viewport-frame');
   if(!frame) return;
 
-  // Only show for video clips
+  // Only show for video and image clips
   const clip = ci !== null && ci !== undefined ? S.cut.clips[ci] : null;
-  if(!clip || clip.type !== 'video') return;
+  if(!clip || (clip.type !== 'video' && clip.type !== 'image')) return;
 
   // Only show when clip is active at current ph
   const ph = S.cut.ph;
