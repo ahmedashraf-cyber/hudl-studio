@@ -3487,12 +3487,24 @@ function renderCutTimeline() {
   if(rows){
     const ph=document.getElementById('cut-ph');
     rows.querySelectorAll('.clip-track-row').forEach(r=>r.remove());
-    for(let t=0;t<totalTk;t++){
+    // Video rows: descending (highest trackIdx first = visually on top)
+    for(let v=S.cut.videoTracks; v>=1; v--){
+      const t = v-1;
       const row=document.createElement('div');
       row.id='tl-row-'+t;
-      row.className='clip-track-row '+(t<S.cut.videoTracks?'video-row':'audio-row');
+      row.className='clip-track-row video-row';
       row.setAttribute('data-track',t);
-      row.style.width = _tlW + 'px'; // all rows same elastic width
+      row.style.width = _tlW + 'px';
+      if(ph) rows.insertBefore(row,ph); else rows.appendChild(row);
+    }
+    // Audio rows: ascending
+    for(let a=1; a<=S.cut.audioTracks; a++){
+      const t = S.cut.videoTracks+(a-1);
+      const row=document.createElement('div');
+      row.id='tl-row-'+t;
+      row.className='clip-track-row audio-row';
+      row.setAttribute('data-track',t);
+      row.style.width = _tlW + 'px';
       if(ph) rows.insertBefore(row,ph); else rows.appendChild(row);
     }
   }
