@@ -5170,6 +5170,8 @@ function syncCutVid(){
       const _pc = _primaryClip.clip;
       const _pi = S.cut.media[_pc.mediaIdx];
       if(_pi?.url){
+        // Always keep pool vid warmed up as readyState fallback
+        getPoolVid(_pi.url);
         if(mv.dataset.mediaIdx !== String(_pc.mediaIdx) || !mv.src || mv.src.includes('undefined')){
           mv.dataset.mediaIdx = String(_pc.mediaIdx);
           mv.src = _pi.url;
@@ -5242,7 +5244,21 @@ function syncCutVid(){
           const isFirst = _primaryClip && c === _primaryClip.clip;
           let vSrc;
           if(isFirst){
-            vSrc = mv;
+            // Primary: prefer mv; fall back to pool vid if mv not ready yet
+            if(mv.readyState >= 2){
+              vSrc = mv;
+            } else {
+              const _pvFb = getPoolVid(it.url);
+              if(_pvFb && _pvFb.readyState >= 2){
+                vSrc = _pvFb;
+              } else {
+                // Neither ready — retry on canplay
+                const _onRdy = () => { if(typeof syncCutVid==='function') syncCutVid(); };
+                mv.addEventListener('canplay', _onRdy, {once:true});
+                if(_pvFb) _pvFb.addEventListener('canplay', _onRdy, {once:true});
+                return;
+              }
+            }
           } else {
             vSrc = getPoolVid(it.url);
             if(vSrc){
@@ -5251,8 +5267,8 @@ function syncCutVid(){
               if(!S.cut.playing && Math.abs(vSrc.currentTime-ft)>0.05) vSrc.currentTime=ft;
               if(S.cut.playing && vSrc.paused) vSrc.play().catch(()=>{});
             }
+            if(!vSrc || vSrc.readyState < 2) return;
           }
-          if(!vSrc || vSrc.readyState < 2) return;
 
           // Check for transition on this clip
           const tr3 = getClipTransition(ci);
