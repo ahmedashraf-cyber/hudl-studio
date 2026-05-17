@@ -3602,9 +3602,13 @@ function clipMoveStart(e,ci){
   // ── Normal drag: move the clip ──
   // Store all selected clip origins for group move
   const _multiOrigins = {};
+  const _multiOriginTracks = {};
   if(window._selectedClips?.size > 1){
     window._selectedClips.forEach(_idx => {
-      if(S.cut.clips[_idx]) _multiOrigins[_idx] = S.cut.clips[_idx].start;
+      if(S.cut.clips[_idx]){
+        _multiOrigins[_idx]      = S.cut.clips[_idx].start;
+        _multiOriginTracks[_idx] = S.cut.clips[_idx].track; // save original track too
+      }
     });
   }
   window._snapCache = null;
@@ -3616,6 +3620,7 @@ function clipMoveStart(e,ci){
     origTrack:S.cut.clips[ci].track,
     el:       el,
     _multiOrigins,
+    _multiOriginTracks,
   };
   if(el){ el.style.opacity='0.7'; el.style.zIndex='100'; }
   document.addEventListener('mousemove', clipMoveMove);
@@ -3640,28 +3645,33 @@ function clipMoveMove(e){
   else if(_sE!==null){newStart=Math.max(0,_sE-_clipDur);window.showSnapLine&&showSnapLine(_sE);}
   else{window.hideSnapLine&&hideSnapLine();}
   S.cut.clips[_mv.ci].start=newStart;
-  // Vertical: change track (each track is 30px tall)
+  // Vertical: change track (each row is 30px)
   const totalTracks=S.cut.videoTracks+S.cut.audioTracks;
   const trackDelta=Math.round(dy/30);
-  const newTrack=Math.max(0,Math.min(totalTracks-1,_mv.origTrack+trackDelta));
+  const grabbedClip=S.cut.clips[_mv.ci];
+  const grabbedIsVideo=grabbedClip.type==='video'||grabbedClip.type==='image'||grabbedClip.type==='frame_hold';
+  // Type-safe track bounds: video clips stay in video rows, audio stays in audio rows
+  const _minTrack = grabbedIsVideo ? 0 : S.cut.videoTracks;
+  const _maxTrack = grabbedIsVideo ? S.cut.videoTracks-1 : totalTracks-1;
+  const newTrack=Math.max(_minTrack, Math.min(_maxTrack, _mv.origTrack+trackDelta));
   S.cut.clips[_mv.ci].track=newTrack;
-  // Update color based on track type
-  const isAudioTrack=newTrack>=S.cut.videoTracks;
-  if(isAudioTrack&&S.cut.clips[_mv.ci].type!=='audio'){
-    S.cut.clips[_mv.ci].color='rgba(210,153,34,0.8)';
-  } else if(!isAudioTrack){
-    const orig=S.cut.clips[_mv.ci];
-    orig.color=orig.type==='image'?'rgba(63,185,80,0.8)':'rgba(88,166,255,0.8)';
-  }
-  // GROUP MOVE: move all other selected clips by the same delta as primary
+  // No color mutation during drag - preserve original colors
+  // GROUP MOVE: apply BOTH horizontal AND vertical delta to all selected clips
   if(window._selectedClips?.size > 1 && _mv._multiOrigins){
-    const _delta = newStart - (_mv._multiOrigins[_mv.ci] ?? _mv.origStart);
+    const _hDelta = newStart - (_mv._multiOrigins[_mv.ci] ?? _mv.origStart);
+    const _vDelta = newTrack - _mv.origTrack; // same track shift for all
     window._selectedClips.forEach(_sidx => {
       if(_sidx === _mv.ci) return;
       const _sc = S.cut.clips[_sidx];
-      if(_sc && _mv._multiOrigins[_sidx] !== undefined){
-        _sc.start = Math.max(0, _mv._multiOrigins[_sidx] + _delta);
-      }
+      if(!_sc || _mv._multiOrigins[_sidx] === undefined) return;
+      // Horizontal
+      _sc.start = Math.max(0, _mv._multiOrigins[_sidx] + _hDelta);
+      // Vertical: apply same delta, clamped to correct type boundaries
+      const _scIsVideo = _sc.type==='video'||_sc.type==='image'||_sc.type==='frame_hold';
+      const _scMin = _scIsVideo ? 0 : S.cut.videoTracks;
+      const _scMax = _scIsVideo ? S.cut.videoTracks-1 : totalTracks-1;
+      const _origTrack = _mv._multiOriginTracks?.[_sidx] ?? _sc.track;
+      _sc.track = Math.max(_scMin, Math.min(_scMax, _origTrack + _vDelta));
     });
   }
   renderCutTimeline();
