@@ -5345,10 +5345,10 @@ function syncCutVid(){
         window.renderOverlaysOnCanvas(ctx, canvas.width, canvas.height, ph, _playedFreezes);
       ctx.restore();
     } else {
-      // Multi-track compositing: draw each active clip in track order (V1 bottom, Vn top)
-      ctx.clearRect(0,0,canvas.width,canvas.height);
-      ctx.fillStyle='#000'; ctx.fillRect(0,0,canvas.width,canvas.height);
-      _allAtPh.forEach(layerClip => {
+      // Multi-track compositing: composite higher-track clips ON TOP of already-drawn primary
+      // Video is already on canvas from base-draw above. No clearRect = transparency preserved.
+      const _abovePrimary = _allAtPh.filter(c => c !== active && (c.track||0) > (active.track||0));
+      _abovePrimary.forEach(layerClip => {
         const layerCI = S.cut.clips.indexOf(layerClip);
         const layerItem = S.cut.media[layerClip.mediaIdx];
         const layerSrc = layerItem?.url ? getPoolVid(layerItem.url) : null;
@@ -5356,6 +5356,7 @@ function syncCutVid(){
         const layerFilter = buildFilterStr(layerCI);
         ctx.save();
         ctx.filter = layerFilter !== 'none' ? layerFilter : '';
+        ctx.globalCompositeOperation = 'source-over';
         try{ _drawVideoFrame(layerSrc, ctx, canvas.width, canvas.height); }catch(e){}
         ctx.restore();
       });
