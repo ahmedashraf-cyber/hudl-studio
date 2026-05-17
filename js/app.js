@@ -4844,6 +4844,17 @@ function getPoolVid(url){
   return _vidPool[url];
 }
 
+// Image pool — pre-loaded <img> elements for image clips (PNG/JPG/etc.)
+const _imgPool = {};
+function getPoolImg(url){
+  if(!_imgPool[url]){
+    const img = new Image();
+    img.src = url;
+    _imgPool[url] = img;
+  }
+  return _imgPool[url];
+}
+
 function getClipTransition(ci){
   // Returns the transition whose window contains current ph — or first if none match
   const effs=S.cut.effects[ci]||[];
@@ -4902,8 +4913,8 @@ function syncCutVid(){
   const screen = $('cut-screen');
   if(!screen) return;
 
-  // Find ALL active video clips at playhead, sorted by track index (V1=0 bottom, V(n) top)
-  const videoClips = S.cut.clips.filter(c => c.type === 'video' || c.type === 'frame_hold');
+  // Find ALL active video/image clips at playhead, sorted by track index (V1=0 bottom, V(n) top)
+  const videoClips = S.cut.clips.filter(c => c.type === 'video' || c.type === 'frame_hold' || c.type === 'image');
   const _allAtPh = videoClips
     .filter(c => ph >= c.start && ph < c.start + c.dur && !S.cut.hiddenTracks?.[c.track])
     .sort((a,b) => (a.track||0) - (b.track||0)); // lower track index = drawn first (underneath)
@@ -4912,10 +4923,13 @@ function syncCutVid(){
   const active = _allAtPh.find(c => c.type === 'frame_hold') ||
                  _allAtPh[0] || null; // lowest track = drawn first as base layer
 
-  // Ensure pool vids exist for all clips
+  // Ensure pool elements exist for all clips
   videoClips.forEach(c => {
     const item = S.cut.media[c.mediaIdx];
-    if(item?.url) getPoolVid(item.url);
+    if(item?.url){
+      if(c.type === 'image') getPoolImg(item.url);
+      else getPoolVid(item.url);
+    }
   });
 
   // Get or create main video element — always inside the viewport frame
@@ -5045,8 +5059,10 @@ function syncCutVid(){
     return (ph >= _ts && ph < _te) ? tr : null;
   })();
   // Force canvas mode when multiple clips are stacked (multi-track) — plain <video> can only show one clip
+  // Also force canvas for image clips — <video> element cannot display images
   const _hasMultiTrack = _allAtPh.length > 1;
-  if((_hasMultiTrack || trInWindow || hasEffects || hasActiveOverlays) && (performance.now()-(_freezeExitTime||0)) > 500){
+  const _activeIsImage = active.type === 'image';
+  if((_hasMultiTrack || _activeIsImage || trInWindow || hasEffects || hasActiveOverlays) && (performance.now()-(_freezeExitTime||0)) > 500){
     mv.style.opacity = '0';
     mv.style.filter = '';       // clear CSS filter - applied via ctx.filter on canvas instead
     canvas.style.display = 'block';
@@ -5057,28 +5073,36 @@ function syncCutVid(){
       canvas.width = projW; canvas.height = projH;
     }
 
-    // ── CRITICAL: Always set up mv.src BEFORE drawing from it ──
-    if(mv.dataset.mediaIdx !== String(active.mediaIdx) || !mv.src || mv.src.includes('undefined')){
-      mv.dataset.mediaIdx = String(active.mediaIdx);
-      mv.src = item.url;
+    // ── Set up draw source: image clips use _imgPool, video clips use mv ──
+    let drawSrc;
+    if(_activeIsImage){
+      // Image clip — draw via pool <img> element, keep mv hidden
+      drawSrc = getPoolImg(item.url);
+      mv.style.opacity = '0';
+    } else {
+      // Video clip — set up mv.src before drawing from it
+      if(mv.dataset.mediaIdx !== String(active.mediaIdx) || !mv.src || mv.src.includes('undefined')){
+        mv.dataset.mediaIdx = String(active.mediaIdx);
+        mv.src = item.url;
+      }
+      mv.dataset.clipIdx = String(activeCI);
+      // Convert timeline position to file position: fileTime = fileStart + offset * speed
+      const _spd = active.speed || 1;
+      const targetT = (active.fileStart||0) + Math.max(0, (ph - active.start) * _spd);
+      if(!S.cut.playing && Math.abs(mv.currentTime - targetT) > 0.05){
+        mv.currentTime = targetT;
+      }
+      drawSrc = mv;
     }
-    mv.dataset.clipIdx = String(activeCI);
 
-    // Convert timeline position to file position: fileTime = fileStart + offset * speed
-    const _spd = active.speed || 1;
-    const targetT = (active.fileStart||0) + Math.max(0, (ph - active.start) * _spd);
-    if(!S.cut.playing && Math.abs(mv.currentTime - targetT) > 0.05){
-      mv.currentTime = targetT;
-    }
-
-    const ctx = canvas.getContext('2d');
-    const drawSrc = mv;
-
-    // Center-crop draw helper — preserves native video AR in any canvas size
+    // Center-crop draw helper — handles both <video> and <img> elements
     function _drawVideoFrame(src, ctx, cW, cH){
-      if(!src || src.readyState < 2) return false;
-      const vW = src.videoWidth  || cW;
-      const vH = src.videoHeight || cH;
+      if(!src) return false;
+      // Readiness check: <video> uses readyState, <img> uses .complete
+      if(src.tagName === 'VIDEO' && src.readyState < 2) return false;
+      if(src.tagName === 'IMG' && !src.complete) return false;
+      const vW = src.videoWidth || src.naturalWidth || cW;
+      const vH = src.videoHeight || src.naturalHeight || cH;
       if(!vW || !vH) return false;
       const canvasAR = cW / cH;
       const videoAR  = vW / vH;
@@ -5098,22 +5122,29 @@ function syncCutVid(){
       }catch(e){ return false; }
     }
 
-    // Keep mv playing even when hidden — needed for frame decoding
-    if(S.cut.playing && mv.paused && !_freezeActive){
+    // Keep mv playing even when hidden — needed for frame decoding (video only)
+    if(!_activeIsImage && S.cut.playing && mv.paused && !_freezeActive){
       mv.play().catch(()=>{});
     }
-    // Pre-seek: convert timeline pos to file pos (multiply by speed)
-    if(!S.cut.playing){
+    // Pre-seek: convert timeline pos to file pos (video only — images don't seek)
+    if(!_activeIsImage && !S.cut.playing){
       const _spd2 = active.speed || 1;
       const t0 = (active.fileStart||0) + Math.max(0, (ph - active.start) * _spd2);
       if(Math.abs(mv.currentTime - t0) > 0.05) mv.currentTime = t0;
     }
 
-    // Base draw: if NO active transition, draw video normally
+    const ctx = canvas.getContext('2d');
+
+    // Readiness check for base draw source
+    const _srcReady = _activeIsImage
+      ? (drawSrc && drawSrc.complete)
+      : (drawSrc && drawSrc.readyState >= 2);
+
+    // Base draw: if NO active transition, draw video/image normally
     // If transition IS active, skip base draw — each transition draws its own video
-    if(drawSrc && drawSrc.readyState >= 2){
+    if(_srcReady){
       if(!trInWindow){
-        // No transition: draw video at full opacity
+        // No transition: draw at full opacity
         ctx.clearRect(0,0,canvas.width,canvas.height);
         if(_drawVideoFrame(drawSrc, ctx, canvas.width, canvas.height)){
           canvas._hasGoodFrame = true;
@@ -5371,16 +5402,24 @@ function syncCutVid(){
       _abovePrimary.forEach(layerClip => {
         const layerCI = S.cut.clips.indexOf(layerClip);
         const layerItem = S.cut.media[layerClip.mediaIdx];
-        const layerSrc = layerItem?.url ? getPoolVid(layerItem.url) : null;
+        if(!layerItem?.url) return;
+        // Use img pool for image clips, vid pool for video clips
+        const layerSrc = layerClip.type === 'image'
+          ? getPoolImg(layerItem.url)
+          : getPoolVid(layerItem.url);
         if(!layerSrc) return;
-        // Seek pool vid to correct timeline position
-        const layerSpd = layerClip.speed || 1;
-        const layerT = (layerClip.fileStart||0) + Math.max(0, (ph - layerClip.start) * layerSpd);
-        if(!S.cut.playing && Math.abs(layerSrc.currentTime - layerT) > 0.05){
-          layerSrc.currentTime = layerT;
+        // Seek pool vid to correct timeline position (images don't need seeking)
+        if(layerClip.type !== 'image'){
+          const layerSpd = layerClip.speed || 1;
+          const layerT = (layerClip.fileStart||0) + Math.max(0, (ph - layerClip.start) * layerSpd);
+          if(!S.cut.playing && Math.abs(layerSrc.currentTime - layerT) > 0.05){
+            layerSrc.currentTime = layerT;
+          }
+          if(S.cut.playing && layerSrc.paused){ layerSrc.play().catch(()=>{}); }
+          if(layerSrc.readyState < 2) return;
+        } else {
+          if(!layerSrc.complete) return;
         }
-        if(S.cut.playing && layerSrc.paused){ layerSrc.play().catch(()=>{}); }
-        if(!layerSrc || layerSrc.readyState < 2) return;
         const layerFilter = buildFilterStr(layerCI);
         ctx.save();
         ctx.filter = layerFilter !== 'none' ? layerFilter : '';
