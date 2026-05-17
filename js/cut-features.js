@@ -180,7 +180,7 @@ function showFreezeDialog(){
       if(window.cutSaveHistory) cutSaveHistory('add_overlay');
       window._overlays.push({
         id: ovId, type:'freeze',
-        track: 0,
+        track: (window.S?.cut?.videoTracks||2)-1,
         startTime: start, endTime: end,
         clipMediaIdx: clip.mediaIdx, freezeFileTime,
         freezeMode: freezeMode || 'both',
@@ -384,7 +384,7 @@ function showTextDialog(editId){
     const text=document.getElementById('txt-content').value.trim();
     if(!text||isNaN(start)||isNaN(end)||end<=start){notify('Fill all fields correctly','#E31837');return;}
     const ov = {
-      track: 0,
+      track: (window.S?.cut?.videoTracks||2)-1,
       id: editId||newOverlayId(), type:'text',
       startTime:start, endTime:end,
       text, font:document.getElementById('txt-font').value,
@@ -599,7 +599,7 @@ function showShapeDialog(){
     if(window.cutSaveHistory) cutSaveHistory('add_overlay');
     window._overlays.push({
       id:newOverlayId(), type:'shape',
-      track: 0,
+      track: (window.S?.cut?.videoTracks||2)-1,
       startTime:start, endTime:end,
       shape:document.getElementById('shp-type').value,
       color:document.getElementById('shp-color').value,
@@ -1171,7 +1171,7 @@ function getOverlayLabel(ov){
   if(ov.type==='image_bg') return ov.bgType==='image'?(ov.name||'image').substring(0,10):ov.bgType==='color'?'color bg':'gradient';
   return 'overlay';
 }
-const OVERLAY_TRACK  = 0; // always render on V1 row (track 0), as an overlay layer on top
+const OVERLAY_TRACK  = 0; // legacy constant — overlays now default to highest video track (foreground)
 
 function renderOverlayTimeline(){
   // Remove old overlay-strip if it exists (legacy)

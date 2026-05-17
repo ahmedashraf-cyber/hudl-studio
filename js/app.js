@@ -3361,31 +3361,47 @@ function cutBinDragStart(e,i){S.cut._drag=i;e.dataTransfer.setData('text/plain',
 function cutSelMedia(i){S.cut.selMedia=i;document.querySelectorAll('.mbin-item').forEach((el,idx)=>el.classList.toggle('sel',idx===i));}
 function cutAddToTL(i) {
   const item=S.cut.media[i]; if(!item) return;
-  // Smart track insertion: find lowest video track (V1 first)
+  // Progressive bottom-up placement: scan from V1 (trackIdx=0) upward
+  // Place in lowest track that has space at its end, or lowest empty track
   let track, startSec;
   if(item.type==='audio'){
     track = S.cut.videoTracks; // first audio track
     const ends = S.cut.clips.filter(c=>c.track===track).map(c=>c.start+c.dur);
     startSec = ends.length ? Math.max(...ends)+0.01 : 0;
   } else {
-    // Smart append: use the last-active video track (where last clip was added)
-    // If user has a selected clip, use that track. Otherwise use track with last clip end.
+    // If user has a selected clip on a video track, append to that same track
     if(S.cut.sel !== null && S.cut.sel !== undefined && S.cut.clips[S.cut.sel]?.type==='video'){
       track = S.cut.clips[S.cut.sel].track;
-    } else if(window._lastActiveVideoTrack !== undefined){
-      track = window._lastActiveVideoTrack;
+      const ends = S.cut.clips.filter(c=>c.track===track).map(c=>c.start+c.dur);
+      startSec = ends.length ? Math.max(...ends)+0.01 : 0;
     } else {
-      // Find track with latest clip end (most recently worked on track)
-      let latestEnd = -1;
-      track = 0;
+      // Progressive scan: find the lowest track (starting V1=0) that has clips,
+      // and append after its last clip. If a track is completely empty, use it.
+      // This ensures V1 fills first, then V2, then V3 (bottom-up stacking).
+      let bestTrack = 0;
+      let bestEnd = -1;
+      let emptyTrack = -1;
       for(let vt=0; vt<S.cut.videoTracks; vt++){
-        const ends2 = S.cut.clips.filter(c=>c.type==='video'&&c.track===vt).map(c=>c.start+c.dur);
-        const trackEnd = ends2.length ? Math.max(...ends2) : 0;
-        if(trackEnd > latestEnd){ latestEnd=trackEnd; track=vt; }
+        const trackClips = S.cut.clips.filter(c=>(c.type==='video'||c.type==='frame_hold')&&c.track===vt);
+        if(trackClips.length === 0){
+          if(emptyTrack === -1) emptyTrack = vt; // lowest empty track
+        } else {
+          const trackEnd = Math.max(...trackClips.map(c=>c.start+c.dur));
+          if(bestEnd === -1){ bestTrack=vt; bestEnd=trackEnd; } // first occupied track wins
+        }
+      }
+      if(bestEnd >= 0){
+        // Append after last clip on lowest occupied track
+        track = bestTrack;
+        startSec = bestEnd + 0.01;
+      } else if(emptyTrack >= 0){
+        // All tracks empty — use V1
+        track = emptyTrack;
+        startSec = 0;
+      } else {
+        track = 0; startSec = 0;
       }
     }
-    const ends = S.cut.clips.filter(c=>c.track===track).map(c=>c.start+c.dur);
-    startSec = ends.length ? Math.max(...ends)+0.01 : 0;
     window._lastActiveVideoTrack = track;
   }
   S.cut.clips.push({mediaIdx:i,name:item.name,type:item.type,track,start:startSec,dur:Math.max(item.duration||5,0.5),fileStart:0,color:item.type==='video'?'rgba(88,166,255,0.8)':item.type==='audio'?'rgba(210,153,34,0.8)':'rgba(63,185,80,0.8)'});
