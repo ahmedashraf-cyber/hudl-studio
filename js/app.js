@@ -7110,10 +7110,15 @@ function cutToggleFullscreen(){
   _cutFsActive = !_cutFsActive;
 
   if(_cutFsActive){
-    // Enter fullscreen-ish: use native Fullscreen API on the screen element
-    if(screen.requestFullscreen){
-      screen.requestFullscreen().catch(() => _cutEnterSoftFullscreen());
-    } else {
+    // Try native fullscreen on the screen element
+    // screen = #cut-screen (the preview container with the video inside)
+    const _fsTarget = document.getElementById('cut-screen');
+    const _fsPromise = _fsTarget?.requestFullscreen?.() ||
+                       _fsTarget?.webkitRequestFullscreen?.() ||
+                       _fsTarget?.mozRequestFullScreen?.();
+    if(_fsPromise && typeof _fsPromise.catch === 'function'){
+      _fsPromise.catch(() => _cutEnterSoftFullscreen());
+    } else if(!_fsTarget?.requestFullscreen && !_fsTarget?.webkitRequestFullscreen){
       _cutEnterSoftFullscreen();
     }
   } else {
@@ -7143,10 +7148,15 @@ function _cutEnterSoftFullscreen(){
   if(_fsFrame){ _fsFrame.dataset.fsFrStyle = _fsFrame.style.cssText; _fsFrame.style.cssText='width:100%;height:100%;display:flex;align-items:center;justify-content:center'; }
   const _fsMv = document.getElementById('cut-main-vid');
   if(_fsMv){ _fsMv.dataset.fsMvStyle = _fsMv.style.cssText; _fsMv.style.objectFit='contain'; _fsMv.style.width='100%'; _fsMv.style.height='100%'; }
+  // Also ensure canvas is visible and sized if video is hidden (canvas mode)
+  const _fsCvs = document.getElementById('cut-trans-cvs');
+  if(_fsCvs && _fsCvs.style.display !== 'none'){
+    _fsCvs.style.cssText='position:absolute;inset:0;width:100%;height:100%;pointer-events:none;z-index:2;display:block;';
+  }
   if(lpanel) { lpanel.dataset.fsDis = lpanel.style.display; lpanel.style.display='none'; }
   if(rpanel) { rpanel.dataset.fsDis = rpanel.style.display; rpanel.style.display='none'; }
   if(tl)     { tl.dataset.fsDis    = tl.style.display;     tl.style.display='none'; }
-  setTimeout(()=>{ if(window.applyCanvasAspectRatio) applyCanvasAspectRatio(S.proj.w||1920,S.proj.h||1080); if(window.drawMonitorOverlays) drawMonitorOverlays(); },100);
+  setTimeout(()=>{ if(window.applyCanvasAspectRatio) applyCanvasAspectRatio(S.proj.w||1920,S.proj.h||1080); if(window.drawMonitorOverlays) drawMonitorOverlays(); syncCutVid(); },100);
 }
 
 function _cutExitSoftFullscreen(){
