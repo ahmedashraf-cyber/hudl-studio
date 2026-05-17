@@ -1371,11 +1371,14 @@ function renderOverlayTimeline(){
           workOv.endTime   = _rawStart + (origEnd - origStart);
         }
         // Vertical drag: change track (only for main move, not trim)
+        // Timeline rows are rendered top-to-bottom as Vn→V1 (high→low track numbers).
+        // Dragging UP = negative dy = moving to a HIGHER track number (closer to foreground).
         if(!isLeftTrim && !isRightTrim && !dupOv){
           const _S2 = window.S;
           const _maxTrack = Math.max(0, (_S2?.cut?.videoTracks || 1) - 1);
           const _rowH = 30;
-          const _trackDelta = Math.round(dy / _rowH);
+          // Negate delta: dragging up (dy<0) increases track number toward foreground
+          const _trackDelta = -Math.round(dy / _rowH);
           const _newTrack = Math.max(0, Math.min(_maxTrack, origTrack_ov + _trackDelta));
           if(workOv.track !== _newTrack){
             workOv.track = _newTrack;
