@@ -3509,13 +3509,13 @@ function renderCutTimeline() {
       const i=parseInt(e.dataTransfer.getData('text/plain'));
       if(isNaN(i)||i<0||i>=S.cut.media.length)return;
       const item=S.cut.media[i];
-      // Type enforcement: video assets only on video tracks, audio only on audio tracks
+      // Type enforcement: visual assets (video/image) on video tracks; audio on audio tracks only
       const isVideoTrack = t < S.cut.videoTracks;
       const isAudioTrack = t >= S.cut.videoTracks;
-      const isVideoAsset = item.type === 'video';
+      const isVisualAsset = item.type === 'video' || item.type === 'image';
       const isAudioAsset = item.type === 'audio';
       if(isVideoTrack && isAudioAsset){ notify('Audio assets must go on Audio tracks (A1, A2...)','#E31837'); return; }
-      if(isAudioTrack && isVideoAsset){ notify('Video assets must go on Video tracks (V1, V2...)','#E31837'); return; }
+      if(isAudioTrack && isVisualAsset){ notify('Video/image assets must go on Video tracks (V1, V2...)','#E31837'); return; }
       const rect=row.getBoundingClientRect();
       const start=Math.max(0,(e.clientX-rect.left+document.getElementById('tl-scroll')?.scrollLeft||0)/PPS);
       S.cut.clips.push({mediaIdx:i,name:item.name,type:item.type,track:t,start,dur:Math.max(item.duration||5,0.5),fileStart:0,color:item.type==='video'?'rgba(88,166,255,0.8)':item.type==='audio'?'rgba(210,153,34,0.8)':'rgba(63,185,80,0.8)'});
@@ -4849,6 +4849,7 @@ const _imgPool = {};
 function getPoolImg(url){
   if(!_imgPool[url]){
     const img = new Image();
+    img.onload = () => { if(typeof syncCutVid === 'function') syncCutVid(); };
     img.src = url;
     _imgPool[url] = img;
   }

@@ -459,7 +459,7 @@ function showImageBgDialog(){
     // Default: full screen for color/gradient, half-size for image
     const _defW = type==='image' ? 0.5 : 1.0;
     const _defH = type==='image' ? 0.5 : 1.0;
-    const ov={id:newOverlayId(),type:'image_bg',startTime:start,endTime:end,bgType:type,
+    const ov={id:newOverlayId(),type:'image_bg',track:(window.S?.cut?.videoTracks||2)-1,startTime:start,endTime:end,bgType:type,
       x:0.5,y:0.5,w:_defW,h:_defH,rotation:0};
     if(type==='image'){
       const file=document.getElementById('img-file').files[0];
