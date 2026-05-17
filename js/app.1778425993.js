@@ -5028,7 +5028,9 @@ function syncCutVid(){
     const _te = _ts + (tr.effectDur||tr.dur||1);
     return (ph >= _ts && ph < _te) ? tr : null;
   })();
-  if((trInWindow || hasEffects || hasActiveOverlays) && (performance.now()-(_freezeExitTime||0)) > 500){
+  // Force canvas mode when multiple clips are stacked (multi-track) — plain <video> can only show one clip
+  const _hasMultiTrack = _allAtPh.length > 1;
+  if((_hasMultiTrack || trInWindow || hasEffects || hasActiveOverlays) && (performance.now()-(_freezeExitTime||0)) > 500){
     mv.style.opacity = '0';
     mv.style.filter = '';       // clear CSS filter - applied via ctx.filter on canvas instead
     canvas.style.display = 'block';
@@ -5354,6 +5356,14 @@ function syncCutVid(){
         const layerCI = S.cut.clips.indexOf(layerClip);
         const layerItem = S.cut.media[layerClip.mediaIdx];
         const layerSrc = layerItem?.url ? getPoolVid(layerItem.url) : null;
+        if(!layerSrc) return;
+        // Seek pool vid to correct timeline position
+        const layerSpd = layerClip.speed || 1;
+        const layerT = (layerClip.fileStart||0) + Math.max(0, (ph - layerClip.start) * layerSpd);
+        if(!S.cut.playing && Math.abs(layerSrc.currentTime - layerT) > 0.05){
+          layerSrc.currentTime = layerT;
+        }
+        if(S.cut.playing && layerSrc.paused){ layerSrc.play().catch(()=>{}); }
         if(!layerSrc || layerSrc.readyState < 2) return;
         const layerFilter = buildFilterStr(layerCI);
         ctx.save();
