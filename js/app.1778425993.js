@@ -4078,13 +4078,11 @@ function cutDeleteTrack(type, trackIdx){
   if(type === 'video'){
     if(S.cut.videoTracks <= 1){ notify('Cannot delete last video track','#E31837'); return; }
     S.cut.clips.forEach(c => {
-      if(c.type === 'video' && c.track > trackIdx) c.track--; // shift down only video clips
-    });
-    // Shift audio clips' track indices down if they were above the deleted video track
-    S.cut.clips.forEach(c => {
-      if(c.type === 'audio' && c.track > trackIdx) c.track--;
+      if(c.type === 'video' && c.track > trackIdx) c.track--;
     });
     S.cut.videoTracks--;
+    // When video track deleted, audio rows move down by 1
+    S.cut.clips.forEach(c => { if(c.type === 'audio') c.track--; });
   } else {
     if(S.cut.audioTracks <= 1){ notify('Cannot delete last audio track','#E31837'); return; }
     S.cut.clips.forEach(c => {
@@ -4103,10 +4101,12 @@ window.cutDeleteTrack = cutDeleteTrack;
 function cutAddTrack(type){
   type=type||'video';
   if(type==='video'){
-    // New video track = next highest index, renders at top visually (no clip shifting)
+    // Adding video track increases videoTracks count
+    // Audio clips start at index=videoTracks, so they must shift up by 1
     S.cut.videoTracks++;
+    S.cut.clips.forEach(c => { if(c.type==='audio') c.track++; });
   } else {
-    // New audio track = next highest audio index, renders at bottom
+    // Adding audio track - no effect on video clips
     S.cut.audioTracks++;
   }
   cutSaveHistory('add_track');
