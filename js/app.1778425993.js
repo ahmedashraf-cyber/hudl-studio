@@ -5395,42 +5395,71 @@ function syncCutVid(){
         window.renderOverlaysOnCanvas(ctx, canvas.width, canvas.height, ph, _playedFreezes);
       ctx.restore();
     } else {
-      // Multi-track compositing: draw ALL clips in ascending track order (V1 bottom → Vn top)
-      // active (lowest track) is already drawn above as the base layer.
-      // Now draw every higher-track clip on top in ascending order.
+      // ── UNIFIED GLOBAL SORT: merge clips + overlays, sort by track ascending ──
+      // Painter's Algorithm: V1 drawn first (background), Vn drawn last (foreground).
+      // Clips (video/image) and overlays (shapes/text/freeze) are merged into one list
+      // sorted by track so V3 overlays always paint AFTER V2 clips — no separation.
+
+      // 1. Collect all active clips above the base (active is already drawn)
       const _abovePrimary = _allAtPh.filter(c => c !== active).sort((a,b)=>(a.track||0)-(b.track||0));
-      _abovePrimary.forEach(layerClip => {
-        const layerCI = S.cut.clips.indexOf(layerClip);
-        const layerItem = S.cut.media[layerClip.mediaIdx];
-        if(!layerItem?.url) return;
-        // Use img pool for image clips, vid pool for video clips
-        const layerSrc = layerClip.type === 'image'
-          ? getPoolImg(layerItem.url)
-          : getPoolVid(layerItem.url);
-        if(!layerSrc) return;
-        // Seek pool vid to correct timeline position (images don't need seeking)
-        if(layerClip.type !== 'image'){
-          const layerSpd = layerClip.speed || 1;
-          const layerT = (layerClip.fileStart||0) + Math.max(0, (ph - layerClip.start) * layerSpd);
-          if(!S.cut.playing && Math.abs(layerSrc.currentTime - layerT) > 0.05){
-            layerSrc.currentTime = layerT;
-          }
-          if(S.cut.playing && layerSrc.paused){ layerSrc.play().catch(()=>{}); }
-          if(layerSrc.readyState < 2) return;
-        } else {
-          if(!layerSrc.complete) return;
+
+      // 2. Collect all active overlays at this playhead
+      const _activeOverlays = (window._overlays||[])
+        .filter(o => ph >= o.startTime && ph < o.endTime &&
+                     !(o.type==='freeze' && _playedFreezes && _playedFreezes.has(o.id)));
+
+      // 3. Build unified render list: each entry tagged with its type and track
+      //    Clips that are NOT the base (active) + all overlays
+      const _renderList = [];
+      _abovePrimary.forEach(c => _renderList.push({ kind:'clip', track: c.track||0, clip: c }));
+      _activeOverlays.forEach(o => _renderList.push({ kind:'overlay', track: o.track||0, overlay: o }));
+
+      // 4. Primary sort: track ascending. Secondary sort: clips before overlays on same track
+      //    (so video always underlies text/shapes on the same track), then overlay insertion order
+      _renderList.sort((a,b) => {
+        const tDiff = a.track - b.track;
+        if(tDiff !== 0) return tDiff;
+        // Same track: clips (kind='clip') paint before overlays (kind='overlay')
+        if(a.kind !== b.kind) return a.kind === 'clip' ? -1 : 1;
+        // Same track, same kind: overlays keep insertion order
+        if(a.kind === 'overlay'){
+          return (window._overlays.indexOf(a.overlay)) - (window._overlays.indexOf(b.overlay));
         }
-        const layerFilter = buildFilterStr(layerCI);
-        ctx.save();
-        ctx.filter = layerFilter !== 'none' ? layerFilter : '';
-        ctx.globalCompositeOperation = 'source-over';
-        try{ _drawVideoFrame(layerSrc, ctx, canvas.width, canvas.height); }catch(e){}
-        ctx.restore();
+        return 0;
       });
-      ctx.save(); ctx.filter='none'; ctx.globalAlpha=1; ctx.globalCompositeOperation='source-over';
-      if(window.renderOverlaysOnCanvas)
-        window.renderOverlaysOnCanvas(ctx, canvas.width, canvas.height, ph, _playedFreezes);
-      ctx.restore();
+
+      // 5. Draw each item in unified order
+      _renderList.forEach(entry => {
+        if(entry.kind === 'clip'){
+          const layerClip = entry.clip;
+          const layerCI = S.cut.clips.indexOf(layerClip);
+          const layerItem = S.cut.media[layerClip.mediaIdx];
+          if(!layerItem?.url) return;
+          const layerSrc = layerClip.type === 'image'
+            ? getPoolImg(layerItem.url)
+            : getPoolVid(layerItem.url);
+          if(!layerSrc) return;
+          if(layerClip.type !== 'image'){
+            const layerSpd = layerClip.speed || 1;
+            const layerT = (layerClip.fileStart||0) + Math.max(0, (ph - layerClip.start) * layerSpd);
+            if(!S.cut.playing && Math.abs(layerSrc.currentTime - layerT) > 0.05) layerSrc.currentTime = layerT;
+            if(S.cut.playing && layerSrc.paused) layerSrc.play().catch(()=>{});
+            if(layerSrc.readyState < 2) return;
+          } else {
+            if(!layerSrc.complete) return;
+          }
+          const layerFilter = buildFilterStr(layerCI);
+          ctx.save();
+          ctx.filter = layerFilter !== 'none' ? layerFilter : '';
+          ctx.globalCompositeOperation = 'source-over';
+          try{ _drawVideoFrame(layerSrc, ctx, canvas.width, canvas.height); }catch(e){}
+          ctx.restore();
+        } else {
+          // overlay entry — draw single overlay
+          if(window.renderSingleOverlayOnCanvas)
+            window.renderSingleOverlayOnCanvas(ctx, canvas.width, canvas.height, ph, entry.overlay, _playedFreezes);
+        }
+      });
     }
     return;
   }

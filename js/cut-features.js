@@ -951,6 +951,40 @@ function renderOverlaysOnCanvas(ctx, W, H, currentTime, playedFreezes){
   });
 }
 
+// Draw a single overlay — used by the unified global sort render loop in syncCutVid
+// so overlays can be interleaved with clips by track order
+function renderSingleOverlayOnCanvas(ctx, W, H, currentTime, ov, playedFreezes){
+  if(!ov) return;
+  if(currentTime < ov.startTime || currentTime >= ov.endTime) return;
+  if(ov.type==='freeze' && playedFreezes && playedFreezes.has(ov.id)) return;
+  const progress = (currentTime - ov.startTime) / (ov.endTime - ov.startTime);
+  const tr = computeOverlayTransition(ov, currentTime, W, H);
+  if(tr.alpha < 0.01) return;
+  ctx.save();
+  if(tr.blurPx > 1) ctx.filter = 'blur('+Math.round(tr.blurPx)+'px)';
+  if(tr.tx !== 0 || tr.ty !== 0) ctx.translate(tr.tx, tr.ty);
+  if(tr.scaleX !== 1 || tr.scaleY !== 1){
+    const cx=(ov.x||0.5)*W, cy=(ov.y||0.5)*H;
+    ctx.translate(cx,cy); ctx.scale(tr.scaleX,tr.scaleY); ctx.translate(-cx,-cy);
+  }
+  ctx.globalAlpha = Math.max(0, Math.min(1, tr.alpha));
+  if(ov.type==='freeze'){
+    if(ov._img && ov._img.complete){ ctx.globalAlpha=1; ctx.drawImage(ov._img,0,0,W,H); }
+    else if(!ov._img){
+      ctx.globalAlpha=1; ctx.fillStyle='rgba(0,0,0,0.6)'; ctx.fillRect(0,0,W,H);
+      ctx.fillStyle='#fff'; ctx.font='20px DM Sans,sans-serif';
+      ctx.textAlign='center'; ctx.textBaseline='middle';
+      ctx.fillText('Capturing freeze frame...',W/2,H/2);
+    }
+  } else if(ov.type==='text'){ renderTextOverlay(ctx,W,H,ov,progress); }
+  else if(ov.type==='image_bg'){ renderImageBg(ctx,W,H,ov,progress); }
+  else if(ov.type==='shape'){ renderShape(ctx,W,H,ov,progress); }
+  ctx.restore();
+  if(ctx.filter !== 'none') ctx.filter = 'none';
+  ctx.globalAlpha = 1;
+}
+window.renderSingleOverlayOnCanvas = renderSingleOverlayOnCanvas;
+
 // Offscreen cache for text overlays — reuse if nothing changed
 const _textRenderCache = new Map();
 
@@ -1190,8 +1224,9 @@ function renderOverlayTimeline(){
 
   window._overlays.forEach(ov => {
     if(ov.track === undefined || ov.track === null) ov.track = 0;
-    ov.track = Math.max(0, Math.min(_videoTracks - 1, ov.track));
-    const row = document.getElementById('tl-row-' + ov.track);
+    // Clamp only for DOM row display — do NOT mutate ov.track, preserve the real value
+    const displayTrack = Math.max(0, Math.min(_videoTracks - 1, ov.track));
+    const row = document.getElementById('tl-row-' + displayTrack);
     if(!row) return;
     // per-overlay block
     const color = OVERLAY_COLORS[ov.type] || 'rgba(128,128,128,0.7)';
