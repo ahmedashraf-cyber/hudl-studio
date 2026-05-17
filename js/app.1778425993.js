@@ -656,6 +656,148 @@ window.doSave = async function() {
   }
 };
 
+
+// ══════════════════════════════════════════════════════════════
+// F1: MARQUEE SELECTION
+// Drag on empty timeline area to select clips by intersection
+// ══════════════════════════════════════════════════════════════
+function setupMarqueeSelection(){
+  const scroll = document.getElementById('tl-scroll');
+  if(!scroll || scroll._marqueeAttached) return;
+  scroll._marqueeAttached = true;
+
+  let _mq = null; // marquee state
+  let _mqEl = null; // marquee DOM element
+
+  scroll.addEventListener('mousedown', e => {
+    // Only start marquee on empty area (not on a clip or resize handle)
+    if(e.target.closest('.tl-clip') || e.target.closest('.tl-overlay-clip') ||
+       e.target.closest('.playhead') || e.target.closest('.clip-resize-l') ||
+       e.target.closest('.clip-resize-r')) return;
+    if(e.button !== 0) return;
+    if(_activeTool !== 'select') return;
+
+    const scrollRect = scroll.getBoundingClientRect();
+    const startX = e.clientX - scrollRect.left + scroll.scrollLeft;
+    const startY = e.clientY - scrollRect.top  + scroll.scrollTop;
+
+    _mq = { startX, startY, moved: false };
+
+    const onMove = (ev) => {
+      const curX = ev.clientX - scrollRect.left + scroll.scrollLeft;
+      const curY = ev.clientY - scrollRect.top  + scroll.scrollTop;
+      const dx = curX - _mq.startX, dy = curY - _mq.startY;
+      if(!_mq.moved && Math.abs(dx) + Math.abs(dy) < 4) return;
+      _mq.moved = true;
+
+      // Draw marquee rect
+      if(!_mqEl){
+        _mqEl = document.createElement('div');
+        _mqEl.style.cssText = 'position:absolute;border:1.5px solid rgba(88,166,255,0.8);background:rgba(88,166,255,0.12);pointer-events:none;z-index:50;border-radius:2px;';
+        const rows = document.getElementById('tl-rows');
+        if(rows) rows.appendChild(_mqEl);
+      }
+      const x = Math.min(_mq.startX, curX);
+      const y = Math.min(_mq.startY, curY);
+      const w = Math.abs(dx), h = Math.abs(dy);
+      _mqEl.style.left = x+'px'; _mqEl.style.top = y+'px';
+      _mqEl.style.width = w+'px'; _mqEl.style.height = h+'px';
+
+      // Intersection hit-test: select clips that overlap the marquee
+      const mqLeft = x / PPS, mqRight = (x+w) / PPS;
+      const mqTop  = y,        mqBottom = y + h;
+      window._selectedClips = new Set();
+      S.cut.clips.forEach((c, ci) => {
+        const clipL = c.start, clipR = c.start + c.dur;
+        const rowTop = c.track * 30, rowBot = rowTop + 26;
+        // Intersection check (not containment)
+        const hOverlap = clipL < mqRight && clipR > mqLeft;
+        const vOverlap = rowTop < mqBottom && rowBot > mqTop;
+        if(hOverlap && vOverlap) window._selectedClips.add(ci);
+      });
+      // Visual feedback
+      document.querySelectorAll('.tl-clip:not(.tl-overlay-clip)').forEach(el => {
+        const ci = parseInt(el.dataset.ci);
+        el.classList.toggle('selected', window._selectedClips.has(ci));
+      });
+    };
+
+    const onUp = () => {
+      document.removeEventListener('mousemove', onMove);
+      document.removeEventListener('mouseup', onUp);
+      if(_mqEl){ _mqEl.remove(); _mqEl = null; }
+      if(!_mq?.moved){
+        // Plain click on empty area = deselect all
+        window._selectedClips = new Set();
+        document.querySelectorAll('.tl-clip.selected').forEach(el => el.classList.remove('selected'));
+        S.cut.sel = null;
+      } else if(window._selectedClips?.size === 1){
+        S.cut.sel = [...window._selectedClips][0];
+        if(typeof updatePropsPanel === 'function') updatePropsPanel(S.cut.sel);
+      }
+      _mq = null;
+    };
+
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup', onUp);
+  });
+}
+window.setupMarqueeSelection = setupMarqueeSelection;
+
+// ══════════════════════════════════════════════════════════════
+// F2: MEDIA FOLDERS
+// Create folders in media panel, nest files under them
+// ══════════════════════════════════════════════════════════════
+function createMediaFolder(name){
+  const folder = {
+    id: 'folder_' + Date.now(),
+    name: name || 'New Folder',
+    isFolder: true,
+    expanded: true,
+  };
+  S.cut.media.push(folder);
+  buildBinList();
+  scheduleSave();
+  return folder;
+}
+window.createMediaFolder = createMediaFolder;
+
+function moveMediaToFolder(mediaIdx, folderId){
+  const item = S.cut.media[mediaIdx];
+  if(!item || item.isFolder) return;
+  item.folderId = folderId || null; // null = top level
+  buildBinList();
+  scheduleSave();
+}
+window.moveMediaToFolder = moveMediaToFolder;
+
+// ══════════════════════════════════════════════════════════════
+// F2: Folder directory import (webkitdirectory)
+// ══════════════════════════════════════════════════════════════
+function setupFolderImport(){
+  let fi = document.getElementById('cut-fi-folder');
+  if(fi) return; // already set up
+  fi = document.createElement('input');
+  fi.type = 'file';
+  fi.id = 'cut-fi-folder';
+  fi.setAttribute('webkitdirectory', '');
+  fi.setAttribute('directory', '');
+  fi.multiple = true;
+  fi.style.display = 'none';
+  document.body.appendChild(fi);
+  fi.addEventListener('change', () => {
+    if(!fi.files?.length) return;
+    // Create a folder with the directory name
+    const folderName = fi.files[0].webkitRelativePath?.split('/')[0] || 'Imported Folder';
+    const folder = createMediaFolder(folderName);
+    // Import all files in the folder
+    const filesToImport = Array.from(fi.files).filter(f => !f.webkitRelativePath.includes('/.'));
+    handleCutFiles(filesToImport, folder.id);
+    fi.value = '';
+  });
+}
+window.setupFolderImport = setupFolderImport;
+
 window.doExport = function() { showExportModal(); };
 
 function showExportModal(){
@@ -1141,7 +1283,7 @@ const MENUS = {
     Sequence: [
       { l: 'Project Settings…', fn: () => showProjectSettings() },
       { sep: true },
-      { l: 'Settings', fn: () => notify(`${S.proj.w}×${S.proj.h} · ${S.proj.fps}fps · ${S.proj.dur}s`) },
+      { l: 'Sequence Settings…', fn: () => showProjectSettings() },
       { l: 'Add Track', fn: () => { S.cut.tracks++; buildCut(); notify('Track added'); } },
       { sep: true },
       { l: 'Go to Start', fn: () => cutSeek(0) },
@@ -1638,6 +1780,7 @@ function buildCut() {
 
   setupCutDrop(); setupCutFileInput(); renderCutTimeline(); buildBinList();
   setupTimelineScrollSync();
+  setTimeout(setupMarqueeSelection, 200);
   // Apply canvas aspect ratio + init pen tool
   setTimeout(()=>{
     applyCanvasAspectRatio(S.proj.w||1920, S.proj.h||1080);
@@ -2140,6 +2283,33 @@ function setupCutFileInput() {
   if (fi) fi.addEventListener('change', () => { handleCutFiles(fi.files); fi.value=''; });
   const fiAudio = $('cut-fi-audio');
   if (fiAudio) fiAudio.addEventListener('change', () => { handleCutFiles(fiAudio.files); fiAudio.value=''; });
+  // F2: folder directory import
+  let fiFolder = document.getElementById('cut-fi-folder');
+  if(!fiFolder){
+    fiFolder = document.createElement('input');
+    fiFolder.type='file'; fiFolder.id='cut-fi-folder'; fiFolder.style.display='none';
+    fiFolder.setAttribute('webkitdirectory',''); fiFolder.setAttribute('directory','');
+    fiFolder.multiple=true;
+    document.body.appendChild(fiFolder);
+    fiFolder.addEventListener('change', ()=>{
+      if(!fiFolder.files?.length) return;
+      const folderName = fiFolder.files[0].webkitRelativePath?.split('/')[0] || 'Folder';
+      // Create folder in bin
+      if(!S.cut.bins) S.cut.bins=[{id:'root',name:'All Media',open:true}];
+      const folderId = 'bin_'+Date.now();
+      S.cut.bins.push({id:folderId, name:folderName, open:true});
+      // Import all files and assign to folder
+      const prevLen = S.cut.media.length;
+      handleCutFiles(fiFolder.files);
+      // Assign new media items to the folder
+      setTimeout(()=>{
+        if(!S.cut.mediaBins) S.cut.mediaBins={};
+        for(let k=prevLen; k<S.cut.media.length; k++) S.cut.mediaBins[k]=folderId;
+        buildBinList(); scheduleSave();
+      }, 500);
+      fiFolder.value='';
+    });
+  }
 }
 
 function handleCutFiles(files) {
@@ -2204,6 +2374,7 @@ function buildBinList() {
   let html = `<div style="display:flex;align-items:center;gap:4px;padding:4px 6px 2px;border-bottom:0.5px solid rgba(255,255,255,0.06)">
     <span style="font-size:10px;color:rgba(255,255,255,0.3);flex:1">${S.cut.media.length} file(s)</span>
     <button onclick="cutMediaNewBin()" title="New folder" style="background:none;border:none;color:rgba(255,255,255,0.4);cursor:pointer;font-size:12px;padding:2px 5px;line-height:1;border-radius:4px;border:0.5px solid rgba(255,255,255,0.1)" onmouseover="this.style.color='#E8590C'" onmouseout="this.style.color='rgba(255,255,255,0.4)'">+ Folder</button>
+    <button onclick="document.getElementById('cut-fi-folder')?.click()" title="Import folder from disk" style="background:none;border:none;color:rgba(255,255,255,0.4);cursor:pointer;font-size:12px;padding:2px 5px;line-height:1;border-radius:4px;border:0.5px solid rgba(255,255,255,0.1)" onmouseover="this.style.color='#E8590C'" onmouseout="this.style.color='rgba(255,255,255,0.4)'">📁</button>
   </div>`;
 
   // Render each bin
