@@ -709,7 +709,15 @@ function setupMarqueeSelection(){
       window._selectedClips = new Set();
       S.cut.clips.forEach((c, ci) => {
         const clipL = c.start, clipR = c.start + c.dur;
-        const rowTop = c.track * 30, rowBot = rowTop + 26;
+        // Row Y position: video rows are rendered top-to-bottom as V(n)..V1
+        // trackIdx=videoTracks-1 is at Y=0, trackIdx=0 is at Y=(videoTracks-1)*30
+        let rowTop;
+        if(c.track < S.cut.videoTracks){
+          rowTop = (S.cut.videoTracks - 1 - c.track) * 30;
+        } else {
+          rowTop = S.cut.videoTracks * 30 + (c.track - S.cut.videoTracks) * 30;
+        }
+        const rowBot = rowTop + 26;
         // Intersection check (not containment)
         const hOverlap = clipL < mqRight && clipR > mqLeft;
         const vOverlap = rowTop < mqBottom && rowBot > mqTop;
@@ -5239,14 +5247,29 @@ function syncCutVid(){
         }
 
         if(c.type === 'image'){
-          // Image clip — draw via pool <img>
+          // Image clip — draw via pool <img> with transform support
           const imgSrc = getPoolImg(it.url);
           if(!imgSrc.complete) return;
           const flt = buildFilterStr(ci);
+          const tf = c.transform || {x:0, y:0, scaleX:100, scaleY:100, rotation:0};
+          const sx = (tf.scaleX||100)/100;
+          const sy = (tf.scaleY||100)/100;
+          const tx = ((tf.x||0)/100) * canvas.width;
+          const ty = ((tf.y||0)/100) * canvas.height;
+          const rot = (tf.rotation||0) * Math.PI / 180;
+          // Default: fit image to canvas maintaining AR, then apply scale
+          const iW = imgSrc.naturalWidth  || canvas.width;
+          const iH = imgSrc.naturalHeight || canvas.height;
+          const iAR = iW/iH, cAR = canvas.width/canvas.height;
+          let dw, dh;
+          if(iAR > cAR){ dw = canvas.width * sx; dh = (canvas.width/iAR) * sy; }
+          else          { dh = canvas.height * sy; dw = (canvas.height*iAR) * sx; }
           ctx.save();
           if(flt !== 'none') ctx.filter = flt;
           ctx.globalCompositeOperation = 'source-over';
-          _drawFrame(imgSrc, ctx, canvas.width, canvas.height);
+          ctx.translate(canvas.width/2 + tx, canvas.height/2 + ty);
+          if(rot) ctx.rotate(rot);
+          try{ ctx.drawImage(imgSrc, -dw/2, -dh/2, dw, dh); }catch(e){}
           ctx.filter = 'none'; ctx.restore();
           return;
         }
@@ -7008,26 +7031,12 @@ function cutToggleFullscreen(){
   _cutFsActive = !_cutFsActive;
 
   if(_cutFsActive){
-    // Try native fullscreen on the screen element
-    // screen = #cut-screen (the preview container with the video inside)
-    const _fsTarget = document.getElementById('cut-screen');
-    const _fsPromise = _fsTarget?.requestFullscreen?.() ||
-                       _fsTarget?.webkitRequestFullscreen?.() ||
-                       _fsTarget?.mozRequestFullScreen?.();
-    if(_fsPromise && typeof _fsPromise.catch === 'function'){
-      _fsPromise.catch(() => _cutEnterSoftFullscreen());
-    } else if(!_fsTarget?.requestFullscreen && !_fsTarget?.webkitRequestFullscreen){
-      _cutEnterSoftFullscreen();
-    }
+    _cutEnterSoftFullscreen();
   } else {
-    // Exit
-    if(document.fullscreenElement){
-      document.exitFullscreen().catch(()=>{});
-    }
+    if(document.fullscreenElement) document.exitFullscreen().catch(()=>{});
     _cutExitSoftFullscreen();
   }
 
-  // Update button icon
   const btn = document.getElementById('cut-fs-btn');
   if(btn) btn.innerHTML = _cutFsActive ? '&#x2715;' : '&#x26F6;';
   btn?.setAttribute('title', _cutFsActive ? 'Exit Fullscreen (F or Esc)' : 'Fullscreen (F)');
@@ -7035,26 +7044,32 @@ function cutToggleFullscreen(){
 window.cutToggleFullscreen = cutToggleFullscreen;
 
 function _cutEnterSoftFullscreen(){
-  // Soft fallback: expand preview to cover full app
   const preview = document.querySelector('.cut-preview');
   const lpanel  = document.querySelector('.cut-lpanel');
   const rpanel  = document.querySelector('.cut-rpanel');
   const tl      = document.getElementById('cut-tl');
-  if(preview){ preview.dataset.fsStyle = preview.style.cssText; preview.style.cssText='position:fixed;inset:0;z-index:1500;background:#000;display:flex;flex-direction:column'; }
-  // Ensure video fills screen preserving aspect ratio
+  if(preview){ preview.dataset.fsStyle = preview.style.cssText; preview.style.cssText='position:fixed;inset:0;z-index:1500;background:#000;display:flex;align-items:center;justify-content:center;flex-direction:column'; }
   const _fsFrame = document.getElementById('cut-viewport-frame');
-  if(_fsFrame){ _fsFrame.dataset.fsFrStyle = _fsFrame.style.cssText; _fsFrame.style.cssText='width:100%;height:100%;display:flex;align-items:center;justify-content:center'; }
+  if(_fsFrame){ _fsFrame.dataset.fsFrStyle = _fsFrame.style.cssText; _fsFrame.style.cssText='position:relative;width:auto;height:auto;max-width:100vw;max-height:100vh;display:flex;align-items:center;justify-content:center;'; }
   const _fsMv = document.getElementById('cut-main-vid');
-  if(_fsMv){ _fsMv.dataset.fsMvStyle = _fsMv.style.cssText; _fsMv.style.objectFit='contain'; _fsMv.style.width='100%'; _fsMv.style.height='100%'; }
-  // Also ensure canvas is visible and sized if video is hidden (canvas mode)
+  if(_fsMv){ _fsMv.dataset.fsMvStyle = _fsMv.style.cssText; _fsMv.style.cssText='position:absolute;inset:0;width:100%;height:100%;object-fit:contain;display:block;'; }
+  // Keep canvas visible and sized if in canvas mode
   const _fsCvs = document.getElementById('cut-trans-cvs');
-  if(_fsCvs && _fsCvs.style.display !== 'none'){
-    _fsCvs.style.cssText='position:absolute;inset:0;width:100%;height:100%;pointer-events:none;z-index:2;display:block;';
-  }
-  if(lpanel) { lpanel.dataset.fsDis = lpanel.style.display; lpanel.style.display='none'; }
-  if(rpanel) { rpanel.dataset.fsDis = rpanel.style.display; rpanel.style.display='none'; }
-  if(tl)     { tl.dataset.fsDis    = tl.style.display;     tl.style.display='none'; }
-  setTimeout(()=>{ if(window.applyCanvasAspectRatio) applyCanvasAspectRatio(S.proj.w||1920,S.proj.h||1080); if(window.drawMonitorOverlays) drawMonitorOverlays(); syncCutVid(); },100);
+  if(_fsCvs){ _fsCvs.style.cssText='position:absolute;inset:0;width:100%;height:100%;pointer-events:none;z-index:2;'; if(_fsCvs.style.display==='none') _fsCvs.style.display='none'; }
+  if(lpanel){ lpanel.dataset.fsDis=lpanel.style.display; lpanel.style.display='none'; }
+  if(rpanel){ rpanel.dataset.fsDis=rpanel.style.display; rpanel.style.display='none'; }
+  if(tl)    { tl.dataset.fsDis=tl.style.display;         tl.style.display='none'; }
+  // Apply correct aspect ratio after layout settles
+  setTimeout(()=>{
+    const W=S.proj.w||1920, H=S.proj.h||1080;
+    const ar=W/H;
+    const vw=window.innerWidth, vh=window.innerHeight;
+    let fw=vw, fh=vw/ar;
+    if(fh>vh){ fh=vh; fw=vh*ar; }
+    const _fr=document.getElementById('cut-viewport-frame');
+    if(_fr){ _fr.style.width=Math.round(fw)+'px'; _fr.style.height=Math.round(fh)+'px'; }
+    syncCutVid();
+  }, 80);
 }
 
 function _cutExitSoftFullscreen(){

@@ -1087,21 +1087,41 @@ function renderShape(ctx,W,H,ov,progress){
   const alpha=ov.anim==='fadein'?Math.min(1,progress*3):
               ov.anim==='blink'?(Math.sin(progress*Math.PI*8)>0?1:0):1;
   const pulse=ov.anim==='pulse'?1+Math.sin(progress*Math.PI*4)*0.1:1;
+  const _drawMode = ov.anim==='draw';
+  const drawProg  = _drawMode ? Math.min(1, progress*1.5) : 1;
   ctx.globalAlpha=(ov.opacity||0.8)*alpha;
   const fillMode=ov.fillMode||'fill';
-  ctx.fillStyle=fillMode==='outline'?'transparent':(ov.color||'#E31837');
+  ctx.fillStyle=(_drawMode||fillMode==='outline')?'transparent':(ov.color||'#E31837');
   ctx.strokeStyle=ov.strokeColor||ov.color||'#E31837';
-  ctx.lineWidth=ov.strokeW||2;
+  ctx.lineWidth=Math.max(1,ov.strokeW||(_drawMode?3:2));
   ctx.save();
   ctx.translate(x,y);
   if(ov.rotation) ctx.rotate(ov.rotation * Math.PI / 180);
   ctx.scale(pulse,pulse);
   const s=ov.shape;
-  const doFill=()=>{if(fillMode!=='outline')ctx.fill();};
-  const doStroke=()=>{if(ov.strokeW||fillMode==='outline'){ctx.lineWidth=Math.max(1,ov.strokeW||(fillMode==='outline'?3:2));ctx.stroke();}};
-  if(s==='circle'){ctx.beginPath();ctx.ellipse(0,0,w/2,h/2,0,0,Math.PI*2);doFill();doStroke();}
-  else if(s==='rect'){ctx.beginPath();ctx.rect(-w/2,-h/2,w,h);doFill();doStroke();}
-  else if(s==='triangle'){ctx.beginPath();ctx.moveTo(0,-h/2);ctx.lineTo(w/2,h/2);ctx.lineTo(-w/2,h/2);ctx.closePath();doFill();doStroke();}
+  const doFill=()=>{if(!_drawMode && fillMode!=='outline')ctx.fill();};
+  const doStroke=()=>{if(ov.strokeW||fillMode==='outline'||_drawMode){ctx.lineWidth=Math.max(1,ov.strokeW||(_drawMode?3:(fillMode==='outline'?3:2)));ctx.stroke();}};
+  // Draw-animation helper: use dash-offset to animate stroke progressively
+  const _setDrawDash=(perim)=>{ if(_drawMode){ ctx.setLineDash([perim*drawProg, perim]); ctx.lineDashOffset=0; } };
+  const _clrDash=()=>ctx.setLineDash([]);
+  if(s==='circle'){
+    const perim=Math.PI*(w/2+h/2); // approximate ellipse perimeter
+    _setDrawDash(perim);
+    ctx.beginPath();ctx.ellipse(0,0,w/2,h/2,0,0,Math.PI*2);
+    doFill();doStroke();_clrDash();
+  }
+  else if(s==='rect'){
+    const perim=2*(w+h);
+    _setDrawDash(perim);
+    ctx.beginPath();ctx.rect(-w/2,-h/2,w,h);
+    doFill();doStroke();_clrDash();
+  }
+  else if(s==='triangle'){
+    const perim=w+h+Math.sqrt(w*w+h*h);
+    _setDrawDash(perim);
+    ctx.beginPath();ctx.moveTo(0,-h/2);ctx.lineTo(w/2,h/2);ctx.lineTo(-w/2,h/2);ctx.closePath();
+    doFill();doStroke();_clrDash();
+  }
   else if(s==='arrow'){
     ctx.lineWidth=Math.max(3,ov.strokeW||4);
     ctx.beginPath();ctx.moveTo(-w/2,0);ctx.lineTo(w/2,0);ctx.stroke();
@@ -1119,12 +1139,14 @@ function renderShape(ctx,W,H,ov,progress){
     ctx.setLineDash([]);
   }
   else if(s==='star'){
+    const perim=10*(w/2+w/4)/2*2;
+    _setDrawDash(perim);
     ctx.beginPath();
     for(let i=0;i<10;i++){
       const r=i%2===0?w/2:w/4;const a=Math.PI/5*i-Math.PI/2;
       ctx[i===0?'moveTo':'lineTo'](Math.cos(a)*r,Math.sin(a)*r);
     }
-    ctx.closePath();doFill();doStroke();
+    ctx.closePath();doFill();doStroke();_clrDash();
   }
   else if(s==='cross'){
     ctx.lineWidth=Math.max(4,ov.strokeW||6);
