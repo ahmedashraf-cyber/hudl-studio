@@ -1046,7 +1046,7 @@ html, body { width: 100%; height: 100%; overflow: hidden; font-family: 'DM Sans'
   align-items: center;
   justify-content: center;
   position: relative;
-  overflow: hidden;
+  overflow: visible;
   background: #111;
 }
 /* Viewport frame — sequence boundary, content may extend beyond for large assets */

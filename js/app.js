@@ -3431,7 +3431,9 @@ function cutAddToTL(i) {
     }
     window._lastActiveVideoTrack = track;
   }
-  S.cut.clips.push({mediaIdx:i,name:item.name,type:item.type,track,start:startSec,dur:Math.max(item.duration||5,0.5),fileStart:0,color:item.type==='video'?'rgba(88,166,255,0.8)':item.type==='audio'?'rgba(210,153,34,0.8)':'rgba(63,185,80,0.8)'});
+  S.cut.clips.push({mediaIdx:i,name:item.name,type:item.type,track,start:startSec,dur:Math.max(item.duration||5,0.5),fileStart:0,
+    transform:{x:0,y:0,scaleX:100,scaleY:100,rotation:0},
+    color:item.type==='video'?'rgba(88,166,255,0.8)':item.type==='audio'?'rgba(210,153,34,0.8)':'rgba(63,185,80,0.8)'});
   // If video file, also add linked audio clip on first audio track
   if(item.type==='video'&&item.hasAudio!==false){
     const audioTrackIdx=S.cut.videoTracks; // first audio track
@@ -3557,7 +3559,9 @@ function renderCutTimeline() {
       if(isAudioTrack && isVisualAsset){ notify('Video/image assets must go on Video tracks (V1, V2...)','#E31837'); return; }
       const rect=row.getBoundingClientRect();
       const start=Math.max(0,(e.clientX-rect.left+document.getElementById('tl-scroll')?.scrollLeft||0)/PPS);
-      S.cut.clips.push({mediaIdx:i,name:item.name,type:item.type,track:t,start,dur:Math.max(item.duration||5,0.5),fileStart:0,color:item.type==='video'?'rgba(88,166,255,0.8)':item.type==='audio'?'rgba(210,153,34,0.8)':'rgba(63,185,80,0.8)'});
+      S.cut.clips.push({mediaIdx:i,name:item.name,type:item.type,track:t,start,dur:Math.max(item.duration||5,0.5),fileStart:0,
+        transform:{x:0,y:0,scaleX:100,scaleY:100,rotation:0},
+        color:item.type==='video'?'rgba(88,166,255,0.8)':item.type==='audio'?'rgba(210,153,34,0.8)':'rgba(63,185,80,0.8)'});
       // Auto-add audio track for video clips
       if(item.type==='video'&&item.hasAudio!==false){
         const audioTrackIdx=S.cut.videoTracks;
@@ -5266,7 +5270,7 @@ function syncCutVid(){
         }
 
         if(c.type === 'image'){
-          // Image clip — draw via pool <img> with transform support
+          // Image clip — draw via pool <img> with full transform+opacity support
           const imgSrc = getPoolImg(it.url);
           if(!imgSrc.complete) return;
           const flt = buildFilterStr(ci);
@@ -5276,7 +5280,8 @@ function syncCutVid(){
           const tx = ((tf.x||0)/100) * canvas.width;
           const ty = ((tf.y||0)/100) * canvas.height;
           const rot = (tf.rotation||0) * Math.PI / 180;
-          // Default: fit image to canvas maintaining AR, then apply scale
+          const opacity = (c.opacity !== undefined) ? Math.max(0,Math.min(1,c.opacity)) : 1;
+          // Fit image to canvas maintaining AR, then apply scale
           const iW = imgSrc.naturalWidth  || canvas.width;
           const iH = imgSrc.naturalHeight || canvas.height;
           const iAR = iW/iH, cAR = canvas.width/canvas.height;
@@ -5285,11 +5290,12 @@ function syncCutVid(){
           else          { dh = canvas.height * sy; dw = (canvas.height*iAR) * sx; }
           ctx.save();
           if(flt !== 'none') ctx.filter = flt;
+          ctx.globalAlpha = opacity;
           ctx.globalCompositeOperation = 'source-over';
           ctx.translate(canvas.width/2 + tx, canvas.height/2 + ty);
           if(rot) ctx.rotate(rot);
           try{ ctx.drawImage(imgSrc, -dw/2, -dh/2, dw, dh); }catch(e){}
-          ctx.filter = 'none'; ctx.restore();
+          ctx.filter = 'none'; ctx.globalAlpha = 1; ctx.restore();
           return;
         }
 
