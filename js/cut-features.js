@@ -1343,6 +1343,8 @@ function renderOverlayTimeline(){
       const startX    = e.clientX;
       const origStart = ov.startTime;
       const origEnd   = ov.endTime;
+      // Reset drag origin for all selected overlays so each drag starts from current position
+      (window._overlays||[]).forEach(o => { delete o._dragOrigStart; });
       let moved = false;
 
       // ── ALT + DRAG: duplicate overlay ──
@@ -1392,15 +1394,26 @@ function renderOverlayTimeline(){
           else{window.hideSnapLine&&window.hideSnapLine();}
           workOv.startTime = _rawStart;
           workOv.endTime   = _rawStart + (origEnd - origStart);
+
+          // Multi-overlay move: if this overlay is part of _selectedOverlays, move all others too
+          const _isMultiDrag = window._selectedOverlays?.has(ov.id) && window._selectedOverlays.size > 1;
+          if(_isMultiDrag && !dupOv){
+            (window._overlays||[]).forEach(o => {
+              if(o.id === ov.id) return; // already moved above
+              if(!window._selectedOverlays.has(o.id)) return;
+              const _oDur = o.endTime - o.startTime;
+              const _origOStart = o._dragOrigStart !== undefined ? o._dragOrigStart : o.startTime;
+              o._dragOrigStart = o._dragOrigStart !== undefined ? o._dragOrigStart : o.startTime;
+              o.startTime = Math.max(0, _origOStart + dx);
+              o.endTime   = o.startTime + _oDur;
+            });
+          }
         }
         // Vertical drag: change track (only for main move, not trim)
-        // Timeline rows are rendered top-to-bottom as Vn→V1 (high→low track numbers).
-        // Dragging UP = negative dy = moving to a HIGHER track number (closer to foreground).
         if(!isLeftTrim && !isRightTrim && !dupOv){
           const _S2 = window.S;
           const _maxTrack = Math.max(0, (_S2?.cut?.videoTracks || 1) - 1);
           const _rowH = 30;
-          // Negate delta: dragging up (dy<0) increases track number toward foreground
           const _trackDelta = -Math.round(dy / _rowH);
           const _newTrack = Math.max(0, Math.min(_maxTrack, origTrack_ov + _trackDelta));
           if(workOv.track !== _newTrack){

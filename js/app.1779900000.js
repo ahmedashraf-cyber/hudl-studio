@@ -5204,6 +5204,10 @@ function syncCutVid(){
     }).length > 0;
   })();
 
+  // Use plain video path for single video clip (with or without overlays)
+  // mv shows the video; canvas draws overlays on top if any exist
+  const _hasActiveOverlaysNow = _masterList.some(e => e.kind === 'overlay');
+  // _usePlainVideo: single video with no transition/effects — overlays handled inside this path
   const _usePlainVideo = _clipIsVideo && !_hasTransition && !_hasEffects &&
                          (performance.now() - (_freezeExitTime||0)) > 500;
 
@@ -5227,7 +5231,6 @@ function syncCutVid(){
     }
     mv.style.opacity = '1';
     mv.style.display = 'block';
-    canvas.style.display = 'none';
     const _fs = buildFilterStr(_ci);
     mv.style.filter = _fs !== 'none' ? _fs : '';
     const _tr2 = _c.transform;
@@ -5238,33 +5241,40 @@ function syncCutVid(){
     } else { mv.style.transform=''; }
     S.cut._vid = mv;
 
+    // Draw overlays on top of video using canvas (canvas is transparent except for overlays)
+    if(_hasActiveOverlaysNow){
+      const projW2 = S.proj.w||1280, projH2 = S.proj.h||720;
+      if(canvas.width !== projW2 || canvas.height !== projH2){ canvas.width=projW2; canvas.height=projH2; }
+      const ctx2 = canvas.getContext('2d');
+      ctx2.clearRect(0, 0, canvas.width, canvas.height);
+      canvas.style.display = 'block';
+      canvas.style.zIndex  = '2';
+      if(placeholder) placeholder.style.display = 'none';
+      _masterList.filter(e=>e.kind==='overlay').forEach(entry => {
+        if(window.renderSingleOverlayOnCanvas)
+          window.renderSingleOverlayOnCanvas(ctx2, canvas.width, canvas.height, ph, entry.overlay, _playedFreezes);
+      });
+    } else {
+      canvas.style.display = 'none';
+      if(placeholder) placeholder.style.display = 'none';
+    }
+
   } else {
     // ── CANVAS COMPOSITOR PATH ───────────────────────────────────────
-    // Determine compositor mode:
-    //   HYBRID = 1 video clip + overlays  => mv shows video, canvas draws overlays on transparent bg
-    //   FULL   = multi-video or image clips => canvas draws everything, mv hidden
-    const _videoClipsInList = _masterList.filter(e => e.kind==='clip' && e.clip.type==='video');
-    const _imageClipsInList = _masterList.filter(e => e.kind==='clip' && e.clip.type==='image');
-    const _overlaysInList   = _masterList.filter(e => e.kind==='overlay');
-    const _hybridMode = _videoClipsInList.length === 1 && _imageClipsInList.length === 0;
+    // ── SINGLE RENDER PATH: always draw everything onto canvas ──
+    // mv is hidden; all media (video, image) drawn via ctx.drawImage onto canvas
+    // Overlays drawn last (on top). No hybrid/transparent canvas tricks.
+    mv.style.opacity = '0';
+    mv.style.filter  = '';
+    mv.style.transform = '';
 
-    canvas.style.display = 'block';
-    canvas.style.zIndex  = '2';
-    if(placeholder) placeholder.style.display = 'none';
-
-    const projW = S.proj.w||1280, projH = S.proj.h||720;
-    if(canvas.width !== projW || canvas.height !== projH){
-      canvas.width = projW; canvas.height = projH;
-    }
-    const ctx = canvas.getContext('2d');
-
-    // Set up the primary video element (always — drives audio and potentially display)
+    // Set up mv for audio and seeking (even though we draw video via canvas)
     const _primaryClip = _masterList.find(e => e.kind==='clip' && e.clip.type==='video');
     if(_primaryClip){
       const _pc = _primaryClip.clip;
       const _pi = S.cut.media[_pc.mediaIdx];
       if(_pi?.url){
-        getPoolVid(_pi.url); // warm up pool vid as fallback
+        getPoolVid(_pi.url);
         if(mv.dataset.mediaIdx !== String(_pc.mediaIdx) || !mv.src || mv.src.includes('undefined')){
           mv.dataset.mediaIdx = String(_pc.mediaIdx);
           mv.src = _pi.url;
@@ -5277,56 +5287,7 @@ function syncCutVid(){
       }
     }
 
-    if(_hybridMode){
-      // ── HYBRID MODE: mv renders video, canvas renders overlays only on transparent bg ──
-      // When mv is ready: mv shows video (opacity:1), canvas draws overlays on transparent bg.
-      // When mv not ready: canvas draws pool-vid fallback + overlays (no black/welcome flash).
-      const _mvReady = mv.readyState >= 2;
-      mv.style.opacity = _mvReady ? '1' : '0';
-      mv.style.display = 'block';
-      mv.style.filter  = '';
-      if(_primaryClip){
-        const _pc  = _primaryClip.clip;
-        const _pci = S.cut.clips.indexOf(_pc);
-        const _fs  = buildFilterStr(_pci);
-        mv.style.filter = _fs !== 'none' ? _fs : '';
-        const _tf = _pc.transform;
-        if(_tf && (_tf.x||_tf.y||(_tf.scaleX!==undefined&&_tf.scaleX!==100)||(_tf.scaleY!==undefined&&_tf.scaleY!==100)||_tf.rotation)){
-          mv.style.transform = `translate(${_tf.x||0}%,${_tf.y||0}%) rotate(${_tf.rotation||0}deg) scale(${(_tf.scaleX||100)/100},${(_tf.scaleY||100)/100})`;
-          mv.style.transformOrigin = 'center center';
-        } else { mv.style.transform = ''; }
-      }
-      if(placeholder) placeholder.style.display = 'none';
-      ctx.clearRect(0, 0, canvas.width, canvas.height);
-      if(!_mvReady){
-        // mv not decoded yet — try pool vid fallback, then last-good-frame, then #000
-        const _pvUrl = _primaryClip ? S.cut.media[_primaryClip.clip.mediaIdx]?.url : null;
-        const _pvFb  = _pvUrl ? getPoolVid(_pvUrl) : null;
-        if(_pvFb && _pvFb.readyState >= 2){
-          _drawFrame(_pvFb, ctx, canvas.width, canvas.height);
-        } else if(canvas._lastGoodFrame){
-          try{ ctx.putImageData(canvas._lastGoodFrame, 0, 0); }catch(e){}
-        } else {
-          ctx.fillStyle = '#000';
-          ctx.fillRect(0, 0, canvas.width, canvas.height);
-        }
-      }
-      // Draw overlays on top (overlays always draw regardless of mv readyState)
-      _overlaysInList.forEach(entry => {
-        if(window.renderSingleOverlayOnCanvas)
-          window.renderSingleOverlayOnCanvas(ctx, canvas.width, canvas.height, ph, entry.overlay, _playedFreezes);
-      });
-      S.cut._vid = mv;
-      if(typeof renderBoundingBox==='function' && S.cut.sel!==null && S.cut.sel!==undefined){
-        requestAnimationFrame(()=>renderBoundingBox(S.cut.sel));
-      }
-      return;
-    }
 
-
-    // ── FULL CANVAS MODE: hide mv, composite everything via canvas ──
-    mv.style.opacity = '0';
-    mv.style.filter  = '';
 
     // Center-crop draw helper — works for both <video> and <img>
     function _drawFrame(src, ctx, cW, cH){
