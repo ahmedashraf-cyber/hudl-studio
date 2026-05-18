@@ -4753,6 +4753,8 @@ function cutTogglePlay(){
       _syncVideoMute();
       _cutTick=requestAnimationFrame(playFrame);
     }
+    // Ensure mv exists with correct src/clipIdx before RAF loop starts
+    syncCutVid();
     _cutTick=requestAnimationFrame(playFrame);
     startAudioPlayback();
     _syncVideoMute();
@@ -4999,12 +5001,10 @@ function syncCutVid(){
   // Find ALL active video/image clips at playhead, sorted by track index (V1=0 bottom, V(n) top)
   const videoClips = S.cut.clips.filter(c => c.type === 'video' || c.type === 'frame_hold' || c.type === 'image');
   const _allAtPh = videoClips
-    .filter(c => ph >= c.start && ph < c.start + c.dur && !S.cut.hiddenTracks?.[c.track])
+    .filter(c => ph >= c.start && ph < c.start + Math.max(c.dur, 0.1) && !S.cut.hiddenTracks?.[c.track])
     .sort((a,b) => (a.track||0) - (b.track||0)); // lower track index = drawn first (underneath)
-  // Primary active clip for audio/seek: highest track with video (frame_hold takes priority)
-  // For AUDIO: use highest track. For BASE DRAW: use lowest track (V1 = background).
   const active = _allAtPh.find(c => c.type === 'frame_hold') ||
-                 _allAtPh[0] || null; // lowest track = drawn first as base layer
+                 _allAtPh[0] || null;
 
   // Ensure pool elements exist for all clips
   videoClips.forEach(c => {
@@ -5069,10 +5069,29 @@ function syncCutVid(){
 
   if(!active){
     if(mv && !mv.paused) mv.pause();
-    mv.style.opacity = '0';
 
+    // No clip at exact playhead — try to show nearest video clip as poster frame
+    const _nearestVid = S.cut.clips
+      .filter(c => (c.type==='video'||c.type==='image') && S.cut.media[c.mediaIdx]?.url)
+      .sort((a,b) => Math.abs(a.start+a.dur/2-ph) - Math.abs(b.start+b.dur/2-ph))[0];
+
+    if(_nearestVid && !hasActiveOverlays){
+      // Show nearest clip via mv so user sees something instead of black
+      const _ni = S.cut.media[_nearestVid.mediaIdx];
+      if(_nearestVid.type==='video' && _ni?.url){
+        if(mv.dataset.mediaIdx !== String(_nearestVid.mediaIdx)){
+          mv.dataset.mediaIdx = String(_nearestVid.mediaIdx);
+          mv.src = _ni.url;
+        }
+        mv.style.opacity='1'; mv.style.display='block';
+        canvas.style.display='none';
+        if(placeholder) placeholder.style.display='none';
+        return;
+      }
+    }
+
+    mv.style.opacity = '0';
     if(hasActiveOverlays){
-      // Show canvas with just overlays on black background
       canvas.style.display = 'block';
       if(placeholder) placeholder.style.display = 'none';
       if(canvas.width !== (S.proj.w||1280)){
@@ -5081,8 +5100,6 @@ function syncCutVid(){
       }
       const ctx0 = canvas.getContext('2d');
       ctx0.clearRect(0,0,canvas.width,canvas.height);
-      ctx0.fillStyle = '#000';
-      ctx0.fillRect(0,0,canvas.width,canvas.height);
       if(window.renderOverlaysOnCanvas)
         window.renderOverlaysOnCanvas(ctx0,canvas.width,canvas.height,ph,_playedFreezes);
     } else {
