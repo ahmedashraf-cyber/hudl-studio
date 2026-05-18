@@ -1757,6 +1757,15 @@ function buildCut() {
           </div>
           <div class="pv-timecode" id="cut-pv-tc">00:00:00:00</div>
         </div>
+        <!-- Scrub bar below viewport -->
+        <div id="cut-scrub-bar" style="flex-shrink:0;height:28px;background:#0a0a0a;border-top:0.5px solid rgba(255,255,255,0.07);display:flex;align-items:center;padding:0 12px;gap:8px;user-select:none;">
+          <span id="cut-scrub-tc" style="font-family:'DM Mono',monospace;font-size:10px;color:rgba(255,255,255,0.45);min-width:58px;flex-shrink:0">00:00:00</span>
+          <div id="cut-scrub-track" style="flex:1;height:4px;background:rgba(255,255,255,0.08);border-radius:2px;position:relative;cursor:pointer;">
+            <div id="cut-scrub-fill"  style="position:absolute;left:0;top:0;height:100%;background:rgba(232,89,12,0.6);border-radius:2px;pointer-events:none;"></div>
+            <div id="cut-scrub-knob"  style="position:absolute;top:50%;width:12px;height:12px;border-radius:50%;background:#E8590C;border:2px solid #fff;transform:translate(-50%,-50%);cursor:grab;box-shadow:0 1px 4px rgba(0,0,0,0.5);transition:transform .1s;"></div>
+          </div>
+          <span id="cut-scrub-dur" style="font-family:'DM Mono',monospace;font-size:10px;color:rgba(255,255,255,0.3);min-width:40px;text-align:right;flex-shrink:0">0:00</span>
+        </div>
       </div>
       <div class="cut-rpanel">
         <div class="panel-tabs">
@@ -1808,6 +1817,7 @@ function buildCut() {
   setupCutDrop(); setupCutFileInput(); renderCutTimeline(); buildBinList();
   setupTimelineScrollSync();
   setTimeout(setupMarqueeSelection, 200);
+  setTimeout(setupScrubBar, 300);
   // Apply canvas aspect ratio + init pen tool
   setTimeout(()=>{
     applyCanvasAspectRatio(S.proj.w||1920, S.proj.h||1080);
@@ -3472,6 +3482,11 @@ function cutAddToTL(i) {
     const delay = attempts === 5 ? 80 : 250;
     setTimeout(() => {
       setupPlayheadDrag();
+      // Ensure canvas is visible before syncCutVid runs
+      const _cvs = document.getElementById('cut-trans-cvs');
+      const _fr  = document.getElementById('cut-viewport-frame');
+      if(_cvs){ _cvs.style.display = 'block'; _cvs.style.zIndex = '2'; }
+      if(_fr)  applyCanvasAspectRatio(S.proj.w||1920, S.proj.h||1080);
       syncCutVid();
       const mv2 = document.getElementById('cut-main-vid');
       if(mv2 && mv2.readyState < 2 && attempts > 0){
@@ -4376,6 +4391,8 @@ function updateCutPH(){
   if(!ph) return;
   const leftPx = Math.round(S.cut.ph * PPS);
   ph.style.left = leftPx + 'px';
+  // Sync scrub bar
+  if(window.updateScrubBar) updateScrubBar();
   // Auto-scroll timeline to keep playhead visible during playback
   const scroll = $('tl-scroll');
   if(scroll && S.cut.playing){
@@ -5380,6 +5397,57 @@ function syncCutVid(){
 
 
 // Make playhead draggable
+// ── SCRUB BAR ─────────────────────────────────────────────────
+function updateScrubBar(){
+  const track = document.getElementById('cut-scrub-track');
+  const fill  = document.getElementById('cut-scrub-fill');
+  const knob  = document.getElementById('cut-scrub-knob');
+  const tc    = document.getElementById('cut-scrub-tc');
+  const dur   = document.getElementById('cut-scrub-dur');
+  if(!track || !fill || !knob) return;
+  const totalDur = S.proj.dur || 10;
+  const ph = S.cut.ph || 0;
+  const pct = Math.max(0, Math.min(1, ph / totalDur)) * 100;
+  fill.style.width  = pct + '%';
+  knob.style.left   = pct + '%';
+  if(tc) tc.textContent = fmtTC(ph);
+  if(dur) dur.textContent = fmtTC(totalDur);
+}
+window.updateScrubBar = updateScrubBar;
+
+function setupScrubBar(){
+  const track = document.getElementById('cut-scrub-track');
+  if(!track || track._scrubAttached) return;
+  track._scrubAttached = true;
+
+  let _scrubbing = false;
+
+  const seek = (e) => {
+    const r = track.getBoundingClientRect();
+    const pct = Math.max(0, Math.min(1, (e.clientX - r.left) / r.width));
+    const totalDur = S.proj.dur || 10;
+    S.cut.ph = pct * totalDur;
+    updateCutPH();
+    syncCutVid();
+  };
+
+  track.addEventListener('mousedown', e => {
+    _scrubbing = true;
+    seek(e);
+    const knob = document.getElementById('cut-scrub-knob');
+    if(knob) knob.style.transform = 'translate(-50%,-50%) scale(1.3)';
+  });
+  window.addEventListener('mousemove', e => { if(_scrubbing) seek(e); });
+  window.addEventListener('mouseup', () => {
+    if(_scrubbing){
+      _scrubbing = false;
+      const knob = document.getElementById('cut-scrub-knob');
+      if(knob) knob.style.transform = 'translate(-50%,-50%)';
+    }
+  });
+}
+window.setupScrubBar = setupScrubBar;
+
 function setupPlayheadDrag(){
   const ph=$('cut-ph'); const scroll=$('tl-scroll'); if(!ph||!scroll) return;
   let dragging=false;
@@ -6228,13 +6296,17 @@ function renderBoundingBox(ci){
     [cx - bW/2, cy],
   ];
 
-  // Draw corner handles (larger, square)
-  corners.forEach(([hx, hy]) => {
+  // Draw corner handles (larger, square) — interactive resize
+  const cornerNames = ['nw','ne','se','sw'];
+  corners.forEach(([hx, hy], idx) => {
     const g = document.createElementNS('http://www.w3.org/2000/svg','g');
     g.setAttribute('transform', `rotate(${rot},${cx},${cy})`);
+    g.setAttribute('data-handle', cornerNames[idx]);
+    g.style.cursor = 'nwse-resize';
+    g.style.pointerEvents = 'all';
     const r = document.createElementNS('http://www.w3.org/2000/svg','rect');
-    r.setAttribute('x', hx-4); r.setAttribute('y', hy-4);
-    r.setAttribute('width', 8); r.setAttribute('height', 8);
+    r.setAttribute('x', hx-6); r.setAttribute('y', hy-6);
+    r.setAttribute('width', 12); r.setAttribute('height', 12);
     r.setAttribute('rx', 2);
     r.setAttribute('fill','#fff'); r.setAttribute('stroke','#E8590C'); r.setAttribute('stroke-width','1.5');
     g.appendChild(r); svg.appendChild(g);
@@ -6265,46 +6337,71 @@ function renderBoundingBox(ci){
 
   // ── Drag to move ────────────────────────────────────────────
   // Make the viewport frame draggable for the selected clip
-  if(!frame._bboxDrag){
-    frame._bboxDrag = true;
-    let _dragging = false, _startX, _startY, _origTX, _origTY;
+  // ── Interactive handles — re-wire on every call ──
+  frame._bboxDrag = true;
+  let _mode = null; // 'move' | 'scale'
+  let _startX, _startY, _origTX, _origTY, _origSX, _origSY;
 
-    frame.addEventListener('mousedown', e => {
-      if(S.cut.sel === null || S.cut.sel === undefined) return;
-      const cl = S.cut.clips[S.cut.sel];
-      if(!cl || cl.type !== 'video') return;
-      // Only drag if not on a handle (handles have pointer-events:none but we check distance)
-      _dragging = true;
-      _startX = e.clientX; _startY = e.clientY;
-      if(!cl.transform) cl.transform = {x:0,y:0,scaleX:100,scaleY:100,rotation:0};
-      _origTX = cl.transform.x||0;
-      _origTY = cl.transform.y||0;
-      e.preventDefault();
-    });
-
-    window.addEventListener('mousemove', e => {
-      if(!_dragging) return;
+  // Corner handles — scale
+  box.querySelectorAll('[data-handle]').forEach(h => {
+    h.addEventListener('mousedown', e => {
+      e.stopPropagation(); e.preventDefault();
       const ci2 = S.cut.sel;
       if(ci2 === null || ci2 === undefined) return;
       const cl = S.cut.clips[ci2];
-      if(!cl || !cl.transform) return;
-      const fr = document.getElementById('cut-viewport-frame');
-      if(!fr) return;
-      const dx = (e.clientX - _startX) / fr.offsetWidth  * 100;
-      const dy = (e.clientY - _startY) / fr.offsetHeight * 100;
-      cl.transform.x = Math.max(-100, Math.min(100, _origTX + dx));
-      cl.transform.y = Math.max(-100, Math.min(100, _origTY + dy));
-      syncCutVid();
-      renderBoundingBox(ci2);
-      // Live-update props sliders
-      const xSlider = document.querySelector('#cut-props-body input[oninput*=".x="]');
-      const ySlider = document.querySelector('#cut-props-body input[oninput*=".y="]');
-      if(xSlider){ xSlider.value=cl.transform.x.toFixed(1); xSlider.nextElementSibling.textContent=cl.transform.x.toFixed(1)+'%'; }
-      if(ySlider){ ySlider.value=cl.transform.y.toFixed(1); ySlider.nextElementSibling.textContent=cl.transform.y.toFixed(1)+'%'; }
+      if(!cl) return;
+      if(!cl.transform) cl.transform = {x:0,y:0,scaleX:100,scaleY:100,rotation:0};
+      _mode = 'scale';
+      _startX = e.clientX; _startY = e.clientY;
+      _origSX = cl.transform.scaleX||100;
+      _origSY = cl.transform.scaleY||100;
     });
+  });
 
-    window.addEventListener('mouseup', () => { _dragging = false; });
-  }
+  // Frame click — move
+  frame.addEventListener('mousedown', e => {
+    if(e.target.closest('[data-handle]')) return;
+    if(S.cut.sel === null || S.cut.sel === undefined) return;
+    const cl = S.cut.clips[S.cut.sel];
+    if(!cl || (cl.type !== 'video' && cl.type !== 'image')) return;
+    _mode = 'move';
+    _startX = e.clientX; _startY = e.clientY;
+    if(!cl.transform) cl.transform = {x:0,y:0,scaleX:100,scaleY:100,rotation:0};
+    _origTX = cl.transform.x||0;
+    _origTY = cl.transform.y||0;
+    e.preventDefault();
+  });
+
+  window.addEventListener('mousemove', e => {
+    if(!_mode) return;
+    const ci2 = S.cut.sel;
+    if(ci2 === null || ci2 === undefined) return;
+    const cl = S.cut.clips[ci2];
+    if(!cl || !cl.transform) return;
+    const fr = document.getElementById('cut-viewport-frame');
+    if(!fr) return;
+    const dx = (e.clientX - _startX) / fr.offsetWidth  * 100;
+    const dy = (e.clientY - _startY) / fr.offsetHeight * 100;
+    if(_mode === 'move'){
+      cl.transform.x = Math.max(-200, Math.min(200, _origTX + dx));
+      cl.transform.y = Math.max(-200, Math.min(200, _origTY + dy));
+    } else {
+      const delta = (Math.abs(dx) > Math.abs(dy) ? dx : dy);
+      cl.transform.scaleX = Math.max(5, Math.round(_origSX + delta));
+      cl.transform.scaleY = Math.max(5, Math.round(_origSY + delta));
+    }
+    syncCutVid(); renderBoundingBox(ci2);
+    const xSl = document.querySelector('#cut-props-body input[oninput*=".x="]');
+    const ySl = document.querySelector('#cut-props-body input[oninput*=".y="]');
+    const sxSl= document.querySelector('#cut-props-body input[oninput*=".scaleX="]');
+    const sySl= document.querySelector('#cut-props-body input[oninput*=".scaleY="]');
+    if(xSl){ xSl.value=cl.transform.x.toFixed(1); xSl.nextElementSibling.textContent=cl.transform.x.toFixed(1)+'%'; }
+    if(ySl){ ySl.value=cl.transform.y.toFixed(1); ySl.nextElementSibling.textContent=cl.transform.y.toFixed(1)+'%'; }
+    if(sxSl){ sxSl.value=cl.transform.scaleX; sxSl.nextElementSibling.textContent=cl.transform.scaleX+'%'; }
+    if(sySl){ sySl.value=cl.transform.scaleY; sySl.nextElementSibling.textContent=cl.transform.scaleY+'%'; }
+  });
+
+  window.addEventListener('mouseup', () => { _mode = null; });
 }
 window.renderBoundingBox = renderBoundingBox;
 
