@@ -3878,6 +3878,13 @@ function clipMoveStart(e,ci){
     });
   }
   window._snapCache = null;
+  // Store origins for all selected overlays at drag start (for cross-type group move)
+  const _multiOverlayOrigins = {};
+  if(window._selectedOverlays?.size > 0){
+    (window._overlays||[]).forEach(o => {
+      if(window._selectedOverlays.has(o.id)) _multiOverlayOrigins[o.id] = o.startTime;
+    });
+  }
   _mv = {
     ci,
     sx:       e.clientX,
@@ -3887,6 +3894,7 @@ function clipMoveStart(e,ci){
     el:       el,
     _multiOrigins,
     _multiOriginTracks,
+    _multiOverlayOrigins,
   };
   if(el){ el.style.opacity='0.7'; el.style.zIndex='100'; }
   document.addEventListener('mousemove', clipMoveMove);
@@ -3944,6 +3952,19 @@ function clipMoveMove(e){
   }
   renderCutTimeline();
   if(window._selectedClips?.size > 1) _highlightSelected();
+
+  // Cross-type group move: also move any selected overlays by the same horizontal delta
+  if(window._selectedOverlays?.size > 0 && _mv._multiOverlayOrigins){
+    const _hDelta = newStart - (_mv._multiOrigins?.[_mv.ci] ?? _mv.origStart);
+    (window._overlays||[]).forEach(o => {
+      if(!window._selectedOverlays.has(o.id)) return;
+      if(_mv._multiOverlayOrigins[o.id] === undefined) return;
+      const _oDur = o.endTime - o.startTime;
+      o.startTime = Math.max(0, _mv._multiOverlayOrigins[o.id] + _hDelta);
+      o.endTime   = o.startTime + _oDur;
+    });
+    if(window.renderOverlayTimeline) renderOverlayTimeline();
+  }
 }
 function clipMoveUp(){
   if(!_mv) return;

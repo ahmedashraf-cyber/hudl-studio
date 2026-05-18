@@ -1343,9 +1343,24 @@ function renderOverlayTimeline(){
       const startX    = e.clientX;
       const origStart = ov.startTime;
       const origEnd   = ov.endTime;
-      // Reset drag origin for all selected overlays so each drag starts from current position
-      (window._overlays||[]).forEach(o => { delete o._dragOrigStart; });
+      // Store drag origin for ALL selected overlays at mousedown — prevents drift
+      (window._overlays||[]).forEach(o => {
+        if(window._selectedOverlays?.has(o.id)){
+          o._dragOrigStart = o.startTime; // capture exact position at drag start
+        } else {
+          delete o._dragOrigStart;
+        }
+      });
+      // Also store origin for the primary overlay being dragged
+      ov._dragOrigStart = origStart;
       let moved = false;
+      // Store clip origins at drag start for cross-type co-movement
+      if(window._selectedClips?.size > 0){
+        window._selectedClips.forEach(ci => {
+          const _sc = window.S?.cut?.clips?.[ci];
+          if(_sc) _sc._multiDragOvOrigin = _sc.start;
+        });
+      }
 
       // ── ALT + DRAG: duplicate overlay ──
       let dupOv = null;
@@ -1401,10 +1416,9 @@ function renderOverlayTimeline(){
             (window._overlays||[]).forEach(o => {
               if(o.id === ov.id) return; // already moved above
               if(!window._selectedOverlays.has(o.id)) return;
+              if(o._dragOrigStart === undefined) return;
               const _oDur = o.endTime - o.startTime;
-              const _origOStart = o._dragOrigStart !== undefined ? o._dragOrigStart : o.startTime;
-              o._dragOrigStart = o._dragOrigStart !== undefined ? o._dragOrigStart : o.startTime;
-              o.startTime = Math.max(0, _origOStart + dx);
+              o.startTime = Math.max(0, o._dragOrigStart + dx);
               o.endTime   = o.startTime + _oDur;
             });
           }
@@ -1421,6 +1435,19 @@ function renderOverlayTimeline(){
             workOv.track = _newTrack;
             renderOverlayTimeline();
           }
+        }
+        // Cross-type group move: also move selected clips by the same horizontal delta
+        if(!isLeftTrim && !isRightTrim && !dupOv && window._selectedClips?.size > 0){
+          const _hDeltaSec = workOv.startTime - origStart; // how far the primary overlay moved
+          window._selectedClips.forEach(ci => {
+            const _sc = window.S?.cut?.clips?.[ci];
+            if(!_sc) return;
+            const _origClipStart = _sc._dragOrigStart !== undefined ? _sc._dragOrigStart : origStart;
+            // Use a per-clip origin stored at drag start
+            if(_sc._multiDragOvOrigin === undefined) _sc._multiDragOvOrigin = _sc.start;
+            _sc.start = Math.max(0, _sc._multiDragOvOrigin + _hDeltaSec);
+          });
+          if(window.renderCutTimeline) renderCutTimeline();
         }
         // Move the element directly
         const movEl = dupOv
@@ -1440,6 +1467,14 @@ function renderOverlayTimeline(){
           setActiveEditId(dupOv.id);
         }
         if(window.cutSaveHistory) cutSaveHistory(dupOv ? 'alt_dup_placed' : 'move_overlay');
+        // Clean up drag origins
+        (window._overlays||[]).forEach(o => { delete o._dragOrigStart; });
+        if(window._selectedClips?.size > 0){
+          window._selectedClips.forEach(ci => {
+            const _sc = window.S?.cut?.clips?.[ci];
+            if(_sc) delete _sc._multiDragOvOrigin;
+          });
+        }
         renderOverlayTimeline();
         showOverlayHandles((dupOv||ov).id);
         if(window.syncCutVid) syncCutVid();
