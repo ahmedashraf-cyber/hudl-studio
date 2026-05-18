@@ -762,9 +762,19 @@ function setupMarqueeSelection(){
       } else {
         // Mark that a marquee drag just ended — suppress the follow-up click clear
         _lastMarqueeEnd = Date.now();
-        if(window._selectedClips?.size === 1){
+        const _totalSel = (window._selectedClips?.size||0) + (window._selectedOverlays?.size||0);
+        if(window._selectedClips?.size === 1 && !window._selectedOverlays?.size){
           S.cut.sel = [...window._selectedClips][0];
           if(typeof updatePropsPanel === 'function') updatePropsPanel(S.cut.sel);
+        } else if(_totalSel > 1){
+          // Multi-selection — clear single-selection state
+          S.cut.sel = null;
+          // Ensure all selected clips are visually highlighted
+          if(window._highlightSelected) window._highlightSelected();
+          // Ensure overlay clips show selected border
+          document.querySelectorAll('.tl-overlay-clip').forEach(el => {
+            el.classList.toggle('selected', window._selectedOverlays?.has(el.dataset.ovId)||false);
+          });
         }
       }
       _mq = null;
@@ -5229,9 +5239,15 @@ function syncCutVid(){
     S.cut._vid = mv;
 
   } else {
-    // ── CANVAS COMPOSITOR PATH — all other cases ──
-    mv.style.opacity = '0';
-    mv.style.filter  = '';
+    // ── CANVAS COMPOSITOR PATH ───────────────────────────────────────
+    // Determine compositor mode:
+    //   HYBRID = 1 video clip + overlays  => mv shows video, canvas draws overlays on transparent bg
+    //   FULL   = multi-video or image clips => canvas draws everything, mv hidden
+    const _videoClipsInList = _masterList.filter(e => e.kind==='clip' && e.clip.type==='video');
+    const _imageClipsInList = _masterList.filter(e => e.kind==='clip' && e.clip.type==='image');
+    const _overlaysInList   = _masterList.filter(e => e.kind==='overlay');
+    const _hybridMode = _videoClipsInList.length === 1 && _imageClipsInList.length === 0;
+
     canvas.style.display = 'block';
     canvas.style.zIndex  = '2';
     if(placeholder) placeholder.style.display = 'none';
@@ -5242,14 +5258,13 @@ function syncCutVid(){
     }
     const ctx = canvas.getContext('2d');
 
-    // Set up the primary video element (for the first video clip found — drives audio)
+    // Set up the primary video element (always — drives audio and potentially display)
     const _primaryClip = _masterList.find(e => e.kind==='clip' && e.clip.type==='video');
     if(_primaryClip){
       const _pc = _primaryClip.clip;
       const _pi = S.cut.media[_pc.mediaIdx];
       if(_pi?.url){
-        // Always keep pool vid warmed up as readyState fallback
-        getPoolVid(_pi.url);
+        getPoolVid(_pi.url); // warm up pool vid as fallback
         if(mv.dataset.mediaIdx !== String(_pc.mediaIdx) || !mv.src || mv.src.includes('undefined')){
           mv.dataset.mediaIdx = String(_pc.mediaIdx);
           mv.src = _pi.url;
@@ -5261,6 +5276,43 @@ function syncCutVid(){
         if(!_freezeActive && S.cut.playing && mv.paused) mv.play().catch(()=>{});
       }
     }
+
+    if(_hybridMode){
+      // ── HYBRID MODE: mv renders video, canvas renders overlays only on transparent bg ──
+      // This avoids the black-screen problem when video is not yet decoded.
+      // mv is visible (opacity:1) — video plays naturally.
+      // canvas floats on top with clearRect (transparent) so overlays composite over video.
+      mv.style.opacity = '1';
+      mv.style.display = 'block';
+      mv.style.filter  = '';
+      if(_primaryClip){
+        const _pc  = _primaryClip.clip;
+        const _pci = S.cut.clips.indexOf(_pc);
+        const _fs  = buildFilterStr(_pci);
+        mv.style.filter = _fs !== 'none' ? _fs : '';
+        const _tf = _pc.transform;
+        if(_tf && (_tf.x||_tf.y||(_tf.scaleX!==undefined&&_tf.scaleX!==100)||(_tf.scaleY!==undefined&&_tf.scaleY!==100)||_tf.rotation)){
+          mv.style.transform = `translate(${_tf.x||0}%,${_tf.y||0}%) rotate(${_tf.rotation||0}deg) scale(${(_tf.scaleX||100)/100},${(_tf.scaleY||100)/100})`;
+          mv.style.transformOrigin = 'center center';
+        } else { mv.style.transform = ''; }
+      }
+      // Draw ONLY overlays on transparent canvas
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      _overlaysInList.forEach(entry => {
+        if(window.renderSingleOverlayOnCanvas)
+          window.renderSingleOverlayOnCanvas(ctx, canvas.width, canvas.height, ph, entry.overlay, _playedFreezes);
+      });
+      S.cut._vid = mv;
+      // Restore bounding box if needed
+      if(typeof renderBoundingBox==='function' && S.cut.sel!==null && S.cut.sel!==undefined){
+        requestAnimationFrame(()=>renderBoundingBox(S.cut.sel));
+      }
+      return;
+    }
+
+    // ── FULL CANVAS MODE: hide mv, composite everything via canvas ──
+    mv.style.opacity = '0';
+    mv.style.filter  = '';
 
     // Center-crop draw helper — works for both <video> and <img>
     function _drawFrame(src, ctx, cW, cH){
