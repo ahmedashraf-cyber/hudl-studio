@@ -3600,7 +3600,7 @@ function renderCutTimeline() {
     S.cut.clips.filter(c=>c.track===t).forEach((c,_,arr)=>{
       const ci=S.cut.clips.indexOf(c);
       const el=document.createElement('div');
-      el.className='tl-clip'+(S.cut.sel===ci?' selected':'');
+      el.className='tl-clip'+((S.cut.sel===ci || window._selectedClips?.has(ci))?' selected':'');
       // Width = duration * pixels-per-second (strict 1:1 with ruler)
       const clipW = Math.max(8, Math.round(c.dur * PPS));
       const clipL = Math.round(c.start * PPS);
@@ -5277,8 +5277,9 @@ function syncCutVid(){
       try{ ctx.drawImage(src,sx,sy,sw,sh,0,0,cW,cH); return true; }catch(e){ return false; }
     }
 
-    // Clear canvas once
+    // Clear canvas once — track if any visual content was actually drawn
     ctx.clearRect(0, 0, canvas.width, canvas.height);
+    let _anythingDrawn = false;
 
     // Draw every item in track-sorted order
     _masterList.forEach(entry => {
@@ -5298,6 +5299,7 @@ function syncCutVid(){
             const _fhF = buildFilterStr(ci);
             if(_fhF !== 'none') ctx.filter = _fhF;
             ctx.drawImage(c._img, 0, 0, canvas.width, canvas.height);
+            _anythingDrawn = true;
             ctx.filter = 'none';
             ctx.restore();
           }
@@ -5329,7 +5331,7 @@ function syncCutVid(){
           ctx.globalCompositeOperation = 'source-over';
           ctx.translate(canvas.width/2 + tx, canvas.height/2 + ty);
           if(rot) ctx.rotate(rot);
-          try{ ctx.drawImage(imgSrc, -dw/2, -dh/2, dw, dh); }catch(e){}
+          try{ ctx.drawImage(imgSrc, -dw/2, -dh/2, dw, dh); _anythingDrawn = true; }catch(e){}
           ctx.filter = 'none'; ctx.globalAlpha = 1; ctx.restore();
           return;
         }
@@ -5380,7 +5382,7 @@ function syncCutVid(){
           ctx.globalCompositeOperation = 'source-over';
 
           if(!trW3){
-            _drawFrame(vSrc, ctx, canvas.width, canvas.height);
+            if(_drawFrame(vSrc, ctx, canvas.width, canvas.height)) _anythingDrawn = true;
           } else {
             // Apply transition effect inline
             const elapsed3 = ph - c.start - (tr3.startOffset||0);
@@ -5403,6 +5405,12 @@ function syncCutVid(){
           window.renderSingleOverlayOnCanvas(ctx, canvas.width, canvas.height, ph, entry.overlay, _playedFreezes);
       }
     });
+    // If nothing was drawn this frame (video not ready), preserve last good frame
+    if(!_anythingDrawn && canvas._lastGoodFrame){
+      try{ ctx.putImageData(canvas._lastGoodFrame, 0, 0); }catch(e){}
+    } else if(_anythingDrawn){
+      try{ canvas._lastGoodFrame = ctx.getImageData(0, 0, Math.min(canvas.width,2560), Math.min(canvas.height,1440)); }catch(e){}
+    }
     S.cut._vid = mv;
   }
 

@@ -1256,7 +1256,8 @@ function renderOverlayTimeline(){
     // label computed by getOverlayLabel(ov)
 
     const el = document.createElement('div');
-    el.className = 'tl-overlay-clip tl-clip';
+    const _isMultiSel = window._selectedOverlays?.has(ov.id);
+    el.className = 'tl-overlay-clip tl-clip' + (_isMultiSel ? ' selected' : '');
     el.dataset.ovId = ov.id;
     el.style.cssText = [
       `left:${Math.round(ov.startTime * PPS)}px`,
