@@ -557,7 +557,7 @@ function showShapeDialog(){
       </div>
       <div>
         <label class="modal-field-label">Opacity %</label>
-        <input id="shp-opacity" type="number" value="80" min="10" max="100" style="${inputStyle()}">
+        <input id="shp-opacity" type="number" value="80" min="0" max="100" style="${inputStyle()}">
       </div>
       <div>
         <label class="modal-field-label">Outline Width</label>
@@ -630,12 +630,12 @@ function showTransformDialog(ci){
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:14px">
       <div>
         <label class="modal-field-label">Scale Width %</label>
-        <input id="tr-sx" type="range" min="10" max="300" value="${t.scaleX}" oninput="this.nextElementSibling.textContent=this.value+'%'">
+        <input id="tr-sx" type="range" min="0" max="500" value="${t.scaleX}" oninput="this.nextElementSibling.textContent=this.value+'%'">
         <span style="font-size:12px;color:var(--tx)">${t.scaleX}%</span>
       </div>
       <div>
         <label class="modal-field-label">Scale Height %</label>
-        <input id="tr-sy" type="range" min="10" max="300" value="${t.scaleY}" oninput="this.nextElementSibling.textContent=this.value+'%'">
+        <input id="tr-sy" type="range" min="0" max="500" value="${t.scaleY}" oninput="this.nextElementSibling.textContent=this.value+'%'">
         <span style="font-size:12px;color:var(--tx)">${t.scaleY}%</span>
       </div>
     </div>
@@ -1849,7 +1849,7 @@ function showShapeEditDialog(id){
     <div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:10px;margin-bottom:12px">
       <div><label class="modal-field-label">Fill Color</label><input type="color" id="eshp-color" value="${ov.color||'#E31837'}" style="${inputStyle()};padding:4px;height:36px"></div>
       <div><label class="modal-field-label">Outline Color</label><input type="color" id="eshp-stroke-color" value="${ov.strokeColor||ov.color||'#E31837'}" style="${inputStyle()};padding:4px;height:36px"></div>
-      <div><label class="modal-field-label">Opacity %</label><input id="eshp-opacity" type="number" value="${Math.round((ov.opacity||0.8)*100)}" min="10" max="100" style="${inputStyle()}"></div>
+      <div><label class="modal-field-label">Opacity %</label><input id="eshp-opacity" type="number" value="${Math.round((ov.opacity||0.8)*100)}" min="0" max="100" style="${inputStyle()}"></div>
       <div><label class="modal-field-label">Outline Width</label><input id="eshp-stroke" type="number" value="${ov.strokeW||2}" min="0" max="20" style="${inputStyle()}"></div>
     </div>
     <div style="margin-bottom:12px">

@@ -758,9 +758,13 @@ function setupMarqueeSelection(){
         window._selectedClips = new Set();
         document.querySelectorAll('.tl-clip.selected').forEach(el => el.classList.remove('selected'));
         S.cut.sel = null;
-      } else if(window._selectedClips?.size === 1){
-        S.cut.sel = [...window._selectedClips][0];
-        if(typeof updatePropsPanel === 'function') updatePropsPanel(S.cut.sel);
+      } else {
+        // Mark that a marquee drag just ended — suppress the follow-up click clear
+        _lastMarqueeEnd = Date.now();
+        if(window._selectedClips?.size === 1){
+          S.cut.sel = [...window._selectedClips][0];
+          if(typeof updatePropsPanel === 'function') updatePropsPanel(S.cut.sel);
+        }
       }
       _mq = null;
     };
@@ -2619,12 +2623,12 @@ function updatePropsPanel(ci){
           <span style="font-size:10px;color:var(--mu);min-width:36px;text-align:right">${(tf.y||0).toFixed(1)}%</span>
         </div>
         <div class="prop-row"><span class="prop-label">Scale X</span>
-          <input type="range" min="10" max="300" step="1" value="${tf.scaleX||100}" style="flex:1;accent-color:#E8590C"
+          <input type="range" min="0" max="500" step="1" value="${tf.scaleX||100}" style="flex:1;accent-color:#E8590C"
             oninput="const c2=S.cut.clips[${ci}];if(!c2.transform)c2.transform={x:0,y:0,scaleX:100,scaleY:100,rotation:0};c2.transform.scaleX=parseInt(this.value);this.nextElementSibling.textContent=this.value+'%';syncCutVid();renderBoundingBox(${ci});">
           <span style="font-size:10px;color:var(--mu);min-width:36px;text-align:right">${tf.scaleX||100}%</span>
         </div>
         <div class="prop-row"><span class="prop-label">Scale Y</span>
-          <input type="range" min="10" max="300" step="1" value="${tf.scaleY||100}" style="flex:1;accent-color:#E8590C"
+          <input type="range" min="0" max="500" step="1" value="${tf.scaleY||100}" style="flex:1;accent-color:#E8590C"
             oninput="const c2=S.cut.clips[${ci}];if(!c2.transform)c2.transform={x:0,y:0,scaleX:100,scaleY:100,rotation:0};c2.transform.scaleY=parseInt(this.value);this.nextElementSibling.textContent=this.value+'%';syncCutVid();renderBoundingBox(${ci});">
           <span style="font-size:10px;color:var(--mu);min-width:36px;text-align:right">${tf.scaleY||100}%</span>
         </div>
@@ -3478,6 +3482,9 @@ function cutAddToTL(i) {
   }, 80);
   // Ensure viewport frame has correct dimensions, then initialize video
   applyCanvasAspectRatio(S.proj.w||1920, S.proj.h||1080);
+  // Ensure placeholder canvas is visible immediately (CSS default is block, but be explicit)
+  const _placeholderCvs = document.getElementById('cut-cvs');
+  if(_placeholderCvs) _placeholderCvs.style.display = 'block';
   const _startInit = (attempts) => {
     const delay = attempts === 5 ? 80 : 250;
     setTimeout(() => {
@@ -6387,8 +6394,8 @@ function renderBoundingBox(ci){
       cl.transform.y = Math.max(-200, Math.min(200, _origTY + dy));
     } else {
       const delta = (Math.abs(dx) > Math.abs(dy) ? dx : dy);
-      cl.transform.scaleX = Math.max(5, Math.round(_origSX + delta));
-      cl.transform.scaleY = Math.max(5, Math.round(_origSY + delta));
+      cl.transform.scaleX = Math.max(0, Math.round(_origSX + delta));
+      cl.transform.scaleY = Math.max(0, Math.round(_origSY + delta));
     }
     syncCutVid(); renderBoundingBox(ci2);
     const xSl = document.querySelector('#cut-props-body input[oninput*=".x="]');
@@ -7076,10 +7083,13 @@ function _highlightSelected(){
 }
 window._highlightSelected = _highlightSelected;
 
-// Clear multi-select when clicking empty area
+// Clear multi-select when clicking empty area — but NOT after a marquee drag
+let _lastMarqueeEnd = 0; // timestamp of last marquee mouseup
 document.addEventListener('click', e => {
   if(!e.target.closest('#tl-scroll') && !e.target.closest('#tl-rows')) return;
   if(e.target.closest('.tl-clip') || e.target.closest('.tl-overlay-clip')) return;
+  // Don't clear if this click is the tail-end of a marquee drag (within 100ms)
+  if(Date.now() - _lastMarqueeEnd < 100) return;
   if(window._selectedClips?.size > 0){
     window._selectedClips.clear();
     document.querySelectorAll('.tl-clip.selected').forEach(el => el.classList.remove('selected'));
