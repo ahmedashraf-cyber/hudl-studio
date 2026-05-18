@@ -4633,7 +4633,7 @@ function cutTogglePlay(){
             const _p=()=>{if(!S.cut.playing||_a>3)return;_a++;mv2.play().catch(e=>{if(e.name==='AbortError'&&_a<=3)setTimeout(_p,150*_a);});};
             setTimeout(_p,80);
           }
-        } else if(trActive||hasEffNow||hasOverlays){
+        } else if(trActive||hasEffNow||hasOverlays||_needsCanvas){
           // Throttle overlay/effect canvas to 30fps during playback
           const _now4=performance.now();
           if(_now4-_lastCanvasTime>=33){
@@ -5279,10 +5279,10 @@ function syncCutVid(){
 
     if(_hybridMode){
       // ── HYBRID MODE: mv renders video, canvas renders overlays only on transparent bg ──
-      // This avoids the black-screen problem when video is not yet decoded.
-      // mv is visible (opacity:1) — video plays naturally.
-      // canvas floats on top with clearRect (transparent) so overlays composite over video.
-      mv.style.opacity = '1';
+      // When mv is ready: mv shows video (opacity:1), canvas draws overlays on transparent bg.
+      // When mv not ready: canvas draws pool-vid fallback + overlays (no black/welcome flash).
+      const _mvReady = mv.readyState >= 2;
+      mv.style.opacity = _mvReady ? '1' : '0';
       mv.style.display = 'block';
       mv.style.filter  = '';
       if(_primaryClip){
@@ -5296,19 +5296,33 @@ function syncCutVid(){
           mv.style.transformOrigin = 'center center';
         } else { mv.style.transform = ''; }
       }
-      // Draw ONLY overlays on transparent canvas
+      if(placeholder) placeholder.style.display = 'none';
       ctx.clearRect(0, 0, canvas.width, canvas.height);
+      if(!_mvReady){
+        // mv not decoded yet — try pool vid fallback, then last-good-frame, then #000
+        const _pvUrl = _primaryClip ? S.cut.media[_primaryClip.clip.mediaIdx]?.url : null;
+        const _pvFb  = _pvUrl ? getPoolVid(_pvUrl) : null;
+        if(_pvFb && _pvFb.readyState >= 2){
+          _drawFrame(_pvFb, ctx, canvas.width, canvas.height);
+        } else if(canvas._lastGoodFrame){
+          try{ ctx.putImageData(canvas._lastGoodFrame, 0, 0); }catch(e){}
+        } else {
+          ctx.fillStyle = '#000';
+          ctx.fillRect(0, 0, canvas.width, canvas.height);
+        }
+      }
+      // Draw overlays on top (overlays always draw regardless of mv readyState)
       _overlaysInList.forEach(entry => {
         if(window.renderSingleOverlayOnCanvas)
           window.renderSingleOverlayOnCanvas(ctx, canvas.width, canvas.height, ph, entry.overlay, _playedFreezes);
       });
       S.cut._vid = mv;
-      // Restore bounding box if needed
       if(typeof renderBoundingBox==='function' && S.cut.sel!==null && S.cut.sel!==undefined){
         requestAnimationFrame(()=>renderBoundingBox(S.cut.sel));
       }
       return;
     }
+
 
     // ── FULL CANVAS MODE: hide mv, composite everything via canvas ──
     mv.style.opacity = '0';
