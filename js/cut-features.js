@@ -1438,16 +1438,17 @@ function renderOverlayTimeline(){
         }
         // Cross-type group move: also move selected clips by the same horizontal delta
         if(!isLeftTrim && !isRightTrim && !dupOv && window._selectedClips?.size > 0){
-          const _hDeltaSec = workOv.startTime - origStart; // how far the primary overlay moved
+          const _hDeltaSec = workOv.startTime - origStart;
           window._selectedClips.forEach(ci => {
             const _sc = window.S?.cut?.clips?.[ci];
             if(!_sc) return;
-            const _origClipStart = _sc._dragOrigStart !== undefined ? _sc._dragOrigStart : origStart;
-            // Use a per-clip origin stored at drag start
             if(_sc._multiDragOvOrigin === undefined) _sc._multiDragOvOrigin = _sc.start;
             _sc.start = Math.max(0, _sc._multiDragOvOrigin + _hDeltaSec);
+            // Update clip DOM element position directly (no renderCutTimeline — avoids listener explosion)
+            const _curPPS2 = getPPS();
+            const _clipEl = document.querySelector('[data-ci="'+ci+'"]');
+            if(_clipEl) _clipEl.style.left = Math.round(_sc.start * _curPPS2) + 'px';
           });
-          if(window.renderCutTimeline) renderCutTimeline();
         }
         // Move the element directly
         const movEl = dupOv
@@ -1474,6 +1475,8 @@ function renderOverlayTimeline(){
             const _sc = window.S?.cut?.clips?.[ci];
             if(_sc) delete _sc._multiDragOvOrigin;
           });
+          // Rebuild timeline to commit final clip positions
+          if(window.renderCutTimeline) renderCutTimeline();
         }
         renderOverlayTimeline();
         showOverlayHandles((dupOv||ov).id);

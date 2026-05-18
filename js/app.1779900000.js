@@ -3962,8 +3962,13 @@ function clipMoveMove(e){
       const _oDur = o.endTime - o.startTime;
       o.startTime = Math.max(0, _mv._multiOverlayOrigins[o.id] + _hDelta);
       o.endTime   = o.startTime + _oDur;
+      // Update DOM position directly — no renderOverlayTimeline to avoid listener rebuild
+      const _ovEl = document.querySelector('[data-ov-id="'+o.id+'"]');
+      if(_ovEl){
+        _ovEl.style.left  = Math.round(o.startTime * PPS) + 'px';
+        _ovEl.style.width = Math.max(4, Math.round((o.endTime - o.startTime) * PPS)) + 'px';
+      }
     });
-    if(window.renderOverlayTimeline) renderOverlayTimeline();
   }
 }
 function clipMoveUp(){
