@@ -5281,13 +5281,19 @@ function syncCutVid(){
     }
 
   } else {
-    // ── CANVAS COMPOSITOR PATH ───────────────────────────────────────
-    // ── SINGLE RENDER PATH: always draw everything onto canvas ──
-    // mv is hidden; all media (video, image) drawn via ctx.drawImage onto canvas
-    // Overlays drawn last (on top). No hybrid/transparent canvas tricks.
+    // ── CANVAS COMPOSITOR PATH: image clips, multi-video, transitions/effects ──
     mv.style.opacity = '0';
     mv.style.filter  = '';
     mv.style.transform = '';
+    canvas.style.display = 'block';
+    canvas.style.zIndex  = '2';
+    if(placeholder) placeholder.style.display = 'none';
+
+    const projW = S.proj.w||1280, projH = S.proj.h||720;
+    if(canvas.width !== projW || canvas.height !== projH){
+      canvas.width = projW; canvas.height = projH;
+    }
+    const ctx = canvas.getContext('2d');
 
     // Set up mv for audio and seeking (even though we draw video via canvas)
     const _primaryClip = _masterList.find(e => e.kind==='clip' && e.clip.type==='video');
