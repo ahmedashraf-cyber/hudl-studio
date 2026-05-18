@@ -1483,10 +1483,10 @@ window.updateOverlayProps = function(id){
       ${inp('op-y',fmtN(ov.y),0.01,`window._overlays.find(o=>o.id==='${ov.id}').y=parseFloat(this.value);if(window.syncCutVid)syncCutVid();`)}
     </div>
     <div class="prop-row"><span class="prop-label">Width</span>
-      ${inp('op-w',fmtN(ov.w),0.01,`window._overlays.find(o=>o.id==='${ov.id}').w=Math.max(0.01,parseFloat(this.value));if(window.syncCutVid)syncCutVid();`)}
+      ${inp('op-w',fmtN(ov.w),0.01,`window._overlays.find(o=>o.id==='${ov.id}').w=Math.max(0,parseFloat(this.value)||0);if(window.syncCutVid)syncCutVid();`)}
     </div>
     <div class="prop-row"><span class="prop-label">Height</span>
-      ${inp('op-h',fmtN(ov.h),0.01,`window._overlays.find(o=>o.id==='${ov.id}').h=Math.max(0.01,parseFloat(this.value));if(window.syncCutVid)syncCutVid();`)}
+      ${inp('op-h',fmtN(ov.h),0.01,`window._overlays.find(o=>o.id==='${ov.id}').h=Math.max(0,parseFloat(this.value)||0);if(window.syncCutVid)syncCutVid();`)}
     </div>
     <div class="prop-row"><span class="prop-label">Rotation</span>
       <input type="range" min="-180" max="180" value="${ov.rotation||0}"
@@ -1672,10 +1672,10 @@ function showOverlayHandles(id){
         const mv=(e2)=>{
           const vr2=getVideoRect(screen);
           const dx=(e2.clientX-sx)/vr2.width, dy=(e2.clientY-sy)/vr2.height;
-          if(cx===0){ov.x=ox2+dx/2;ov.w=Math.max(0.05,ow-dx);}
-          else{ov.x=ox2+dx/2;ov.w=Math.max(0.05,ow+dx);}
-          if(cy===0){ov.y=oy2+dy/2;ov.h=Math.max(0.04,oh-dy);}
-          else{ov.y=oy2+dy/2;ov.h=Math.max(0.04,oh+dy);}
+          if(cx===0){ov.x=ox2+dx/2;ov.w=Math.max(0,ow-dx);}
+          else{ov.x=ox2+dx/2;ov.w=Math.max(0,ow+dx);}
+          if(cy===0){ov.y=oy2+dy/2;ov.h=Math.max(0,oh-dy);}
+          else{ov.y=oy2+dy/2;ov.h=Math.max(0,oh+dy);}
           redraw();
           if(window.syncCutVid) syncCutVid();
         };

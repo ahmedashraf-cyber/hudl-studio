@@ -704,6 +704,7 @@ function setupMarqueeSelection(){
       _mqEl.style.width = w+'px'; _mqEl.style.height = h+'px';
 
       // Intersection hit-test: select clips AND overlays that overlap the marquee
+      // Use <= for boundary checks so items at exact row edges are included
       const mqLeft = x / PPS, mqRight = (x+w) / PPS;
       const mqTop  = y,        mqBottom = y + h;
       window._selectedClips = new Set();
@@ -713,16 +714,16 @@ function setupMarqueeSelection(){
       // Hit-test clips
       S.cut.clips.forEach((c, ci) => {
         const clipL = c.start, clipR = c.start + c.dur;
-        // Row Y: video rows top-to-bottom as V(n)..V1; V(n) at Y=0
         let rowTop;
         if(c.track < S.cut.videoTracks){
           rowTop = (S.cut.videoTracks - 1 - c.track) * 30;
         } else {
           rowTop = S.cut.videoTracks * 30 + (c.track - S.cut.videoTracks) * 30;
         }
-        const rowBot = rowTop + 30; // full row height for easier selection
-        const hOverlap = clipL < mqRight && clipR > mqLeft;
-        const vOverlap = rowTop < mqBottom && rowBot > mqTop;
+        const rowBot = rowTop + 30;
+        // Use <= so clips at exact boundary edges are captured
+        const hOverlap = clipL <= mqRight && clipR >= mqLeft;
+        const vOverlap = rowTop <= mqBottom && rowBot >= mqTop;
         if(hOverlap && vOverlap) window._selectedClips.add(ci);
       });
 
@@ -732,8 +733,8 @@ function setupMarqueeSelection(){
         const ovTrack = ov.track || 0;
         const rowTop = (S.cut.videoTracks - 1 - ovTrack) * 30;
         const rowBot = rowTop + 30;
-        const hOverlap = ovL < mqRight && ovR > mqLeft;
-        const vOverlap = rowTop < mqBottom && rowBot > mqTop;
+        const hOverlap = ovL <= mqRight && ovR >= mqLeft;
+        const vOverlap = rowTop <= mqBottom && rowBot >= mqTop;
         if(hOverlap && vOverlap) window._selectedOverlays.add(ov.id);
       });
 
@@ -3502,6 +3503,9 @@ function cutAddToTL(i) {
     }, delay);
   };
   _startInit(5);
+  // Extra sync calls at longer delays to handle slow video decode / cold loads
+  setTimeout(() => { if(!S.cut.playing) syncCutVid(); }, 600);
+  setTimeout(() => { if(!S.cut.playing) syncCutVid(); }, 1500);
 }
 
 function renderCutTimeline() {
@@ -5030,6 +5034,13 @@ function syncCutVid(){
       updateCutPH();
     });
     frame.appendChild(mv);
+    // When video becomes ready, trigger a canvas update (handles initial load)
+    mv.addEventListener('canplay', () => {
+      if(!S.cut.playing) setTimeout(syncCutVid, 16);
+    });
+    mv.addEventListener('loadeddata', () => {
+      if(!S.cut.playing) setTimeout(syncCutVid, 16);
+    });
   }
 
   // Get or create canvas for transitions/effects — also in frame
