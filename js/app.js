@@ -4471,8 +4471,9 @@ function cutTogglePlay(){
     window._fhLastTime = null; // always reset frame_hold clock on play start
     // Start playback: video element is master clock
     const startPh=S.cut.ph;
-    // Find the clip that contains the current playhead position
-    const activeClip=S.cut.clips.find(c=>c.type==='video'&&startPh>=c.start&&startPh<c.start+c.dur);
+    // Find the clip at or nearest-after the current playhead
+    const activeClip = S.cut.clips.find(c=>c.type==='video'&&startPh>=c.start&&startPh<c.start+c.dur)
+      || S.cut.clips.filter(c=>c.type==='video'&&c.start>=startPh).sort((a,b)=>a.start-b.start)[0];
     const mv=$('cut-main-vid')||document.querySelector('#cut-screen video');
 
     if(activeClip&&mv){
@@ -4484,16 +4485,12 @@ function cutTogglePlay(){
           mv.src=item.url;
         }
         mv.dataset.clipIdx=String(clipIdx);
-        // CRITICAL: seek to the correct offset WITHIN the file
-        // If clip starts at 5s in timeline and video file offset is also from 0,
-        // we need to seek to (S.cut.ph - clip.start) seconds into the file
-        // fileStart = where in the actual file this clip begins
-        const fileOffset=(activeClip.fileStart||0) + Math.max(0, startPh - activeClip.start);
-        mv.currentTime=fileOffset;
+        // Seek to correct file position: if ph is before clip.start, start from clip's beginning
+        const fileOffset = (activeClip.fileStart||0) + Math.max(0, startPh - activeClip.start);
+        mv.currentTime = fileOffset;
         mv.play().catch(e=>console.log('play err',e));
         mv.style.display='block';
-        const canvas=$('cut-trans-cvs');
-        if(canvas) canvas.style.display='none';
+        // Keep canvas visible if overlays present (syncCutVid manages this per-frame)
         const placeholder=$('cut-cvs');
         if(placeholder) placeholder.style.display='none';
       }
@@ -5185,21 +5182,25 @@ function syncCutVid(){
   //    - Everything else → canvas compositor
   const _onlyOneClip   = _masterList.length === 1 && _masterList[0].kind === 'clip';
   const _clipIsVideo   = _onlyOneClip && _masterList[0].clip.type === 'video';
-  const _hasTransition = _clipIsVideo && (()=>{
-    const _ci = S.cut.clips.indexOf(_masterList[0].clip);
+  const _singleVideoClip = (() => {
+    const _cv = _masterList.filter(e => e.kind==='clip' && e.clip.type==='video');
+    return _cv.length === 1 ? _cv[0].clip : null;
+  })();
+  const _hasTransition = _singleVideoClip && (()=>{
+    const _ci = S.cut.clips.indexOf(_singleVideoClip);
     const _tr = getClipTransition(_ci);
     if(!_tr) return false;
-    const _ts = _masterList[0].clip.start + (_tr.startOffset||0);
+    const _ts = _singleVideoClip.start + (_tr.startOffset||0);
     const _te = _ts + (_tr.effectDur||_tr.dur||1);
     return ph >= _ts && ph < _te;
   })();
-  const _hasEffects = _clipIsVideo && (()=>{
-    const _ci = S.cut.clips.indexOf(_masterList[0].clip);
+  const _hasEffects = _singleVideoClip && (()=>{
+    const _ci = S.cut.clips.indexOf(_singleVideoClip);
     return (S.cut.effects[_ci]||[]).filter(e => {
       if(CUT_EFFECTS[e.i]?.type === 'transition') return false;
       if(e.visible===false) return false;
-      const es = _masterList[0].clip.start + (e.startOffset||0);
-      const ee = es + (e.effectDur||_masterList[0].clip.dur);
+      const es = _singleVideoClip.start + (e.startOffset||0);
+      const ee = es + (e.effectDur||_singleVideoClip.dur);
       return ph >= es && ph < ee;
     }).length > 0;
   })();
@@ -5207,13 +5208,16 @@ function syncCutVid(){
   // Use plain video path for single video clip (with or without overlays)
   // mv shows the video; canvas draws overlays on top if any exist
   const _hasActiveOverlaysNow = _masterList.some(e => e.kind === 'overlay');
-  // _usePlainVideo: single video with no transition/effects — overlays handled inside this path
-  const _usePlainVideo = _clipIsVideo && !_hasTransition && !_hasEffects &&
+  // Count just the clip entries (not overlays)
+  const _clipEntries = _masterList.filter(e => e.kind === 'clip');
+  const _onlyOneVideoClip = _clipEntries.length === 1 && _clipEntries[0].clip.type === 'video';
+  // _usePlainVideo: single video clip, no transition/effects → mv shows video, canvas overlays on top
+  const _usePlainVideo = _onlyOneVideoClip && !_hasTransition && !_hasEffects &&
                          (performance.now() - (_freezeExitTime||0)) > 500;
 
   if(_usePlainVideo){
-    // ── PLAIN VIDEO PATH — single video, no effects, no overlays ──
-    const _c  = _masterList[0].clip;
+    // ── PLAIN VIDEO PATH — single video clip, overlays drawn on transparent canvas on top ──
+    const _c  = _singleVideoClip;
     const _ci = S.cut.clips.indexOf(_c);
     const _it = S.cut.media[_c.mediaIdx];
     if(!_it?.url) return;
