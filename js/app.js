@@ -1049,48 +1049,7 @@ async function startExport(){
 
   // ── Schedule ALL audio clips as AudioBufferSourceNodes ──
   // This plays the full audio in advance, perfectly timed, no streaming starvation.
-  if(_audioCtx && _masterGain){
-    const _exportStartTime = _audioCtx.currentTime + 0.2; // 200ms head start
-
-    // Video clip audio (from decoded PCM)
-    for(const clip of videoClips){
-      const buf = _audioBuffers[clip.mediaIdx];
-      if(!buf) continue;
-      if(S.cut.mutedTracks?.[clip.track]) continue;
-      const vol = clip.volume !== undefined ? Math.min(1, clip.volume/100) : 1.0;
-      const src = _audioCtx.createBufferSource();
-      src.buffer = buf;
-      src.playbackRate.value = clip.speed || 1;
-      const gainNode = _audioCtx.createGain();
-      gainNode.gain.value = vol;
-      src.connect(gainNode); gainNode.connect(_masterGain);
-      // when to start in AudioContext timeline, and which part of the file to play
-      const _acStart = _exportStartTime + clip.start;
-      const _fileOffset = clip.fileStart || 0;
-      const _clipDur = clip.dur;
-      src.start(_acStart, _fileOffset, _clipDur * (clip.speed||1));
-    }
-
-    // Audio-only clips (voiceovers, music)
-    const _audioOnlyForSchedule = S.cut.clips.filter(c=>c.type==='audio').sort((a,b)=>a.start-b.start);
-    for(const clip of _audioOnlyForSchedule){
-      const buf = _audioBuffers[clip.mediaIdx];
-      if(!buf) continue;
-      if(S.cut.mutedTracks?.[clip.track]) continue;
-      const vol = clip.volume !== undefined ? Math.min(1, clip.volume/100) : 1.0;
-      const src = _audioCtx.createBufferSource();
-      src.buffer = buf;
-      const gainNode = _audioCtx.createGain();
-      gainNode.gain.value = vol;
-      src.connect(gainNode); gainNode.connect(_masterGain);
-      const _acStart = _exportStartTime + clip.start;
-      const _fileOffset = clip.fileStart || 0;
-      src.start(_acStart, _fileOffset, clip.dur);
-    }
-
-    // Store start time so renderFrame can sync audio context
-    window._exportAcStartTime = _exportStartTime;
-  }
+  // Audio nodes scheduled after recorder.start() — see below
 
   // audioOnlyClips / audioEls kept for per-frame position tracking (no longer plays audio)
   const audioOnlyClips = S.cut.clips.filter(c=>c.type==='audio').sort((a,b)=>a.start-b.start);
@@ -1155,6 +1114,41 @@ async function startExport(){
 
   // Wait for the AudioContext pre-roll (200ms head start we gave the audio scheduler)
   await new Promise(r => setTimeout(r, 220));
+
+  // ── Schedule ALL audio AFTER recorder has started capturing ──
+  // This ensures AudioBufferSourceNodes play during the recording window, not before.
+  if(_audioCtx && _masterGain){
+    const _exportStartTime = _audioCtx.currentTime + 0.05; // 50ms to start
+
+    // Video clip audio
+    for(const clip of videoClips){
+      const buf = _audioBuffers[clip.mediaIdx];
+      if(!buf) continue;
+      if(S.cut.mutedTracks?.[clip.track]) continue;
+      const vol = clip.volume !== undefined ? Math.min(1,clip.volume/100) : 1.0;
+      const src = _audioCtx.createBufferSource();
+      src.buffer = buf;
+      src.playbackRate.value = clip.speed || 1;
+      const gn = _audioCtx.createGain(); gn.gain.value = vol;
+      src.connect(gn); gn.connect(_masterGain);
+      src.start(_exportStartTime + clip.start, clip.fileStart||0, clip.dur * (clip.speed||1));
+    }
+    // Audio-only clips (voiceovers, music)
+    for(const clip of S.cut.clips.filter(c=>c.type==='audio')){
+      const buf = _audioBuffers[clip.mediaIdx];
+      if(!buf) continue;
+      if(S.cut.mutedTracks?.[clip.track]) continue;
+      const vol = clip.volume !== undefined ? Math.min(1,clip.volume/100) : 1.0;
+      const src = _audioCtx.createBufferSource();
+      src.buffer = buf;
+      const gn = _audioCtx.createGain(); gn.gain.value = vol;
+      src.connect(gn); gn.connect(_masterGain);
+      src.start(_exportStartTime + clip.start, clip.fileStart||0, clip.dur);
+    }
+    window._exportAcStartTime = _exportStartTime;
+  }
+
+  status.textContent='Rendering frames...';
 
   const dt=1/fps;
   let t=0;
