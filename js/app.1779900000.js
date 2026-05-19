@@ -1193,154 +1193,143 @@ async function startExport(){
     notify('✓ Export downloaded — '+fname+' ('+(mimeType.includes('mp4')?'MP4':'WebM')+')','#3fb950');
   };
 
-  recorder.start(500); // collect every 500ms for stable chunks
-  status.textContent='Rendering with audio...';
+  // ── REAL-TIME RENDER LOOP ──────────────────────────────────────────────────
+  // captureStream records wall-clock time, not frame count.
+  // File duration = recorder.stop() - recorder.start() in real seconds.
+  // We must render at exactly real-time: 1 frame every (1000/fps) ms.
+  // We use requestAnimationFrame for precise timing and draw each frame
+  // based on actual elapsed wall-clock time, not an incremented counter.
 
-  const dt=1/fps;
-  let t=0;
-  let lastActiveVid=null;
-  const startTs=Date.now();
+  recorder.start(200); // small chunks for reliable capture
+  status.textContent = 'Rendering...';
 
-  // ── Smooth render: let video play naturally, capture frames at real-time rate ──
-  // Seek once to start, then just drawImage() each frame — no per-frame seeks
+  const msPerFrame = 1000 / fps;
+  const startTs = performance.now();
+  let lastRafT = 0;
   let lastClipIdx = -1;
+  let lastActiveVid = null;
 
-  async function renderFrame(){
-    if(t >= totalDur){  // exact stop at last asset
-      if(lastActiveVid && !lastActiveVid.paused){ lastActiveVid.pause(); }
-      Object.values(audioEls).forEach(a=>{ try{a.pause();}catch(e){} });
-      if(recorder.state!=='inactive') recorder.stop();
-      return;
-    }
-
-    // Frame hold: draw frozen frame independently of source clip
-    const fhNow = S.cut.clips.find(c => c.type==='frame_hold' && t>=c.start && t<c.start+c.dur);
-    if(fhNow){
-      if(fhNow._imgData && (!fhNow._img || !fhNow._img.complete)){
-        fhNow._img = new Image(); fhNow._img.src = fhNow._imgData;
-      }
-      ctx.fillStyle='#000'; ctx.fillRect(0,0,W,H);
-      // 1. Draw frozen frame with any applied visual effects (Noir, B&W, etc.)
-      if(fhNow._img && fhNow._img.complete){
-        const fhCi = S.cut.clips.indexOf(fhNow);
-        const fhParts = [];
-        (S.cut.effects[fhCi]||[]).forEach(ef => {
-          if(ef.visible===false) return;
-          const e = CUT_EFFECTS[ef.i]; if(!e||e.type==='transition') return;
-          const es = fhNow.start+(ef.startOffset||0);
-          const ee = es+(ef.effectDur!==undefined?ef.effectDur:fhNow.dur);
-          if(t<es||t>=ee) return;
-          if(e.type==='range')       fhParts.push(e.prop+'('+ef.v+e.unit+')');
-          else if(e.type==='toggle') fhParts.push(e.filter);
-        });
-        ctx.save();
-        if(fhParts.length) ctx.filter = fhParts.join(' ');
-        ctx.drawImage(fhNow._img, 0, 0, W, H);
-        ctx.filter = 'none';
-        ctx.restore();
-      }
-      if(lastActiveVid && !lastActiveVid.paused) lastActiveVid.pause();
-      // 2. Render overlays on top of frozen frame during export
-      const fhActiveOvs = (window._overlays||[]).filter(o => t>=o.startTime && t<o.endTime);
-      if(fhActiveOvs.length && window.renderOverlaysOnCanvas){
-        window.renderOverlaysOnCanvas(ctx, W, H, t, new Set());
-      }
-      const pct2=Math.min(98,Math.round((t/totalDur)*100));
-      bar.style.width=pct2+'%';
-      status.textContent='Rendering: '+pct2+'% (Frame Hold)';
-      t+=dt;
-      const wt2=startTs+t*1000; const d2=Math.max(0,wt2-Date.now());
-      setTimeout(renderFrame,d2); return;
-    }
-
-    const clip = videoClips.find(c => t >= c.start && t < c.start + c.dur);
-
-    if(clip){
-      // Use drawEls[mediaIdx] - pre-loaded, pre-connected to AudioContext
-      // No src changes during rendering = AudioContext connection stays alive
-      const vid = drawEls[clip.mediaIdx];
-      const clipIdx = videoClips.indexOf(clip);
-
-      if(clipIdx !== lastClipIdx){
-        // Pause previous clip's element
-        if(lastActiveVid && lastActiveVid !== vid && !lastActiveVid.paused) lastActiveVid.pause();
-        lastActiveVid = vid;
-        lastClipIdx = clipIdx;
-
-        if(vid){
-          const _spd = clip.speed || 1;
-          const fileTime = (clip.fileStart||0) + Math.max(0,(t - clip.start)*_spd);
-          // drawEls are muted drawing elements only — audio comes from _exportMasterVid via AudioContext
-          vid.muted = true; vid.volume = 0;
-          vid.playbackRate = _spd;
-          // Apply track mute and clip volume to the AudioContext master gain
-          if(window._exportMasterGain){
-            const _trackMuted = !!(S.cut.mutedTracks?.[clip.track]);
-            const _clipVol = clip.volume !== undefined ? Math.min(1, clip.volume) : 1.0;
-            window._exportMasterGain.gain.value = (_trackMuted || _clipVol === 0) ? 0 : _clipVol;
-          }
-          vid.currentTime = fileTime;
-          await new Promise(r=>{
-            const h=()=>{ vid.removeEventListener('seeked',h); r(); };
-            vid.addEventListener('seeked', h);
-            setTimeout(r, 3000);
-          });
-          try{ await vid.play(); }catch(e){}
-        }
-      }
-
-      // Draw frame
-      ctx.fillStyle='#000'; ctx.fillRect(0,0,W,H);
-      if(vid && vid.readyState>=2) try{ ctx.drawImage(vid,0,0,W,H); }catch(e){}
-      if((window._overlays||[]).some(o=>t>=o.startTime&&t<o.endTime)&&window.renderOverlaysOnCanvas)
-        window.renderOverlaysOnCanvas(ctx,W,H,t,new Set());
-
-    } else {
-      ctx.fillStyle = '#000';
-      ctx.fillRect(0, 0, W, H);
-      if(lastActiveVid && !lastActiveVid.paused){ lastActiveVid.pause(); lastActiveVid = null; }
-      lastClipIdx = -1;
-    }
-
-    // ── Standalone audio clips (voiceover, music) ──
-    _audioCandidates.forEach(({clip:ac, idx}) => {
-      if(S.cut.mutedTracks?.[ac.track]) return;
-      const a = audioEls[idx]; if(!a) return;
+  // Start audio clips from the beginning
+  _audioCandidates.forEach(({clip:ac, idx}) => {
+    const a = audioEls[idx]; if(!a) return;
+    if(S.cut.mutedTracks?.[ac.track]) return;
+    if(ac.start <= 0.1){
       const vol = ac.volume !== undefined ? Math.min(1, ac.volume) : 1.0;
-      if(t >= ac.start && t < ac.start + ac.dur){
-        const aT = (ac.fileStart||0) + Math.max(0, t - ac.start);
-        a.muted = false; a.volume = vol;
-        // Ensure AudioContext is running when audio plays
-        if(window._exportAudioCtx && window._exportAudioCtx.state === 'suspended'){
-          window._exportAudioCtx.resume().catch(()=>{});
-        }
-        if(a.paused){ a.currentTime = aT; try{ a.play(); }catch(e){} }
-        else if(Math.abs(a.currentTime - aT) > 0.5) a.currentTime = aT;
-      } else if(!a.paused){ a.pause(); }
-    });
+      a.muted = false; a.volume = vol;
+      a.currentTime = ac.fileStart || 0;
+      try{ a.play(); }catch(e){}
+    }
+    // Resume AudioContext
+    if(window._exportAudioCtx && window._exportAudioCtx.state === 'suspended'){
+      window._exportAudioCtx.resume().catch(()=>{});
+    }
+  });
 
-    // ── Progress ──
-    const pct = Math.min(98, Math.round((t / totalDur) * 100));
-    bar.style.width = pct + '%';
-    const elapsed = (Date.now() - startTs) / 1000;
-    const rate = elapsed > 0.5 ? t / elapsed : 1;
-    const rem = rate > 0 ? (totalDur - t) / rate : 0;
-    status.textContent = `Rendering: ${pct}% · ${t.toFixed(1)}s / ${totalDur.toFixed(1)}s`;
-    if(rem > 1) eta.textContent = `~${Math.ceil(rem)}s remaining`;
-
-    t += dt;
-
-    // CRITICAL: enforce real-time pacing so MediaRecorder captures correct duration.
-    // captureStream(fps) samples the canvas at exactly 1000/fps ms intervals.
-    // If we render faster, the same frame gets captured multiple times = wrong duration.
-    // We must wait until the wall-clock target before rendering the next frame.
-    const wallTarget = startTs + t * 1000;
-    const delay = Math.max(1000 / fps, wallTarget - Date.now());
-    setTimeout(renderFrame, delay);
+  // Start first video clip
+  const firstClip = videoClips.find(c => c.start <= 0.01);
+  if(firstClip){
+    const vid = drawEls[firstClip.mediaIdx];
+    if(vid){
+      vid.muted = true; vid.volume = 0;
+      vid.playbackRate = firstClip.speed || 1;
+      vid.currentTime = firstClip.fileStart || 0;
+      lastActiveVid = vid; lastClipIdx = 0;
+      try{ await vid.play(); }catch(e){}
+    }
   }
 
-  await renderFrame();
+  await new Promise(resolve => {
+    function rafLoop(rafNow){
+      const elapsed = (rafNow - startTs) / 1000; // seconds elapsed since export start
+      const t = elapsed; // t = real wall-clock time = content time
+
+      if(t >= totalDur){
+        // Finished — stop everything
+        if(lastActiveVid && !lastActiveVid.paused) lastActiveVid.pause();
+        _audioCandidates.forEach(({idx}) => { try{ audioEls[idx]?.pause(); }catch(e){} });
+        if(recorder.state !== 'inactive') recorder.stop();
+        resolve();
+        return;
+      }
+
+      // Only draw if at least msPerFrame has passed since last draw
+      if(rafNow - lastRafT >= msPerFrame - 1){
+        lastRafT = rafNow;
+
+        // Frame hold
+        const fhNow = S.cut.clips.find(c => c.type==='frame_hold' && t>=c.start && t<c.start+c.dur);
+        if(fhNow){
+          if(fhNow._imgData && (!fhNow._img || !fhNow._img.complete)){
+            fhNow._img = new Image(); fhNow._img.src = fhNow._imgData;
+          }
+          ctx.fillStyle='#000'; ctx.fillRect(0,0,W,H);
+          if(fhNow._img && fhNow._img.complete){
+            const fhCi = S.cut.clips.indexOf(fhNow);
+            const fhParts = [];
+            (S.cut.effects[fhCi]||[]).forEach(ef => {
+              if(ef.visible===false) return;
+              const e = CUT_EFFECTS[ef.i]; if(!e||e.type==='transition') return;
+              const es=fhNow.start+(ef.startOffset||0), ee=es+(ef.effectDur!==undefined?ef.effectDur:fhNow.dur);
+              if(t<es||t>=ee) return;
+              if(e.type==='range') fhParts.push(e.prop+'('+ef.v+e.unit+')');
+              else if(e.type==='toggle') fhParts.push(e.filter);
+            });
+            ctx.save(); if(fhParts.length) ctx.filter=fhParts.join(' ');
+            ctx.drawImage(fhNow._img,0,0,W,H);
+            ctx.filter='none'; ctx.restore();
+          }
+          if(lastActiveVid && !lastActiveVid.paused){ lastActiveVid.pause(); }
+          if((window._overlays||[]).some(o=>t>=o.startTime&&t<o.endTime)&&window.renderOverlaysOnCanvas)
+            window.renderOverlaysOnCanvas(ctx,W,H,t,new Set());
+        } else {
+          const clip = videoClips.find(c => t >= c.start && t < c.start + c.dur);
+          if(clip){
+            const vid = drawEls[clip.mediaIdx];
+            const clipIdx = videoClips.indexOf(clip);
+            if(clipIdx !== lastClipIdx){
+              if(lastActiveVid && lastActiveVid !== vid && !lastActiveVid.paused) lastActiveVid.pause();
+              lastActiveVid = vid; lastClipIdx = clipIdx;
+              if(vid){
+                vid.muted = true; vid.volume = 0;
+                vid.playbackRate = clip.speed || 1;
+                const fileTime = (clip.fileStart||0) + Math.max(0,(t-clip.start)*(clip.speed||1));
+                vid.currentTime = fileTime;
+                try{ vid.play(); }catch(e){}
+              }
+            }
+            if(vid && vid.readyState >= 2) try{ ctx.drawImage(vid,0,0,W,H); }catch(e){}
+            if((window._overlays||[]).some(o=>t>=o.startTime&&t<o.endTime)&&window.renderOverlaysOnCanvas)
+              window.renderOverlaysOnCanvas(ctx,W,H,t,new Set());
+          } else {
+            ctx.fillStyle='#000'; ctx.fillRect(0,0,W,H);
+            if(lastActiveVid && !lastActiveVid.paused){ lastActiveVid.pause(); lastActiveVid=null; }
+            lastClipIdx=-1;
+          }
+        }
+
+        // Sync audio clips that start mid-timeline
+        _audioCandidates.forEach(({clip:ac, idx}) => {
+          if(S.cut.mutedTracks?.[ac.track]) return;
+          const a = audioEls[idx]; if(!a) return;
+          const vol = ac.volume !== undefined ? Math.min(1,ac.volume) : 1.0;
+          if(t >= ac.start && t < ac.start + ac.dur){
+            a.muted=false; a.volume=vol;
+            if(a.paused){ a.currentTime=(ac.fileStart||0)+Math.max(0,t-ac.start); try{a.play();}catch(e){} }
+          } else if(!a.paused){ a.pause(); }
+        });
+
+        // Progress
+        const pct = Math.min(98, Math.round((t/totalDur)*100));
+        bar.style.width = pct+'%';
+        status.textContent = `Rendering: ${pct}% · ${t.toFixed(1)}s / ${totalDur.toFixed(1)}s`;
+      }
+
+      requestAnimationFrame(rafLoop);
+    }
+    requestAnimationFrame(rafLoop);
+  });
 }
+
 
 
 // ═══════════════════════════════════════
