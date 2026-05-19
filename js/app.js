@@ -1011,13 +1011,21 @@ async function startExport(){
     const item = S.cut.media[mIdx];
     if(!item?.url) continue;
     const v = document.createElement('video');
-    v.src = item.url; v.preload='auto';
-    // MUTED: do NOT connect to AudioContext — MediaElementSource blocks readyState/play()
-    // Audio comes separately via _exportMasterVid (connected in showExportModal gesture)
-    v.muted = true; v.volume = 0;
+    v.muted = true; v.volume = 0; v.preload='auto';
     v.style.display='none'; v.playsInline=true;
+    v.src = item.url;
     document.body.appendChild(v);
-    await new Promise(r=>{ if(v.readyState>=3){r();return;} v.oncanplaythrough=r; v.onerror=r; setTimeout(r,15000); });
+    v.load(); // explicit load() call — triggers buffering immediately
+    // Wait for readyState >= 2 (HAVE_CURRENT_DATA) — enough to drawImage()
+    // canplaythrough requires full buffer; we only need the first frame
+    await new Promise(r => {
+      if(v.readyState >= 2){ r(); return; }
+      const done = () => { v.removeEventListener('loadeddata', done); v.removeEventListener('canplay', done); v.removeEventListener('error', done); r(); };
+      v.addEventListener('loadeddata', done);  // fires at readyState=2
+      v.addEventListener('canplay',    done);  // fires at readyState=3, fallback
+      v.addEventListener('error',      done);  // unblock on error too
+      setTimeout(done, 5000); // 5s max per element — don't stall entire export
+    });
     drawEls[mIdx] = v;
     status.textContent='Pre-loading: '+(Object.keys(drawEls).length)+'/'+_uniqueIdxs.length;
   }
