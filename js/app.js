@@ -1004,24 +1004,20 @@ async function startExport(){
 
   // Persistent per-media video elements - stay loaded, each connected to AudioContext
   // No src changes during rendering = AudioContext connections never break
-  const drawEls = {}; // mediaIdx -> <video> element
+  const drawEls = {}; // mediaIdx -> <video> element (MUTED, drawing only)
   status.textContent='Pre-loading media...';
   const _uniqueIdxs = [...new Set(videoClips.map(c=>c.mediaIdx))];
-  const _actxPre = window._exportAudioCtx;
-  const _mbusPre = window._exportMasterGain;
   for(const mIdx of _uniqueIdxs){
     const item = S.cut.media[mIdx];
     if(!item?.url) continue;
     const v = document.createElement('video');
-    v.src = item.url; v.preload='auto'; v.muted=false; v.volume=1.0;
+    v.src = item.url; v.preload='auto';
+    // MUTED: do NOT connect to AudioContext — MediaElementSource blocks readyState/play()
+    // Audio comes separately via _exportMasterVid (connected in showExportModal gesture)
+    v.muted = true; v.volume = 0;
     v.style.display='none'; v.playsInline=true;
     document.body.appendChild(v);
     await new Promise(r=>{ if(v.readyState>=3){r();return;} v.oncanplaythrough=r; v.onerror=r; setTimeout(r,15000); });
-    // Connect to AudioContext master bus - persistent connection for this media file
-    if(_actxPre && _mbusPre){
-      try{ const _s=_actxPre.createMediaElementSource(v); _s.connect(_mbusPre); v._audSrc=_s; }
-      catch(e){ console.warn('audio connect mIdx='+mIdx+':', e.message); }
-    }
     drawEls[mIdx] = v;
     status.textContent='Pre-loading: '+(Object.keys(drawEls).length)+'/'+_uniqueIdxs.length;
   }
@@ -1200,12 +1196,15 @@ async function startExport(){
         if(vid){
           const _spd = clip.speed || 1;
           const fileTime = (clip.fileStart||0) + Math.max(0,(t - clip.start)*_spd);
-          // Respect track mute and clip volume (clip.volume is 0.0-1.0, not 0-100)
-          const _trackMuted = !!(S.cut.mutedTracks?.[clip.track]);
-          const _clipVol = clip.volume !== undefined ? Math.min(1, clip.volume) : 1.0;
-          vid.volume = _trackMuted ? 0 : _clipVol;
-          vid.muted  = _trackMuted || (_clipVol === 0);
+          // drawEls are muted drawing elements only — audio comes from _exportMasterVid via AudioContext
+          vid.muted = true; vid.volume = 0;
           vid.playbackRate = _spd;
+          // Apply track mute and clip volume to the AudioContext master gain
+          if(window._exportMasterGain){
+            const _trackMuted = !!(S.cut.mutedTracks?.[clip.track]);
+            const _clipVol = clip.volume !== undefined ? Math.min(1, clip.volume) : 1.0;
+            window._exportMasterGain.gain.value = (_trackMuted || _clipVol === 0) ? 0 : _clipVol;
+          }
           vid.currentTime = fileTime;
           await new Promise(r=>{
             const h=()=>{ vid.removeEventListener('seeked',h); r(); };
