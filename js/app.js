@@ -1122,8 +1122,16 @@ async function startExport(){
       _finalGain = _finalAudioCtx.createGain(); _finalGain.gain.value = 1.0;
       _finalDest = _finalAudioCtx.createMediaStreamDestination();
       _finalGain.connect(_finalDest);
+      // Connect audio elements to new context for stream capture
+      // Use try/catch - element may already be connected to previous context
       for(const a of Object.values(audioEls)){
-        try{ const s=_finalAudioCtx.createMediaElementSource(a); s.connect(_finalGain); }catch(e){}
+        try{
+          const s = _finalAudioCtx.createMediaElementSource(a);
+          s.connect(_finalGain);
+        }catch(e){
+          // Already connected or error — element will play through default output
+          console.warn('[Export] Audio element connect failed (may already be connected):', e.message);
+        }
       }
       window._exportAudioCtx   = _finalAudioCtx;
       window._exportMasterGain = _finalGain;
@@ -1131,9 +1139,8 @@ async function startExport(){
       console.log('[Export] Fresh AudioContext created, state:', _finalAudioCtx.state);
     }catch(e){ console.warn('[Export] Fresh AudioContext failed:', e); _finalDest = null; }
   } else {
-    for(const a of Object.values(audioEls)){
-      try{ const s=_finalAudioCtx.createMediaElementSource(a); s.connect(_finalGain); }catch(e){}
-    }
+    // _destAlive: existing context is live, audio elements play normally
+    // Don't createMediaElementSource here — may already be connected from previous attempt
   }
   const videoStream = canvas.captureStream(fps);
   const _liveAudioTracks = _finalDest ? _finalDest.stream.getAudioTracks().filter(t=>t.readyState==='live') : [];
@@ -1143,11 +1150,9 @@ async function startExport(){
     : videoStream;
 
   // drawEls is now the primary source for both video drawing and audio
-  // masterVid is kept for backward compat but drawEls are used in renderFrame
-  window._exportMasterGain = _mbusPre || null;
+  // Audio gain is already set correctly in _finalGain / window._exportMasterGain above
 
-
-    // Choose codec: prefer H264/AAC (MP4-compatible) if browser supports it
+  // Choose codec: prefer H264/AAC (MP4-compatible) if browser supports it
   const fmt = document.getElementById('exp-format')?.value || 'webm';
   let mimeType;
   if(fmt === 'mp4'){
