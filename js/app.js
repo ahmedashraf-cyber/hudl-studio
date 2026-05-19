@@ -1049,50 +1049,49 @@ async function startExport(){
 
   // ── Schedule ALL audio clips as AudioBufferSourceNodes ──
   // This plays the full audio in advance, perfectly timed, no streaming starvation.
-  // Audio nodes scheduled after recorder.start() — see below
-
-  // audioOnlyClips / audioEls kept for per-frame position tracking (no longer plays audio)
+    // audioOnlyClips / audioEls kept for per-frame position tracking (no longer plays audio)
   const audioOnlyClips = S.cut.clips.filter(c=>c.type==='audio').sort((a,b)=>a.start-b.start);
-  const audioEls = {}; // empty — audio handled by AudioBufferSourceNodes above
+  const audioEls = {}; // empty — audio handled by AudioBufferSourceNodes
 
-  // Build final stream: canvas video + AudioContext master bus output
-  // Single clean audio stream from AudioContext - no duplicates
+  // ── Create FRESH AudioContext right before recording ──
+  // The showExportModal AudioContext may have stale/ended tracks after long decode phase.
+  // A fresh context guarantees live audio tracks for MediaRecorder.
+  let _freshCtx, _freshGain, _freshDest;
+  try {
+    _freshCtx  = new (window.AudioContext||window.webkitAudioContext)({sampleRate:48000});
+    await _freshCtx.resume();
+    _freshGain = _freshCtx.createGain();
+    _freshGain.gain.value = 1.0;
+    _freshDest = _freshCtx.createMediaStreamDestination();
+    _freshGain.connect(_freshDest);
+  } catch(e) { console.warn('Fresh AudioContext failed:', e); }
+
   const videoStream = canvas.captureStream(fps);
-  const _audioTracks = _audioDest ? _audioDest.stream.getAudioTracks() : [];
-  console.log('Final export: videoTracks='+videoStream.getVideoTracks().length+' audioTracks='+_audioTracks.length);
-  const finalStream = _audioTracks.length > 0
-    ? new MediaStream([...videoStream.getVideoTracks(), ..._audioTracks])
+  const _freshAudioTracks = _freshDest ? _freshDest.stream.getAudioTracks() : [];
+  const finalStream = _freshAudioTracks.length > 0
+    ? new MediaStream([...videoStream.getVideoTracks(), ..._freshAudioTracks])
     : videoStream;
 
-  // drawEls is now the primary source for both video drawing and audio
-  // masterVid is kept for backward compat but drawEls are used in renderFrame
-  window._exportMasterGain = _mbusPre || null;
-
-
-    // Choose codec: prefer H264/AAC (MP4-compatible) if browser supports it
+  // Choose codec
   const fmt = document.getElementById('exp-format')?.value || 'webm';
   let mimeType;
   if(fmt === 'mp4'){
-    // Try H264+AAC for true MP4 content — supported in Chrome
     const mp4Types = ['video/mp4;codecs=avc1.42E01E,mp4a.40.2','video/mp4;codecs=h264,aac','video/mp4'];
     mimeType = mp4Types.find(m=>MediaRecorder.isTypeSupported(m));
   }
   if(!mimeType){
-    // Fallback: VP9+Opus WebM
     const webmTypes = ['video/webm;codecs=vp9,opus','video/webm;codecs=vp8,opus','video/webm'];
     mimeType = webmTypes.find(m=>MediaRecorder.isTypeSupported(m)) || 'video/webm';
   }
-  const recorder=new MediaRecorder(finalStream,{mimeType,videoBitsPerSecond:BR,audioBitsPerSecond:320000});
-  const chunks=[];
-  recorder.ondataavailable=e=>{if(e.data&&e.data.size>0)chunks.push(e.data);};
+  const recorder = new MediaRecorder(finalStream, {mimeType, videoBitsPerSecond:BR, audioBitsPerSecond:320000});
+  const chunks = [];
+  recorder.ondataavailable = e => { if(e.data && e.data.size>0) chunks.push(e.data); };
 
-  recorder.onstop=async()=>{
+  recorder.onstop = async () => {
     status.textContent='Packaging download...';
     bar.style.width='100%';
-    // Cleanup video and audio elements
     if(window._exportMasterVid){try{window._exportMasterVid.pause();window._exportMasterVid.src='';if(document.body.contains(window._exportMasterVid))document.body.removeChild(window._exportMasterVid);}catch(e){}window._exportMasterVid=null;}
-    Object.values(audioEls).forEach(a=>{try{a.pause();a.src='';document.body.contains(a)&&document.body.removeChild(a);}catch(e){}});
-    window._exportMasterGain=null;
+    try{ if(_freshCtx) _freshCtx.close(); } catch(e){}
     if(window._exportAudioCtx){try{window._exportAudioCtx.close();}catch(e){} window._exportAudioCtx=null;}
     window._exportAudioDest=null; window._exportAudioStream=null;
     await new Promise(r=>setTimeout(r,300));
@@ -1109,43 +1108,32 @@ async function startExport(){
     notify('✓ Export downloaded — '+fname+' ('+(mimeType.includes('mp4')?'MP4':'WebM')+')','#3fb950');
   };
 
-  recorder.start(500); // collect every 500ms for stable chunks
+  recorder.start(500);
   status.textContent='Preparing audio...';
 
-  // Wait for the AudioContext pre-roll (200ms head start we gave the audio scheduler)
-  await new Promise(r => setTimeout(r, 220));
+  await new Promise(r => setTimeout(r, 100));
 
-  // ── Schedule ALL audio AFTER recorder has started capturing ──
-  // This ensures AudioBufferSourceNodes play during the recording window, not before.
-  if(_audioCtx && _masterGain){
-    const _exportStartTime = _audioCtx.currentTime + 0.05; // 50ms to start
-
-    // Video clip audio
+  // ── Schedule AudioBufferSourceNodes on the FRESH context ──
+  if(_freshCtx && _freshGain){
+    const _t0 = _freshCtx.currentTime + 0.05;
     for(const clip of videoClips){
-      const buf = _audioBuffers[clip.mediaIdx];
-      if(!buf) continue;
+      const buf = _audioBuffers[clip.mediaIdx]; if(!buf) continue;
       if(S.cut.mutedTracks?.[clip.track]) continue;
-      const vol = clip.volume !== undefined ? Math.min(1,clip.volume/100) : 1.0;
-      const src = _audioCtx.createBufferSource();
-      src.buffer = buf;
-      src.playbackRate.value = clip.speed || 1;
-      const gn = _audioCtx.createGain(); gn.gain.value = vol;
-      src.connect(gn); gn.connect(_masterGain);
-      src.start(_exportStartTime + clip.start, clip.fileStart||0, clip.dur * (clip.speed||1));
+      const src = _freshCtx.createBufferSource();
+      src.buffer = buf; src.playbackRate.value = clip.speed||1;
+      const gn = _freshCtx.createGain(); gn.gain.value = clip.volume!==undefined?Math.min(1,clip.volume/100):1;
+      src.connect(gn); gn.connect(_freshGain);
+      src.start(_t0 + clip.start, clip.fileStart||0, clip.dur*(clip.speed||1));
     }
-    // Audio-only clips (voiceovers, music)
     for(const clip of S.cut.clips.filter(c=>c.type==='audio')){
-      const buf = _audioBuffers[clip.mediaIdx];
-      if(!buf) continue;
+      const buf = _audioBuffers[clip.mediaIdx]; if(!buf) continue;
       if(S.cut.mutedTracks?.[clip.track]) continue;
-      const vol = clip.volume !== undefined ? Math.min(1,clip.volume/100) : 1.0;
-      const src = _audioCtx.createBufferSource();
+      const src = _freshCtx.createBufferSource();
       src.buffer = buf;
-      const gn = _audioCtx.createGain(); gn.gain.value = vol;
-      src.connect(gn); gn.connect(_masterGain);
-      src.start(_exportStartTime + clip.start, clip.fileStart||0, clip.dur);
+      const gn = _freshCtx.createGain(); gn.gain.value = clip.volume!==undefined?Math.min(1,clip.volume/100):1;
+      src.connect(gn); gn.connect(_freshGain);
+      src.start(_t0 + clip.start, clip.fileStart||0, clip.dur);
     }
-    window._exportAcStartTime = _exportStartTime;
   }
 
   status.textContent='Rendering frames...';
