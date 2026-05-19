@@ -875,21 +875,30 @@ function showExportModal(){
     const _dest = _ctx.createMediaStreamDestination();
     _gain.connect(_dest);
 
-    // Step 4: Unlock AudioContext using a silent oscillator (no video content = no ghost audio)
-    // We do NOT connect any video element to AudioContext here — only PCM buffers during export
-    const _silentOsc = _ctx.createOscillator();
-    const _silentGain = _ctx.createGain();
-    _silentGain.gain.value = 0; // completely silent
-    _silentOsc.connect(_silentGain);
-    _silentGain.connect(_gain);
-    _silentOsc.start();
-    _silentOsc.stop(_ctx.currentTime + 0.01); // stop after 10ms — just enough to unlock
+    // Step 4: Create masterVid and connect to AudioContext
+    const _vclips = (S?.cut?.clips||[]).filter(c=>c.type==='video');
+    const _firstUrl = _vclips.length ? S?.cut?.media?.[_vclips[0].mediaIdx]?.url : null;
+    const _mv = document.createElement('video');
+    _mv.muted = false; _mv.volume = 1.0; _mv.style.display='none';
+    if(_firstUrl) _mv.src = _firstUrl;
+    document.body.appendChild(_mv);
+
+    // Connect element to AudioContext BEFORE play()
+    const _mvSrc = _ctx.createMediaElementSource(_mv);
+    _mvSrc.connect(_gain);
+
+    // Step 5: play() in gesture = unlocks AudioContext (not for audio output)
+    // _mv is MUTED - drawEls will be the actual audio sources during export
+    // We only need _mv to trigger the user-gesture unlock
+    _mv.muted = true; // mute: only used to unlock AudioContext, not for audio output
+    const _playP = _mv.play();
+    if(_playP) _playP.catch(()=>{});
 
     window._exportAudioCtx   = _ctx;
     window._exportMasterGain = _gain;
     window._exportAudioDest  = _dest;
-    window._exportMasterVid  = null; // no video element — no ghost audio
-    window._exportMvSrc      = null;
+    window._exportMasterVid  = _mv;
+    window._exportMvSrc      = _mvSrc;
 
     // These are now populated by the AudioContext destination
     window._exportAudioStream = _dest.stream;
@@ -988,101 +997,116 @@ async function startExport(){
   const ctx=canvas.getContext('2d');
 
 
-  // ── EXPORT AUDIO v4: Decoded PCM approach ──────────────────────────────────
-  // Uses AudioBufferSourceNode (decoded PCM) instead of MediaElementSourceNode.
-  // PCM buffers never choke under memory load; no 17s streaming cutoff.
+  // EXPORT AUDIO v3: single video element approach
+  // One element = one captureStream() = continuous audio in MediaRecorder
+  // No AudioContext, no suspended state issues, no multi-track mixing problems
+  status.textContent='Loading video files...';
 
-  // Disconnect _exportMasterVid from AudioContext to prevent ghost audio from stale clips
-  if(window._exportMvSrc){ try{ window._exportMvSrc.disconnect(); }catch(e){} window._exportMvSrc=null; }
-  if(window._exportMasterVid){ try{ window._exportMasterVid.pause(); window._exportMasterVid.muted=true; }catch(e){} }
-
-  const _audioCtx    = window._exportAudioCtx;
-  const _masterGain  = window._exportMasterGain;
-  const _audioDest   = window._exportAudioDest;
-
-  if(_audioCtx && _audioCtx.state==='suspended') await _audioCtx.resume();
-
-  // Pre-load video elements for DRAWING only (muted — audio comes from decoded PCM buffers)
-  const drawEls = {}; // mediaIdx -> <video> element (muted, drawing only)
-  status.textContent='Pre-loading video frames...';
+  // Persistent per-media video elements - stay loaded, each connected to AudioContext
+  // No src changes during rendering = AudioContext connections never break
+  const drawEls = {}; // mediaIdx -> <video> element
+  status.textContent='Pre-loading media...';
   const _uniqueIdxs = [...new Set(videoClips.map(c=>c.mediaIdx))];
+  const _actxPre = window._exportAudioCtx;
+  const _mbusPre = window._exportMasterGain;
   for(const mIdx of _uniqueIdxs){
     const item = S.cut.media[mIdx];
     if(!item?.url) continue;
     const v = document.createElement('video');
-    v.src = item.url; v.preload='auto'; v.muted=true; // MUTED — audio handled separately
+    v.src = item.url; v.preload='auto'; v.muted=false; v.volume=1.0;
     v.style.display='none'; v.playsInline=true;
     document.body.appendChild(v);
     await new Promise(r=>{ if(v.readyState>=3){r();return;} v.oncanplaythrough=r; v.onerror=r; setTimeout(r,15000); });
+    // Connect to AudioContext master bus - persistent connection for this media file
+    if(_actxPre && _mbusPre){
+      try{ const _s=_actxPre.createMediaElementSource(v); _s.connect(_mbusPre); v._audSrc=_s; }
+      catch(e){ console.warn('audio connect mIdx='+mIdx+':', e.message); }
+    }
     drawEls[mIdx] = v;
-    status.textContent='Pre-loading video: '+(Object.keys(drawEls).length)+'/'+_uniqueIdxs.length;
+    status.textContent='Pre-loading: '+(Object.keys(drawEls).length)+'/'+_uniqueIdxs.length;
   }
 
-  // Decode audio PCM buffers for all audio sources
-  // ── Video clip audio: decode each unique video file ──
-  status.textContent='Decoding audio tracks...';
-  const _audioBuffers = {}; // mediaIdx -> AudioBuffer (decoded PCM)
-  const _allAudioMediaIdxs = new Set([
-    ...videoClips.map(c=>c.mediaIdx),
-    ...S.cut.clips.filter(c=>c.type==='audio').map(c=>c.mediaIdx)
-  ]);
-  for(const mIdx of _allAudioMediaIdxs){
-    const item = S.cut.media[mIdx];
-    if(!item?.url || !_audioCtx) continue;
-    try{
-      const resp = await fetch(item.url);
-      const arrBuf = await resp.arrayBuffer();
-      const decoded = await _audioCtx.decodeAudioData(arrBuf);
-      _audioBuffers[mIdx] = decoded;
-      status.textContent='Decoding audio: '+Object.keys(_audioBuffers).length+'/'+_allAudioMediaIdxs.size;
-    }catch(e){ console.warn('Audio decode failed for mIdx='+mIdx+':', e.message); }
+  // masterVid is from showExportModal (already muted, only used for AudioContext unlock)
+  // drawEls handle all video+audio during rendering
+  const masterVid = window._exportMasterVid; // reference only, not used in renderFrame
+
+  // Use AudioContext stream from showExportModal gesture
+  // AudioContext was created AND resumed synchronously in the Export button click
+  const _audioCtx    = window._exportAudioCtx;
+  const _masterGain  = window._exportMasterGain;
+  const _audioDest   = window._exportAudioDest;
+  const masterAudioTracks = _audioDest ? _audioDest.stream.getAudioTracks() : (window._exportMasterAudioTracks||[]);
+  console.log('Export audio: ctx='+(_audioCtx?.state||'null'), 'tracks='+masterAudioTracks.length,
+    masterAudioTracks.map(t=>t.readyState+'/'+t.enabled).join(','));
+  // Resume AudioContext again in case browser suspended between modal open and export click
+  if(_audioCtx && _audioCtx.state==='suspended') _audioCtx.resume();
+
+  // drawEls[firstClip.mediaIdx] is already loaded and connected to AudioContext
+  // No need to load masterVid separately
+
+  // Preload standalone audio-only clips
+  const audioOnlyClips = S.cut.clips
+    .filter(c=>c.type==='audio'&&!c.linkedToVideo)
+    .sort((a,b)=>a.start-b.start);
+  const audioEls = {};
+  for(const clip of audioOnlyClips){
+    const item = S.cut.media[clip.mediaIdx];
+    if(!item?.url || audioEls[clip.mediaIdx]) continue;
+    if(S.cut.mutedTracks?.[clip.track]) continue;
+    const a = document.createElement('audio');
+    a.src=item.url; a.preload='auto';
+    a.muted=false; a.volume=1.0; a.style.display='none';
+    document.body.appendChild(a);
+    await new Promise(r=>{a.oncanplaythrough=r;a.onerror=r;setTimeout(r,8000);});
+    audioEls[clip.mediaIdx] = a;
   }
 
-  // ── Schedule ALL audio clips as AudioBufferSourceNodes ──
-  // This plays the full audio in advance, perfectly timed, no streaming starvation.
-    // audioOnlyClips / audioEls kept for per-frame position tracking (no longer plays audio)
-  const audioOnlyClips = S.cut.clips.filter(c=>c.type==='audio').sort((a,b)=>a.start-b.start);
-  const audioEls = {}; // empty — audio handled by AudioBufferSourceNodes
+  // Standalone audio clips are connected via AudioContext (below) - no captureStream needed
 
-  // ── Create FRESH AudioContext right before recording ──
-  // The showExportModal AudioContext may have stale/ended tracks after long decode phase.
-  // A fresh context guarantees live audio tracks for MediaRecorder.
-  let _freshCtx, _freshGain, _freshDest;
-  try {
-    _freshCtx  = new (window.AudioContext||window.webkitAudioContext)({sampleRate:48000});
-    await _freshCtx.resume();
-    _freshGain = _freshCtx.createGain();
-    _freshGain.gain.value = 1.0;
-    _freshDest = _freshCtx.createMediaStreamDestination();
-    _freshGain.connect(_freshDest);
-  } catch(e) { console.warn('Fresh AudioContext failed:', e); }
-
+  // Also connect standalone audio elements to the AudioContext master bus
+  if(_audioCtx && _masterGain){
+    for(const a of Object.values(audioEls)){
+      try{ const _as=_audioCtx.createMediaElementSource(a); _as.connect(_masterGain); }catch(e){}
+    }
+  }
+  // Build final stream: canvas video + AudioContext master bus output
+  // Single clean audio stream from AudioContext - no duplicates
   const videoStream = canvas.captureStream(fps);
-  const _freshAudioTracks = _freshDest ? _freshDest.stream.getAudioTracks() : [];
-  const finalStream = _freshAudioTracks.length > 0
-    ? new MediaStream([...videoStream.getVideoTracks(), ..._freshAudioTracks])
+  const _audioTracks = _audioDest ? _audioDest.stream.getAudioTracks() : [];
+  console.log('Final export: videoTracks='+videoStream.getVideoTracks().length+' audioTracks='+_audioTracks.length);
+  const finalStream = _audioTracks.length > 0
+    ? new MediaStream([...videoStream.getVideoTracks(), ..._audioTracks])
     : videoStream;
 
-  // Choose codec
+  // drawEls is now the primary source for both video drawing and audio
+  // masterVid is kept for backward compat but drawEls are used in renderFrame
+  window._exportMasterGain = _mbusPre || null;
+
+
+    // Choose codec: prefer H264/AAC (MP4-compatible) if browser supports it
   const fmt = document.getElementById('exp-format')?.value || 'webm';
   let mimeType;
   if(fmt === 'mp4'){
+    // Try H264+AAC for true MP4 content — supported in Chrome
     const mp4Types = ['video/mp4;codecs=avc1.42E01E,mp4a.40.2','video/mp4;codecs=h264,aac','video/mp4'];
     mimeType = mp4Types.find(m=>MediaRecorder.isTypeSupported(m));
   }
   if(!mimeType){
+    // Fallback: VP9+Opus WebM
     const webmTypes = ['video/webm;codecs=vp9,opus','video/webm;codecs=vp8,opus','video/webm'];
     mimeType = webmTypes.find(m=>MediaRecorder.isTypeSupported(m)) || 'video/webm';
   }
-  const recorder = new MediaRecorder(finalStream, {mimeType, videoBitsPerSecond:BR, audioBitsPerSecond:320000});
-  const chunks = [];
-  recorder.ondataavailable = e => { if(e.data && e.data.size>0) chunks.push(e.data); };
+  const recorder=new MediaRecorder(finalStream,{mimeType,videoBitsPerSecond:BR,audioBitsPerSecond:320000});
+  const chunks=[];
+  recorder.ondataavailable=e=>{if(e.data&&e.data.size>0)chunks.push(e.data);};
 
-  recorder.onstop = async () => {
+  recorder.onstop=async()=>{
     status.textContent='Packaging download...';
     bar.style.width='100%';
+    // Cleanup video and audio elements
     if(window._exportMasterVid){try{window._exportMasterVid.pause();window._exportMasterVid.src='';if(document.body.contains(window._exportMasterVid))document.body.removeChild(window._exportMasterVid);}catch(e){}window._exportMasterVid=null;}
-    try{ if(_freshCtx) _freshCtx.close(); } catch(e){}
+    Object.values(audioEls).forEach(a=>{try{a.pause();a.src='';document.body.contains(a)&&document.body.removeChild(a);}catch(e){}});
+    window._exportMasterGain=null;
     if(window._exportAudioCtx){try{window._exportAudioCtx.close();}catch(e){} window._exportAudioCtx=null;}
     window._exportAudioDest=null; window._exportAudioStream=null;
     await new Promise(r=>setTimeout(r,300));
@@ -1099,193 +1123,142 @@ async function startExport(){
     notify('✓ Export downloaded — '+fname+' ('+(mimeType.includes('mp4')?'MP4':'WebM')+')','#3fb950');
   };
 
-  recorder.start(100); // 100ms chunks for low latency
-  status.textContent='Scheduling audio...';
+  recorder.start(500); // collect every 500ms for stable chunks
+  status.textContent='Rendering with audio...';
 
-  // ── Schedule AudioBufferSourceNodes on the FRESH context immediately after recorder starts ──
-  let _videoStartWallMs = 0; // will be set when first frame renders
-  if(_freshCtx && _freshGain){
-    // We'll set audio start precisely aligned with when the first video frame draws
-    // For now, schedule with a short pre-roll; renderFrame will refine
-    window._freshCtxRef = _freshCtx;
-    window._freshGainRef = _freshGain;
-    window._audioBuffersRef = _audioBuffers;
-  }
+  const dt=1/fps;
+  let t=0;
+  let lastActiveVid=null;
+  const startTs=Date.now();
 
-  const dt = 1 / fps;
-  let t = 0;
-  let lastActiveVid = null;
-  let lastClipIdx   = -1;
-  let _audioScheduled = false;
-
-  function _scheduleAudio(wallStartMs){
-    if(_audioScheduled || !_freshCtx || !_freshGain) return;
-    _audioScheduled = true;
-    // _freshCtx.currentTime at the moment the first frame was drawn
-    const _t0 = _freshCtx.currentTime + 0.01;
-    for(const clip of videoClips){
-      const buf = _audioBuffers[clip.mediaIdx]; if(!buf) continue;
-      if(S.cut.mutedTracks?.[clip.track]) continue;
-      if(clip.volume !== undefined && clip.volume === 0) continue; // clip explicitly silenced
-      const vol = clip.volume !== undefined ? Math.min(1, clip.volume) : 1.0; // clip.volume is 0.0-1.0
-      const src = _freshCtx.createBufferSource();
-      src.buffer = buf; src.playbackRate.value = clip.speed||1;
-      const gn = _freshCtx.createGain(); gn.gain.value = vol;
-      src.connect(gn); gn.connect(_freshGain);
-      src.start(_t0 + clip.start, clip.fileStart||0, clip.dur*(clip.speed||1));
-    }
-    for(const clip of S.cut.clips.filter(c=>c.type==='audio')){
-      const buf = _audioBuffers[clip.mediaIdx]; if(!buf) continue;
-      // Skip if this audio track is muted
-      if(S.cut.mutedTracks?.[clip.track]) continue;
-      // Also skip linked audio clips whose parent video track is muted
-      if(clip.linkedToVideo){
-        const parentVid = S.cut.clips.find(v =>
-          v.type==='video' && v.mediaIdx===clip.mediaIdx &&
-          Math.abs(v.start - clip.start) < 1.0
-        );
-        if(parentVid && S.cut.mutedTracks?.[parentVid.track]) continue;
-        // Also skip if parent video clip has volume=0
-        if(parentVid && parentVid.volume !== undefined && parentVid.volume === 0) continue;
-      }
-      if(clip.volume !== undefined && clip.volume === 0) continue; // clip explicitly silenced
-      const vol = clip.volume !== undefined ? Math.min(1, clip.volume) : 1.0; // clip.volume is 0.0-1.0
-      const src = _freshCtx.createBufferSource();
-      src.buffer = buf;
-      const gn = _freshCtx.createGain(); gn.gain.value = vol;
-      src.connect(gn); gn.connect(_freshGain);
-      src.start(_t0 + clip.start, clip.fileStart||0, clip.dur);
-    }
-  }
-
-  const startTs = Date.now();
+  // ── Smooth render: let video play naturally, capture frames at real-time rate ──
+  // Seek once to start, then just drawImage() each frame — no per-frame seeks
+  let lastClipIdx = -1;
 
   async function renderFrame(){
-    if(t >= totalDur){
-      if(lastActiveVid && !lastActiveVid.paused) lastActiveVid.pause();
-      if(recorder.state !== 'inactive') recorder.stop();
+    if(t >= totalDur){  // exact stop at last asset
+      if(lastActiveVid && !lastActiveVid.paused){ lastActiveVid.pause(); }
+      Object.values(audioEls).forEach(a=>{ try{a.pause();}catch(e){} });
+      if(recorder.state!=='inactive') recorder.stop();
       return;
     }
 
-    // ── Find active clip at time t ──
+    // Frame hold: draw frozen frame independently of source clip
+    const fhNow = S.cut.clips.find(c => c.type==='frame_hold' && t>=c.start && t<c.start+c.dur);
+    if(fhNow){
+      if(fhNow._imgData && (!fhNow._img || !fhNow._img.complete)){
+        fhNow._img = new Image(); fhNow._img.src = fhNow._imgData;
+      }
+      ctx.fillStyle='#000'; ctx.fillRect(0,0,W,H);
+      // 1. Draw frozen frame with any applied visual effects (Noir, B&W, etc.)
+      if(fhNow._img && fhNow._img.complete){
+        const fhCi = S.cut.clips.indexOf(fhNow);
+        const fhParts = [];
+        (S.cut.effects[fhCi]||[]).forEach(ef => {
+          if(ef.visible===false) return;
+          const e = CUT_EFFECTS[ef.i]; if(!e||e.type==='transition') return;
+          const es = fhNow.start+(ef.startOffset||0);
+          const ee = es+(ef.effectDur!==undefined?ef.effectDur:fhNow.dur);
+          if(t<es||t>=ee) return;
+          if(e.type==='range')       fhParts.push(e.prop+'('+ef.v+e.unit+')');
+          else if(e.type==='toggle') fhParts.push(e.filter);
+        });
+        ctx.save();
+        if(fhParts.length) ctx.filter = fhParts.join(' ');
+        ctx.drawImage(fhNow._img, 0, 0, W, H);
+        ctx.filter = 'none';
+        ctx.restore();
+      }
+      if(lastActiveVid && !lastActiveVid.paused) lastActiveVid.pause();
+      // 2. Render overlays on top of frozen frame during export
+      const fhActiveOvs = (window._overlays||[]).filter(o => t>=o.startTime && t<o.endTime);
+      if(fhActiveOvs.length && window.renderOverlaysOnCanvas){
+        window.renderOverlaysOnCanvas(ctx, W, H, t, new Set());
+      }
+      const pct2=Math.min(98,Math.round((t/totalDur)*100));
+      bar.style.width=pct2+'%';
+      status.textContent='Rendering: '+pct2+'% (Frame Hold)';
+      t+=dt;
+      const wt2=startTs+t*1000; const d2=Math.max(0,wt2-Date.now());
+      setTimeout(renderFrame,d2); return;
+    }
+
     const clip = videoClips.find(c => t >= c.start && t < c.start + c.dur);
 
     if(clip){
-      const vid     = drawEls[clip.mediaIdx];
+      // Use drawEls[mediaIdx] - pre-loaded, pre-connected to AudioContext
+      // No src changes during rendering = AudioContext connection stays alive
+      const vid = drawEls[clip.mediaIdx];
       const clipIdx = videoClips.indexOf(clip);
 
       if(clipIdx !== lastClipIdx){
-        // Clip transition: pause previous, seek new one
+        // Pause previous clip's element
         if(lastActiveVid && lastActiveVid !== vid && !lastActiveVid.paused) lastActiveVid.pause();
         lastActiveVid = vid;
-        lastClipIdx   = clipIdx;
+        lastClipIdx = clipIdx;
 
         if(vid){
-          const _spd      = clip.speed || 1;
-          const fileTime  = (clip.fileStart||0) + Math.max(0,(t - clip.start)*_spd);
-          vid.muted        = true;
-          vid.volume       = 0;
+          const _spd = clip.speed || 1;
+          const fileTime = (clip.fileStart||0) + Math.max(0,(t - clip.start)*_spd);
+          // Respect track mute and clip volume (clip.volume is 0.0-1.0, not 0-100)
+          const _trackMuted = !!(S.cut.mutedTracks?.[clip.track]);
+          const _clipVol = clip.volume !== undefined ? Math.min(1, clip.volume) : 1.0;
+          vid.volume = _trackMuted ? 0 : _clipVol;
+          vid.muted  = _trackMuted || (_clipVol === 0);
           vid.playbackRate = _spd;
-          vid.currentTime  = fileTime;
-          // Wait for seek to complete (max 2s)
-          await new Promise(r => {
-            const h = () => { vid.removeEventListener('seeked',h); r(); };
+          vid.currentTime = fileTime;
+          await new Promise(r=>{
+            const h=()=>{ vid.removeEventListener('seeked',h); r(); };
             vid.addEventListener('seeked', h);
-            setTimeout(r, 2000);
+            setTimeout(r, 3000);
           });
           try{ await vid.play(); }catch(e){}
         }
       }
 
-      // ── Draw video frame with effects (NO clearRect before draw — prevents black flash) ──
-      if(vid && vid.readyState >= 2){
-        const _expCi = S.cut.clips.indexOf(clip);
-        const _expEffects = S.cut.effects[_expCi] || [];
-        const _expFilterParts = [];
-        _expEffects.forEach(ef => {
-          if(ef.visible===false) return;
-          const e = CUT_EFFECTS[ef.i]; if(!e||e.type==='transition') return;
-          const es = clip.start+(ef.startOffset||0);
-          const ee = es+(ef.effectDur!==undefined?ef.effectDur:clip.dur);
-          if(t<es||t>=ee) return;
-          if(e.type==='range')   _expFilterParts.push(e.prop+'('+ef.v+e.unit+')');
-          else if(e.type==='toggle') _expFilterParts.push(e.filter);
-        });
-        const _expFilter = _expFilterParts.length ? _expFilterParts.join(' ') : 'none';
-        ctx.save();
-        if(_expFilter !== 'none') ctx.filter = _expFilter;
-        try{ ctx.drawImage(vid, 0, 0, W, H); }catch(e){}
-        ctx.filter = 'none';
-        ctx.restore();
-      }
-      // ── Draw overlays on top ──
-      if((window._overlays||[]).some(o=>t>=o.startTime&&t<o.endTime) && window.renderOverlaysOnCanvas)
-        window.renderOverlaysOnCanvas(ctx, W, H, t, new Set());
+      // Draw frame
+      ctx.fillStyle='#000'; ctx.fillRect(0,0,W,H);
+      if(vid && vid.readyState>=2) try{ ctx.drawImage(vid,0,0,W,H); }catch(e){}
+      if((window._overlays||[]).some(o=>t>=o.startTime&&t<o.endTime)&&window.renderOverlaysOnCanvas)
+        window.renderOverlaysOnCanvas(ctx,W,H,t,new Set());
 
     } else {
-      // No clip at this time — black frame
       ctx.fillStyle = '#000';
       ctx.fillRect(0, 0, W, H);
       if(lastActiveVid && !lastActiveVid.paused){ lastActiveVid.pause(); lastActiveVid = null; }
       lastClipIdx = -1;
     }
 
-    // ── On first frame: schedule audio aligned to this exact moment ──
-    if(!_audioScheduled) _scheduleAudio(Date.now());
-
-    // ── Frame hold clips ──
-    const fhNow = S.cut.clips.find(c => c.type==='frame_hold' && t>=c.start && t<c.start+c.dur);
-    if(fhNow){
-      if(fhNow._imgData && (!fhNow._img || !fhNow._img.complete)){
-        fhNow._img = new Image(); fhNow._img.src = fhNow._imgData;
-      }
-      if(fhNow._img && fhNow._img.complete){
-        // Build filter string for this frame_hold clip at export time t
-        const fhCi = S.cut.clips.indexOf(fhNow);
-        const fhEffects = S.cut.effects[fhCi] || [];
-        const fhFilterParts = [];
-        fhEffects.forEach(ef => {
-          if(ef.visible === false) return;
-          const e = CUT_EFFECTS[ef.i]; if(!e || e.type==='transition') return;
-          const effStart = fhNow.start + (ef.startOffset||0);
-          const effEnd   = effStart + (ef.effectDur !== undefined ? ef.effectDur : fhNow.dur);
-          if(t < effStart || t >= effEnd) return;
-          if(e.type==='range')   fhFilterParts.push(e.prop+'('+ef.v+e.unit+')');
-          else if(e.type==='toggle') fhFilterParts.push(e.filter);
-        });
-        const fhFilter = fhFilterParts.length ? fhFilterParts.join(' ') : 'none';
-        ctx.save();
-        if(fhFilter !== 'none') ctx.filter = fhFilter;
-        ctx.drawImage(fhNow._img, 0, 0, W, H);
-        ctx.filter = 'none';
-        ctx.restore();
-      }
-      if(lastActiveVid && !lastActiveVid.paused) lastActiveVid.pause();
-      if((window._overlays||[]).some(o=>t>=o.startTime&&t<o.endTime) && window.renderOverlaysOnCanvas)
-        window.renderOverlaysOnCanvas(ctx, W, H, t, new Set());
+    // ── Standalone audio clips ──
+    for(const ac of audioOnlyClips){
+      if(S.cut.mutedTracks?.[ac.track]) continue;
+      const a = audioEls[ac.mediaIdx]; if(!a) continue;
+      if(t >= ac.start && t < ac.start + ac.dur){
+        const aT = (ac.fileStart||0) + Math.max(0, t - ac.start);
+        a.muted = false;
+        if(a.paused){ a.currentTime = aT; try{ a.play(); }catch(e){} }
+        else if(Math.abs(a.currentTime - aT) > 0.5) a.currentTime = aT;
+      } else if(!a.paused){ a.pause(); }
     }
 
     // ── Progress ──
     const pct = Math.min(98, Math.round((t / totalDur) * 100));
     bar.style.width = pct + '%';
-    status.textContent = `Rendering: ${pct}% · ${t.toFixed(1)}s / ${totalDur.toFixed(1)}s`;
     const elapsed = (Date.now() - startTs) / 1000;
     const rate = elapsed > 0.5 ? t / elapsed : 1;
-    const rem  = rate > 0 ? (totalDur - t) / rate : 0;
+    const rem = rate > 0 ? (totalDur - t) / rate : 0;
+    status.textContent = `Rendering: ${pct}% · ${t.toFixed(1)}s / ${totalDur.toFixed(1)}s`;
     if(rem > 1) eta.textContent = `~${Math.ceil(rem)}s remaining`;
 
     t += dt;
-
-    // ── Schedule next frame at exact wall-clock time (yield 1ms minimum) ──
+    // Schedule next frame at exact wall-clock target
     const wallTarget = startTs + t * 1000;
-    const delay = Math.max(1, wallTarget - Date.now());
+    const delay = Math.max(0, wallTarget - Date.now());
     setTimeout(renderFrame, delay);
   }
 
-  status.textContent = 'Rendering frames...';
   await renderFrame();
 }
-
 
 
 // ═══════════════════════════════════════
