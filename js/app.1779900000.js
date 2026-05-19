@@ -1126,6 +1126,7 @@ async function startExport(){
     for(const clip of videoClips){
       const buf = _audioBuffers[clip.mediaIdx]; if(!buf) continue;
       if(S.cut.mutedTracks?.[clip.track]) continue;
+      if(clip.volume !== undefined && clip.volume === 0) continue; // clip explicitly silenced
       const vol = clip.volume !== undefined ? Math.min(1, clip.volume) : 1.0; // clip.volume is 0.0-1.0
       const src = _freshCtx.createBufferSource();
       src.buffer = buf; src.playbackRate.value = clip.speed||1;
@@ -1135,7 +1136,19 @@ async function startExport(){
     }
     for(const clip of S.cut.clips.filter(c=>c.type==='audio')){
       const buf = _audioBuffers[clip.mediaIdx]; if(!buf) continue;
+      // Skip if this audio track is muted
       if(S.cut.mutedTracks?.[clip.track]) continue;
+      // Also skip linked audio clips whose parent video track is muted
+      if(clip.linkedToVideo){
+        const parentVid = S.cut.clips.find(v =>
+          v.type==='video' && v.mediaIdx===clip.mediaIdx &&
+          Math.abs(v.start - clip.start) < 1.0
+        );
+        if(parentVid && S.cut.mutedTracks?.[parentVid.track]) continue;
+        // Also skip if parent video clip has volume=0
+        if(parentVid && parentVid.volume !== undefined && parentVid.volume === 0) continue;
+      }
+      if(clip.volume !== undefined && clip.volume === 0) continue; // clip explicitly silenced
       const vol = clip.volume !== undefined ? Math.min(1, clip.volume) : 1.0; // clip.volume is 0.0-1.0
       const src = _freshCtx.createBufferSource();
       src.buffer = buf;
@@ -1184,9 +1197,26 @@ async function startExport(){
         }
       }
 
-      // ── Draw video frame (NO clearRect before draw — prevents black flash) ──
+      // ── Draw video frame with effects (NO clearRect before draw — prevents black flash) ──
       if(vid && vid.readyState >= 2){
+        const _expCi = S.cut.clips.indexOf(clip);
+        const _expEffects = S.cut.effects[_expCi] || [];
+        const _expFilterParts = [];
+        _expEffects.forEach(ef => {
+          if(ef.visible===false) return;
+          const e = CUT_EFFECTS[ef.i]; if(!e||e.type==='transition') return;
+          const es = clip.start+(ef.startOffset||0);
+          const ee = es+(ef.effectDur!==undefined?ef.effectDur:clip.dur);
+          if(t<es||t>=ee) return;
+          if(e.type==='range')   _expFilterParts.push(e.prop+'('+ef.v+e.unit+')');
+          else if(e.type==='toggle') _expFilterParts.push(e.filter);
+        });
+        const _expFilter = _expFilterParts.length ? _expFilterParts.join(' ') : 'none';
+        ctx.save();
+        if(_expFilter !== 'none') ctx.filter = _expFilter;
         try{ ctx.drawImage(vid, 0, 0, W, H); }catch(e){}
+        ctx.filter = 'none';
+        ctx.restore();
       }
       // ── Draw overlays on top ──
       if((window._overlays||[]).some(o=>t>=o.startTime&&t<o.endTime) && window.renderOverlaysOnCanvas)
@@ -1209,7 +1239,27 @@ async function startExport(){
       if(fhNow._imgData && (!fhNow._img || !fhNow._img.complete)){
         fhNow._img = new Image(); fhNow._img.src = fhNow._imgData;
       }
-      if(fhNow._img && fhNow._img.complete) ctx.drawImage(fhNow._img, 0, 0, W, H);
+      if(fhNow._img && fhNow._img.complete){
+        // Build filter string for this frame_hold clip at export time t
+        const fhCi = S.cut.clips.indexOf(fhNow);
+        const fhEffects = S.cut.effects[fhCi] || [];
+        const fhFilterParts = [];
+        fhEffects.forEach(ef => {
+          if(ef.visible === false) return;
+          const e = CUT_EFFECTS[ef.i]; if(!e || e.type==='transition') return;
+          const effStart = fhNow.start + (ef.startOffset||0);
+          const effEnd   = effStart + (ef.effectDur !== undefined ? ef.effectDur : fhNow.dur);
+          if(t < effStart || t >= effEnd) return;
+          if(e.type==='range')   fhFilterParts.push(e.prop+'('+ef.v+e.unit+')');
+          else if(e.type==='toggle') fhFilterParts.push(e.filter);
+        });
+        const fhFilter = fhFilterParts.length ? fhFilterParts.join(' ') : 'none';
+        ctx.save();
+        if(fhFilter !== 'none') ctx.filter = fhFilter;
+        ctx.drawImage(fhNow._img, 0, 0, W, H);
+        ctx.filter = 'none';
+        ctx.restore();
+      }
       if(lastActiveVid && !lastActiveVid.paused) lastActiveVid.pause();
       if((window._overlays||[]).some(o=>t>=o.startTime&&t<o.endTime) && window.renderOverlaysOnCanvas)
         window.renderOverlaysOnCanvas(ctx, W, H, t, new Set());
