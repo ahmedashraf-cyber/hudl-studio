@@ -1108,151 +1108,143 @@ async function startExport(){
     notify('✓ Export downloaded — '+fname+' ('+(mimeType.includes('mp4')?'MP4':'WebM')+')','#3fb950');
   };
 
-  recorder.start(500);
-  status.textContent='Preparing audio...';
+  recorder.start(100); // 100ms chunks for low latency
+  status.textContent='Scheduling audio...';
 
-  await new Promise(r => setTimeout(r, 100));
-
-  // ── Schedule AudioBufferSourceNodes on the FRESH context ──
+  // ── Schedule AudioBufferSourceNodes on the FRESH context immediately after recorder starts ──
+  let _videoStartWallMs = 0; // will be set when first frame renders
   if(_freshCtx && _freshGain){
-    const _t0 = _freshCtx.currentTime + 0.05;
+    // We'll set audio start precisely aligned with when the first video frame draws
+    // For now, schedule with a short pre-roll; renderFrame will refine
+    window._freshCtxRef = _freshCtx;
+    window._freshGainRef = _freshGain;
+    window._audioBuffersRef = _audioBuffers;
+  }
+
+  const dt = 1 / fps;
+  let t = 0;
+  let lastActiveVid = null;
+  let lastClipIdx   = -1;
+  let _audioScheduled = false;
+
+  function _scheduleAudio(wallStartMs){
+    if(_audioScheduled || !_freshCtx || !_freshGain) return;
+    _audioScheduled = true;
+    // _freshCtx.currentTime at the moment the first frame was drawn
+    const _t0 = _freshCtx.currentTime + 0.01;
     for(const clip of videoClips){
       const buf = _audioBuffers[clip.mediaIdx]; if(!buf) continue;
       if(S.cut.mutedTracks?.[clip.track]) continue;
+      const vol = clip.volume !== undefined ? Math.min(1,clip.volume/100) : 1;
       const src = _freshCtx.createBufferSource();
       src.buffer = buf; src.playbackRate.value = clip.speed||1;
-      const gn = _freshCtx.createGain(); gn.gain.value = clip.volume!==undefined?Math.min(1,clip.volume/100):1;
+      const gn = _freshCtx.createGain(); gn.gain.value = vol;
       src.connect(gn); gn.connect(_freshGain);
       src.start(_t0 + clip.start, clip.fileStart||0, clip.dur*(clip.speed||1));
     }
     for(const clip of S.cut.clips.filter(c=>c.type==='audio')){
       const buf = _audioBuffers[clip.mediaIdx]; if(!buf) continue;
       if(S.cut.mutedTracks?.[clip.track]) continue;
+      const vol = clip.volume !== undefined ? Math.min(1,clip.volume/100) : 1;
       const src = _freshCtx.createBufferSource();
       src.buffer = buf;
-      const gn = _freshCtx.createGain(); gn.gain.value = clip.volume!==undefined?Math.min(1,clip.volume/100):1;
+      const gn = _freshCtx.createGain(); gn.gain.value = vol;
       src.connect(gn); gn.connect(_freshGain);
       src.start(_t0 + clip.start, clip.fileStart||0, clip.dur);
     }
   }
 
-  status.textContent='Rendering frames...';
-
-  const dt=1/fps;
-  let t=0;
-  let lastActiveVid=null;
-  const startTs=Date.now();
-
-  // ── Smooth render: let video play naturally, capture frames at real-time rate ──
-  // Seek once to start, then just drawImage() each frame — no per-frame seeks
-  let lastClipIdx = -1;
+  const startTs = Date.now();
 
   async function renderFrame(){
-    if(t >= totalDur){  // exact stop at last asset
-      if(lastActiveVid && !lastActiveVid.paused){ lastActiveVid.pause(); }
-      Object.values(audioEls).forEach(a=>{ try{a.pause();}catch(e){} });
-      if(recorder.state!=='inactive') recorder.stop();
+    if(t >= totalDur){
+      if(lastActiveVid && !lastActiveVid.paused) lastActiveVid.pause();
+      if(recorder.state !== 'inactive') recorder.stop();
       return;
     }
 
-    // Frame hold: draw frozen frame independently of source clip
-    const fhNow = S.cut.clips.find(c => c.type==='frame_hold' && t>=c.start && t<c.start+c.dur);
-    if(fhNow){
-      if(fhNow._imgData && (!fhNow._img || !fhNow._img.complete)){
-        fhNow._img = new Image(); fhNow._img.src = fhNow._imgData;
-      }
-      ctx.fillStyle='#000'; ctx.fillRect(0,0,W,H);
-      // 1. Draw frozen frame
-      if(fhNow._img && fhNow._img.complete) ctx.drawImage(fhNow._img,0,0,W,H);
-      if(lastActiveVid && !lastActiveVid.paused) lastActiveVid.pause();
-      // 2. Render overlays on top of frozen frame during export
-      const fhActiveOvs = (window._overlays||[]).filter(o => t>=o.startTime && t<o.endTime);
-      if(fhActiveOvs.length && window.renderOverlaysOnCanvas){
-        window.renderOverlaysOnCanvas(ctx, W, H, t, new Set());
-      }
-      const pct2=Math.min(98,Math.round((t/totalDur)*100));
-      bar.style.width=pct2+'%';
-      status.textContent='Rendering: '+pct2+'% (Frame Hold)';
-      t+=dt;
-      const wt2=startTs+t*1000; const d2=Math.max(0,wt2-Date.now());
-      setTimeout(renderFrame,d2); return;
-    }
-
+    // ── Find active clip at time t ──
     const clip = videoClips.find(c => t >= c.start && t < c.start + c.dur);
 
     if(clip){
-      // Use drawEls[mediaIdx] - pre-loaded, pre-connected to AudioContext
-      // No src changes during rendering = AudioContext connection stays alive
-      const vid = drawEls[clip.mediaIdx];
+      const vid     = drawEls[clip.mediaIdx];
       const clipIdx = videoClips.indexOf(clip);
 
       if(clipIdx !== lastClipIdx){
-        // Pause previous clip's element
+        // Clip transition: pause previous, seek new one
         if(lastActiveVid && lastActiveVid !== vid && !lastActiveVid.paused) lastActiveVid.pause();
         lastActiveVid = vid;
-        lastClipIdx = clipIdx;
+        lastClipIdx   = clipIdx;
 
         if(vid){
-          const _spd = clip.speed || 1;
-          const fileTime = (clip.fileStart||0) + Math.max(0,(t - clip.start)*_spd);
-          vid.muted = true;  // audio handled by AudioBufferSourceNode, not this element
-          vid.volume = 0;    // belt+suspenders: mute at element level too
+          const _spd      = clip.speed || 1;
+          const fileTime  = (clip.fileStart||0) + Math.max(0,(t - clip.start)*_spd);
+          vid.muted        = true;
+          vid.volume       = 0;
           vid.playbackRate = _spd;
-          vid.currentTime = fileTime;
-          await new Promise(r=>{
-            const h=()=>{ vid.removeEventListener('seeked',h); r(); };
+          vid.currentTime  = fileTime;
+          // Wait for seek to complete (max 2s)
+          await new Promise(r => {
+            const h = () => { vid.removeEventListener('seeked',h); r(); };
             vid.addEventListener('seeked', h);
-            setTimeout(r, 3000);
+            setTimeout(r, 2000);
           });
           try{ await vid.play(); }catch(e){}
         }
       }
 
-      // Draw frame — re-sync currentTime each frame to prevent stale frames on heavy exports
-      ctx.fillStyle='#000'; ctx.fillRect(0,0,W,H);
-      if(vid && vid.readyState>=2){
-        // Check if video drifted more than 1 frame from expected position
-        const _spd2 = clip.speed || 1;
-        const _expectedFileT = (clip.fileStart||0) + Math.max(0, (t - clip.start) * _spd2);
-        if(!S.cut.playing && Math.abs(vid.currentTime - _expectedFileT) > dt * 2 * _spd2){
-          vid.currentTime = _expectedFileT; // re-sync if drifted
-        }
-        try{ ctx.drawImage(vid,0,0,W,H); }catch(e){}
+      // ── Draw video frame (NO clearRect before draw — prevents black flash) ──
+      if(vid && vid.readyState >= 2){
+        try{ ctx.drawImage(vid, 0, 0, W, H); }catch(e){}
       }
-      if((window._overlays||[]).some(o=>t>=o.startTime&&t<o.endTime)&&window.renderOverlaysOnCanvas)
-        window.renderOverlaysOnCanvas(ctx,W,H,t,new Set());
+      // ── Draw overlays on top ──
+      if((window._overlays||[]).some(o=>t>=o.startTime&&t<o.endTime) && window.renderOverlaysOnCanvas)
+        window.renderOverlaysOnCanvas(ctx, W, H, t, new Set());
 
     } else {
+      // No clip at this time — black frame
       ctx.fillStyle = '#000';
       ctx.fillRect(0, 0, W, H);
       if(lastActiveVid && !lastActiveVid.paused){ lastActiveVid.pause(); lastActiveVid = null; }
       lastClipIdx = -1;
     }
 
-    // ── Standalone audio: handled by pre-scheduled AudioBufferSourceNodes ──
-    // No per-frame element manipulation needed — PCM buffers run independently
+    // ── On first frame: schedule audio aligned to this exact moment ──
+    if(!_audioScheduled) _scheduleAudio(Date.now());
+
+    // ── Frame hold clips ──
+    const fhNow = S.cut.clips.find(c => c.type==='frame_hold' && t>=c.start && t<c.start+c.dur);
+    if(fhNow){
+      if(fhNow._imgData && (!fhNow._img || !fhNow._img.complete)){
+        fhNow._img = new Image(); fhNow._img.src = fhNow._imgData;
+      }
+      if(fhNow._img && fhNow._img.complete) ctx.drawImage(fhNow._img, 0, 0, W, H);
+      if(lastActiveVid && !lastActiveVid.paused) lastActiveVid.pause();
+      if((window._overlays||[]).some(o=>t>=o.startTime&&t<o.endTime) && window.renderOverlaysOnCanvas)
+        window.renderOverlaysOnCanvas(ctx, W, H, t, new Set());
+    }
 
     // ── Progress ──
     const pct = Math.min(98, Math.round((t / totalDur) * 100));
     bar.style.width = pct + '%';
+    status.textContent = `Rendering: ${pct}% · ${t.toFixed(1)}s / ${totalDur.toFixed(1)}s`;
     const elapsed = (Date.now() - startTs) / 1000;
     const rate = elapsed > 0.5 ? t / elapsed : 1;
-    const rem = rate > 0 ? (totalDur - t) / rate : 0;
-    status.textContent = `Rendering: ${pct}% · ${t.toFixed(1)}s / ${totalDur.toFixed(1)}s`;
+    const rem  = rate > 0 ? (totalDur - t) / rate : 0;
     if(rem > 1) eta.textContent = `~${Math.ceil(rem)}s remaining`;
 
     t += dt;
-    // ── Frame scheduling: use small setTimeout to yield to browser event loop ──
-    // This prevents main thread starvation on heavy projects while keeping
-    // the MediaRecorder fed at a steady rate.
-    // Target real-time: schedule at exact wall-clock time for the next frame.
+
+    // ── Schedule next frame at exact wall-clock time (yield 1ms minimum) ──
     const wallTarget = startTs + t * 1000;
-    const delay = Math.max(1, wallTarget - Date.now()); // min 1ms so event loop can breathe
+    const delay = Math.max(1, wallTarget - Date.now());
     setTimeout(renderFrame, delay);
   }
 
+  status.textContent = 'Rendering frames...';
   await renderFrame();
 }
+
 
 
 // ═══════════════════════════════════════
