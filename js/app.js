@@ -875,30 +875,21 @@ function showExportModal(){
     const _dest = _ctx.createMediaStreamDestination();
     _gain.connect(_dest);
 
-    // Step 4: Create masterVid and connect to AudioContext
-    const _vclips = (S?.cut?.clips||[]).filter(c=>c.type==='video');
-    const _firstUrl = _vclips.length ? S?.cut?.media?.[_vclips[0].mediaIdx]?.url : null;
-    const _mv = document.createElement('video');
-    _mv.muted = false; _mv.volume = 1.0; _mv.style.display='none';
-    if(_firstUrl) _mv.src = _firstUrl;
-    document.body.appendChild(_mv);
-
-    // Connect element to AudioContext BEFORE play()
-    const _mvSrc = _ctx.createMediaElementSource(_mv);
-    _mvSrc.connect(_gain);
-
-    // Step 5: play() in gesture = unlocks AudioContext (not for audio output)
-    // _mv is MUTED - drawEls will be the actual audio sources during export
-    // We only need _mv to trigger the user-gesture unlock
-    _mv.muted = true; // mute: only used to unlock AudioContext, not for audio output
-    const _playP = _mv.play();
-    if(_playP) _playP.catch(()=>{});
+    // Step 4: Unlock AudioContext using a silent oscillator (no video content = no ghost audio)
+    // We do NOT connect any video element to AudioContext here — only PCM buffers during export
+    const _silentOsc = _ctx.createOscillator();
+    const _silentGain = _ctx.createGain();
+    _silentGain.gain.value = 0; // completely silent
+    _silentOsc.connect(_silentGain);
+    _silentGain.connect(_gain);
+    _silentOsc.start();
+    _silentOsc.stop(_ctx.currentTime + 0.01); // stop after 10ms — just enough to unlock
 
     window._exportAudioCtx   = _ctx;
     window._exportMasterGain = _gain;
     window._exportAudioDest  = _dest;
-    window._exportMasterVid  = _mv;
-    window._exportMvSrc      = _mvSrc;
+    window._exportMasterVid  = null; // no video element — no ghost audio
+    window._exportMvSrc      = null;
 
     // These are now populated by the AudioContext destination
     window._exportAudioStream = _dest.stream;
@@ -1135,7 +1126,7 @@ async function startExport(){
     for(const clip of videoClips){
       const buf = _audioBuffers[clip.mediaIdx]; if(!buf) continue;
       if(S.cut.mutedTracks?.[clip.track]) continue;
-      const vol = clip.volume !== undefined ? Math.min(1,clip.volume/100) : 1;
+      const vol = clip.volume !== undefined ? Math.min(1, clip.volume) : 1.0; // clip.volume is 0.0-1.0
       const src = _freshCtx.createBufferSource();
       src.buffer = buf; src.playbackRate.value = clip.speed||1;
       const gn = _freshCtx.createGain(); gn.gain.value = vol;
@@ -1145,7 +1136,7 @@ async function startExport(){
     for(const clip of S.cut.clips.filter(c=>c.type==='audio')){
       const buf = _audioBuffers[clip.mediaIdx]; if(!buf) continue;
       if(S.cut.mutedTracks?.[clip.track]) continue;
-      const vol = clip.volume !== undefined ? Math.min(1,clip.volume/100) : 1;
+      const vol = clip.volume !== undefined ? Math.min(1, clip.volume) : 1.0; // clip.volume is 0.0-1.0
       const src = _freshCtx.createBufferSource();
       src.buffer = buf;
       const gn = _freshCtx.createGain(); gn.gain.value = vol;
