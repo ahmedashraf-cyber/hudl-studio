@@ -1109,21 +1109,39 @@ async function startExport(){
     }));
   }
 
-  // Standalone audio clips are connected via AudioContext (below) - no captureStream needed
-
-  // Also connect standalone audio elements to the AudioContext master bus
-  if(_audioCtx && _masterGain){
+  // Build final stream: canvas video + AudioContext master bus output
+  // The _audioDest from showExportModal may have expired after long preload.
+  // Recreate a fresh context + destination to guarantee live audio tracks.
+  let _finalAudioCtx = _audioCtx, _finalGain = _masterGain, _finalDest = _audioDest;
+  const _destAlive = _audioDest && _audioDest.stream.getAudioTracks().some(t=>t.readyState==='live');
+  if(!_destAlive){
+    try{
+      _finalAudioCtx = new (window.AudioContext||window.webkitAudioContext)({sampleRate:48000});
+      await _finalAudioCtx.resume();
+      _finalGain = _finalAudioCtx.createGain(); _finalGain.gain.value = 1.0;
+      _finalDest = _finalAudioCtx.createMediaStreamDestination();
+      _finalGain.connect(_finalDest);
+      // Re-connect audio elements to the new context
+      for(const a of Object.values(audioEls)){
+        try{ const s=_finalAudioCtx.createMediaElementSource(a); s.connect(_finalGain); }catch(e){}
+      }
+      // Update window references so renderFrame volume control works
+      window._exportAudioCtx   = _finalAudioCtx;
+      window._exportMasterGain = _finalGain;
+      window._exportAudioDest  = _finalDest;
+      console.log('[Export] Fresh AudioContext created — old one had ended tracks');
+    }catch(e){ console.warn('[Export] Fresh AudioContext failed:', e); }
+  } else {
+    // Existing context alive — reconnect audio elements
     for(const a of Object.values(audioEls)){
-      try{ const _as=_audioCtx.createMediaElementSource(a); _as.connect(_masterGain); }catch(e){}
+      try{ const s=_finalAudioCtx.createMediaElementSource(a); s.connect(_finalGain); }catch(e){}
     }
   }
-  // Build final stream: canvas video + AudioContext master bus output
-  // Single clean audio stream from AudioContext - no duplicates
   const videoStream = canvas.captureStream(fps);
-  const _audioTracks = _audioDest ? _audioDest.stream.getAudioTracks() : [];
-  console.log('Final export: videoTracks='+videoStream.getVideoTracks().length+' audioTracks='+_audioTracks.length);
-  const finalStream = _audioTracks.length > 0
-    ? new MediaStream([...videoStream.getVideoTracks(), ..._audioTracks])
+  const _liveAudioTracks = _finalDest ? _finalDest.stream.getAudioTracks().filter(t=>t.readyState==='live') : [];
+  console.log('Final export: video='+videoStream.getVideoTracks().length+' audio='+_liveAudioTracks.length);
+  const finalStream = _liveAudioTracks.length > 0
+    ? new MediaStream([...videoStream.getVideoTracks(), ..._liveAudioTracks])
     : videoStream;
 
   // drawEls is now the primary source for both video drawing and audio
