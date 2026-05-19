@@ -1067,21 +1067,46 @@ async function startExport(){
   // drawEls[firstClip.mediaIdx] is already loaded and connected to AudioContext
   // No need to load masterVid separately
 
-  // Preload standalone audio-only clips
+  // Preload standalone audio-only clips — parallel, proper addEventListener
   const audioOnlyClips = S.cut.clips
     .filter(c=>c.type==='audio'&&!c.linkedToVideo)
     .sort((a,b)=>a.start-b.start);
   const audioEls = {};
-  for(const clip of audioOnlyClips){
-    const item = S.cut.media[clip.mediaIdx];
-    if(!item?.url || audioEls[clip.mediaIdx]) continue;
-    if(S.cut.mutedTracks?.[clip.track]) continue;
-    const a = document.createElement('audio');
-    a.src=item.url; a.preload='auto';
-    a.muted=false; a.volume=1.0; a.style.display='none';
-    document.body.appendChild(a);
-    await new Promise(r=>{a.oncanplaythrough=r;a.onerror=r;setTimeout(r,8000);});
-    audioEls[clip.mediaIdx] = a;
+  const _audioUnique = [...new Set(audioOnlyClips.map(c=>c.mediaIdx))];
+  if(_audioUnique.length > 0){
+    status.textContent = 'Pre-loading audio: 0/' + _audioUnique.length;
+    let _aLoaded = 0;
+    await Promise.all(_audioUnique.map(mIdx => {
+      const item = S.cut.media[mIdx];
+      if(!item?.url) return Promise.resolve();
+      const clip = audioOnlyClips.find(c=>c.mediaIdx===mIdx);
+      if(clip && S.cut.mutedTracks?.[clip.track]) return Promise.resolve();
+      const a = document.createElement('audio');
+      a.src = item.url; a.preload = 'auto';
+      a.muted = false; a.volume = 1.0; a.style.display = 'none';
+      document.body.appendChild(a);
+      audioEls[mIdx] = a;
+      return new Promise(r => {
+        if(a.readyState >= 2){ _aLoaded++; status.textContent='Pre-loading audio: '+_aLoaded+'/'+_audioUnique.length; r(); return; }
+        let _aDone = false;
+        const done = () => {
+          if(_aDone) return; _aDone = true;
+          a.removeEventListener('canplaythrough', done);
+          a.removeEventListener('loadeddata',     done);
+          a.removeEventListener('loadedmetadata', done);
+          a.removeEventListener('error',          done);
+          _aLoaded++;
+          status.textContent = 'Pre-loading audio: ' + _aLoaded + '/' + _audioUnique.length;
+          r();
+        };
+        a.addEventListener('canplaythrough', done);
+        a.addEventListener('loadeddata',     done);
+        a.addEventListener('loadedmetadata', done);
+        a.addEventListener('error',          done);
+        setTimeout(done, 8000);
+        a.load();
+      });
+    }));
   }
 
   // Standalone audio clips are connected via AudioContext (below) - no captureStream needed
