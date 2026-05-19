@@ -5717,9 +5717,23 @@ function setupPlayheadDrag(){
     ruler._listenerAttached=true;
     function _getRulerTime(ev){ const _sr=scroll.getBoundingClientRect(); return (ev.clientX-_sr.left+scroll.scrollLeft)/PPS; }
     ruler.addEventListener('mousedown',function(e){
-      S.cut.ph=Math.max(0,Math.min(Math.max(S.proj.dur,S.cut.clips.length?Math.max(...S.cut.clips.map(c=>c.start+c.dur)):0),_getRulerTime(e)));
+      const _maxPh = Math.max(S.proj.dur, S.cut.clips.length?Math.max(...S.cut.clips.map(c=>c.start+c.dur)):0);
+      S.cut.ph = Math.max(0, Math.min(_maxPh, _getRulerTime(e)));
       window._seekLockUntil = Date.now() + 800;
-      updateCutPH();syncCutVid();
+      // Direct seek with speed compensation — same formula as drag handler
+      const _mv_click = $('cut-main-vid');
+      if(_mv_click){
+        const nc = S.cut.clips.find(c => (c.type==='video'||c.type==='image') && S.cut.ph >= c.start && S.cut.ph < c.start + Math.max(c.dur, 0.1));
+        if(nc){
+          const _it = S.cut.media[nc.mediaIdx];
+          if(_it?.url){
+            if(_mv_click.dataset.mediaIdx !== String(nc.mediaIdx)){ _mv_click.dataset.mediaIdx = String(nc.mediaIdx); _mv_click.src = _it.url; }
+            _mv_click.dataset.clipIdx = String(S.cut.clips.indexOf(nc));
+            _mv_click.currentTime = (nc.fileStart||0) + Math.max(0, (S.cut.ph - nc.start) * (nc.speed||1));
+          }
+        }
+      }
+      updateCutPH(); syncCutVid();
       dragging=true;
       S.cut._scrubbing=true;
       const mv2=$('cut-main-vid');
