@@ -1042,9 +1042,9 @@ async function startExport(){
       };
       v.addEventListener('loadeddata',     done); // readyState=2: first frame available
       v.addEventListener('canplay',        done); // readyState=3: can start playing
-      v.addEventListener('loadedmetadata', done); // readyState=1: at least metadata ready
       v.addEventListener('error',          done); // always unblock on error
-      setTimeout(done, 10000);                    // 10s absolute hard cap per element
+      // NO loadedmetadata — that fires at readyState=1 which is too early for drawImage
+      setTimeout(done, 10000);                    // 10s hard cap — always unblock
       v.load();
     });
   }));
@@ -1117,22 +1117,20 @@ async function startExport(){
   if(!_destAlive){
     try{
       _finalAudioCtx = new (window.AudioContext||window.webkitAudioContext)({sampleRate:48000});
-      await _finalAudioCtx.resume();
+      // resume() with timeout — never await indefinitely
+      await Promise.race([_finalAudioCtx.resume(), new Promise(r=>setTimeout(r,1000))]);
       _finalGain = _finalAudioCtx.createGain(); _finalGain.gain.value = 1.0;
       _finalDest = _finalAudioCtx.createMediaStreamDestination();
       _finalGain.connect(_finalDest);
-      // Re-connect audio elements to the new context
       for(const a of Object.values(audioEls)){
         try{ const s=_finalAudioCtx.createMediaElementSource(a); s.connect(_finalGain); }catch(e){}
       }
-      // Update window references so renderFrame volume control works
       window._exportAudioCtx   = _finalAudioCtx;
       window._exportMasterGain = _finalGain;
       window._exportAudioDest  = _finalDest;
-      console.log('[Export] Fresh AudioContext created — old one had ended tracks');
-    }catch(e){ console.warn('[Export] Fresh AudioContext failed:', e); }
+      console.log('[Export] Fresh AudioContext created, state:', _finalAudioCtx.state);
+    }catch(e){ console.warn('[Export] Fresh AudioContext failed:', e); _finalDest = null; }
   } else {
-    // Existing context alive — reconnect audio elements
     for(const a of Object.values(audioEls)){
       try{ const s=_finalAudioCtx.createMediaElementSource(a); s.connect(_finalGain); }catch(e){}
     }
