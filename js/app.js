@@ -1005,35 +1005,49 @@ async function startExport(){
   // Persistent per-media video elements - stay loaded, each connected to AudioContext
   // No src changes during rendering = AudioContext connections never break
   const drawEls = {}; // mediaIdx -> <video> element (MUTED, drawing only)
-  status.textContent='Pre-loading media...';
-  const _uniqueIdxs = [...new Set(videoClips.map(c=>c.mediaIdx))];
+  status.textContent = 'Pre-loading media...';
+  const _uniqueIdxs = [...new Set(videoClips.map(c => c.mediaIdx))];
+  let _loadedCount = 0;
 
-  // Load ALL elements in parallel — not serial — so 20 clips take 5s max, not 100s
   await Promise.all(_uniqueIdxs.map(mIdx => {
     const item = S.cut.media[mIdx];
-    if(!item?.url) return Promise.resolve();
+    if(!item?.url){
+      console.warn('[Export] mediaIdx', mIdx, 'has no URL — clip will render black');
+      return Promise.resolve();
+    }
     const v = document.createElement('video');
-    v.muted = true; v.volume = 0; v.preload='metadata';
+    v.muted = true; v.volume = 0;
+    v.preload = 'auto'; // MUST be 'auto' — 'metadata' never fires loadeddata/canplay
     v.style.display = 'none'; v.playsInline = true;
     v.src = item.url;
     document.body.appendChild(v);
-    drawEls[mIdx] = v; // register immediately so renderFrame can use it
+    drawEls[mIdx] = v;
+
     return new Promise(r => {
-      if(v.readyState >= 2){ r(); return; }
+      if(v.readyState >= 2){
+        _loadedCount++;
+        status.textContent = 'Pre-loading: ' + _loadedCount + '/' + _uniqueIdxs.length;
+        r(); return;
+      }
+      let _done = false;
       const done = () => {
-        v.removeEventListener('loadeddata', done);
-        v.removeEventListener('canplay',    done);
-        v.removeEventListener('error',      done);
+        if(_done) return; _done = true;
+        v.removeEventListener('loadeddata',     done);
+        v.removeEventListener('canplay',        done);
+        v.removeEventListener('loadedmetadata', done);
+        v.removeEventListener('error',          done);
+        _loadedCount++;
+        status.textContent = 'Pre-loading: ' + _loadedCount + '/' + _uniqueIdxs.length;
         r();
       };
-      v.addEventListener('loadeddata', done);
-      v.addEventListener('canplay',    done);
-      v.addEventListener('error',      done);
-      setTimeout(done, 8000); // 8s hard cap per element
+      v.addEventListener('loadeddata',     done); // readyState=2: first frame available
+      v.addEventListener('canplay',        done); // readyState=3: can start playing
+      v.addEventListener('loadedmetadata', done); // readyState=1: at least metadata ready
+      v.addEventListener('error',          done); // always unblock on error
+      setTimeout(done, 10000);                    // 10s absolute hard cap per element
       v.load();
     });
   }));
-  status.textContent='Pre-loading: '+Object.keys(drawEls).length+'/'+_uniqueIdxs.length+' ready';
 
   // masterVid is from showExportModal (already muted, only used for AudioContext unlock)
   // drawEls handle all video+audio during rendering
