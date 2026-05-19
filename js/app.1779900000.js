@@ -1045,20 +1045,24 @@ async function startExport(){
   // No need to load masterVid separately
 
   // Preload standalone audio-only clips
+  // ALL audio clips (including voiceovers/linked tracks) — key by clip index not mediaIdx
+  // so multiple clips using the same file each get their own element
   const audioOnlyClips = S.cut.clips
-    .filter(c=>c.type==='audio'&&!c.linkedToVideo)
-    .sort((a,b)=>a.start-b.start);
-  const audioEls = {};
-  for(const clip of audioOnlyClips){
+    .filter(c => c.type==='audio')
+    .sort((a,b) => a.start-b.start);
+  const audioEls = {}; // clipIndex -> <audio> element
+  for(let _aci=0; _aci<audioOnlyClips.length; _aci++){
+    const clip = audioOnlyClips[_aci];
     const item = S.cut.media[clip.mediaIdx];
-    if(!item?.url || audioEls[clip.mediaIdx]) continue;
+    if(!item?.url) continue;
     if(S.cut.mutedTracks?.[clip.track]) continue;
     const a = document.createElement('audio');
-    a.src=item.url; a.preload='auto';
-    a.muted=false; a.volume=1.0; a.style.display='none';
+    a.src = item.url; a.preload='auto';
+    a.muted = false; a.volume = (clip.volume !== undefined ? Math.min(1, clip.volume/100) : 1.0);
+    a.style.display = 'none';
     document.body.appendChild(a);
-    await new Promise(r=>{a.oncanplaythrough=r;a.onerror=r;setTimeout(r,8000);});
-    audioEls[clip.mediaIdx] = a;
+    await new Promise(r=>{ a.oncanplaythrough=r; a.onerror=r; setTimeout(r,8000); });
+    audioEls[_aci] = a;
   }
 
   // Standalone audio clips are connected via AudioContext (below) - no captureStream needed
@@ -1195,9 +1199,17 @@ async function startExport(){
         }
       }
 
-      // Draw frame
+      // Draw frame — re-sync currentTime each frame to prevent stale frames on heavy exports
       ctx.fillStyle='#000'; ctx.fillRect(0,0,W,H);
-      if(vid && vid.readyState>=2) try{ ctx.drawImage(vid,0,0,W,H); }catch(e){}
+      if(vid && vid.readyState>=2){
+        // Check if video drifted more than 1 frame from expected position
+        const _spd2 = clip.speed || 1;
+        const _expectedFileT = (clip.fileStart||0) + Math.max(0, (t - clip.start) * _spd2);
+        if(!S.cut.playing && Math.abs(vid.currentTime - _expectedFileT) > dt * 2 * _spd2){
+          vid.currentTime = _expectedFileT; // re-sync if drifted
+        }
+        try{ ctx.drawImage(vid,0,0,W,H); }catch(e){}
+      }
       if((window._overlays||[]).some(o=>t>=o.startTime&&t<o.endTime)&&window.renderOverlaysOnCanvas)
         window.renderOverlaysOnCanvas(ctx,W,H,t,new Set());
 
@@ -1209,12 +1221,14 @@ async function startExport(){
     }
 
     // ── Standalone audio clips ──
-    for(const ac of audioOnlyClips){
+    for(let _aci2=0; _aci2<audioOnlyClips.length; _aci2++){
+      const ac = audioOnlyClips[_aci2];
       if(S.cut.mutedTracks?.[ac.track]) continue;
-      const a = audioEls[ac.mediaIdx]; if(!a) continue;
+      const a = audioEls[_aci2]; if(!a) continue;
       if(t >= ac.start && t < ac.start + ac.dur){
         const aT = (ac.fileStart||0) + Math.max(0, t - ac.start);
         a.muted = false;
+        a.volume = (ac.volume !== undefined ? Math.min(1, ac.volume/100) : 1.0);
         if(a.paused){ a.currentTime = aT; try{ a.play(); }catch(e){} }
         else if(Math.abs(a.currentTime - aT) > 0.5) a.currentTime = aT;
       } else if(!a.paused){ a.pause(); }
@@ -1230,9 +1244,12 @@ async function startExport(){
     if(rem > 1) eta.textContent = `~${Math.ceil(rem)}s remaining`;
 
     t += dt;
-    // Schedule next frame at exact wall-clock target
+    // ── Frame scheduling: use small setTimeout to yield to browser event loop ──
+    // This prevents main thread starvation on heavy projects while keeping
+    // the MediaRecorder fed at a steady rate.
+    // Target real-time: schedule at exact wall-clock time for the next frame.
     const wallTarget = startTs + t * 1000;
-    const delay = Math.max(0, wallTarget - Date.now());
+    const delay = Math.max(1, wallTarget - Date.now()); // min 1ms so event loop can breathe
     setTimeout(renderFrame, delay);
   }
 
