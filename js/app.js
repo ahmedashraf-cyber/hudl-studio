@@ -85,7 +85,7 @@ async function autoSave() {
         effects: S.cut.effects,
         videoTracks: S.cut.videoTracks,
         audioTracks: S.cut.audioTracks,
-        // Save media metadata only (blob URLs can't be persisted, user re-imports)
+        overlays: (window._overlays || []).map(o => ({...o, _img: undefined, _imgData: undefined})),
         media: S.cut.media.map(m => ({
           name: m.name, type: m.type,
           duration: m.duration || 0,
@@ -317,6 +317,8 @@ window.createNewProject = async function() {
     // Reset cut state for fresh project
     S.cut = { clips:[], media:[], effects:{}, sel:null, ph:0, playing:false,
               videoTracks:2, audioTracks:2, tick:null, _hist:[], _histIdx:-1 };
+    window._overlays = [];
+    window._overlayIdCounter = 0;
     S.projects.unshift(project);
     closeNPModal();
     openApp(appType);
@@ -380,6 +382,11 @@ window.openProject = async function(id) {
       media:       restoredMedia,
       sel: null, ph: 0, playing: false, tick: null, _hist: [], _histIdx: -1
     };
+    // Restore overlays
+    window._overlays = (cs.overlays || []).map(o => ({...o, _img: undefined, _imgData: undefined}));
+    window._overlayIdCounter = window._overlays.reduce((max, o) => {
+      const n = parseInt((o.id||'').replace('ov_',''))||0; return Math.max(max,n);
+    }, window._overlayIdCounter||0);
 
     openApp(project.appType || 'cut');
     const missingFiles = restoredMedia.filter(m => !m.url).length;
@@ -641,6 +648,7 @@ window.doSave = async function() {
         effects: S.cut.effects,
         videoTracks: S.cut.videoTracks,
         audioTracks: S.cut.audioTracks,
+        overlays: (window._overlays || []).map(o => ({...o, _img: undefined, _imgData: undefined})),
         media: S.cut.media.map(m => ({
           name: m.name, type: m.type,
           duration: m.duration || 0,
@@ -5726,7 +5734,7 @@ function setupPlayheadDrag(){
         const mv3=$('cut-main-vid');
         if(mv3){
           const nc=S.cut.clips.find(c=>c.type==='video'&&S.cut.ph>=c.start&&S.cut.ph<c.start+c.dur);
-          if(nc){const item3=S.cut.media[nc.mediaIdx];if(item3?.url){if(mv3.dataset.mediaIdx!==String(nc.mediaIdx)){mv3.dataset.mediaIdx=String(nc.mediaIdx);mv3.src=item3.url;}mv3.dataset.clipIdx=String(S.cut.clips.indexOf(nc));mv3.currentTime=(nc.fileStart||0)+Math.max(0,S.cut.ph-nc.start);mv3.style.display='block';}}
+          if(nc){const item3=S.cut.media[nc.mediaIdx];if(item3?.url){if(mv3.dataset.mediaIdx!==String(nc.mediaIdx)){mv3.dataset.mediaIdx=String(nc.mediaIdx);mv3.src=item3.url;}mv3.dataset.clipIdx=String(S.cut.clips.indexOf(nc));mv3.currentTime=(nc.fileStart||0)+Math.max(0,(S.cut.ph-nc.start)*(nc.speed||1));mv3.style.display='block';}}
         }
       });
       document.addEventListener('mouseup',function(){dragging=false;S.cut._scrubbing=false;},{once:true});
