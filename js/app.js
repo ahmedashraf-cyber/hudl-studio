@@ -1310,6 +1310,10 @@ async function startExport(){
       if(t >= ac.start && t < ac.start + ac.dur){
         const aT = (ac.fileStart||0) + Math.max(0, t - ac.start);
         a.muted = false; a.volume = vol;
+        // Ensure AudioContext is running when audio plays
+        if(window._exportAudioCtx && window._exportAudioCtx.state === 'suspended'){
+          window._exportAudioCtx.resume().catch(()=>{});
+        }
         if(a.paused){ a.currentTime = aT; try{ a.play(); }catch(e){} }
         else if(Math.abs(a.currentTime - aT) > 0.5) a.currentTime = aT;
       } else if(!a.paused){ a.pause(); }
@@ -1325,9 +1329,13 @@ async function startExport(){
     if(rem > 1) eta.textContent = `~${Math.ceil(rem)}s remaining`;
 
     t += dt;
-    // Schedule next frame at exact wall-clock target
+
+    // CRITICAL: enforce real-time pacing so MediaRecorder captures correct duration.
+    // captureStream(fps) samples the canvas at exactly 1000/fps ms intervals.
+    // If we render faster, the same frame gets captured multiple times = wrong duration.
+    // We must wait until the wall-clock target before rendering the next frame.
     const wallTarget = startTs + t * 1000;
-    const delay = Math.max(0, wallTarget - Date.now());
+    const delay = Math.max(1000 / fps, wallTarget - Date.now());
     setTimeout(renderFrame, delay);
   }
 
