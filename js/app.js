@@ -296,10 +296,14 @@ window.closeNPModal = function() {
 window.createNewProject = async function() {
   const name = $('np-name')?.value.trim() || 'Untitled';
   const appType = $('np-app')?.value || 'cut';
+  const fps = parseInt($('np-fps')?.value) || 30;
+  const resPreset = $('np-res-preset')?.value || '1920x1080';
+  // Resolution: read from inputs (preset selector keeps them in sync)
   const w = parseInt($('np-w')?.value) || 1920;
   const h = parseInt($('np-h')?.value) || 1080;
-  const dur = parseInt($('np-dur')?.value) || 30;
-  const fps = parseInt($('np-fps')?.value) || 30;
+  const autoRes = resPreset === 'auto'; // flag to auto-inherit from first video
+  // Duration: always open-ended (3600s = 1hr workspace; timeline expands dynamically with content)
+  const dur = 3600;
 
   const btn = $('np-create-btn');
   if (btn) { btn.textContent = 'Creating…'; btn.disabled = true; }
@@ -309,7 +313,7 @@ window.createNewProject = async function() {
     const id = await createProject(S.user.uid, { name, appType, width: w, height: h, fps, duration: dur });
     const project = { id, name, appType, width: w, height: h, fps, duration: dur, state: {} };
     S.currentProject = project;
-    S.proj = { w, h, fps, dur };
+    S.proj = { w, h, fps, dur, autoRes };
     // Reset cut state for fresh project
     S.cut = { clips:[], media:[], effects:{}, sel:null, ph:0, playing:false,
               videoTracks:2, audioTracks:2, tick:null, _hist:[], _histIdx:-1 };
@@ -331,7 +335,7 @@ window.openProject = async function(id) {
     const project = await loadProject(id);
     if (!project) { notify('Project not found', '#E31837'); return; }
     S.currentProject = project;
-    S.proj = { w: project.width||1920, h: project.height||1080, fps: project.fps||30, dur: project.duration||30 };
+    S.proj = { w: project.width||1920, h: project.height||1080, fps: project.fps||30, dur: 3600 };
 
     // Restore Cut state from saved Firestore state
     // project.state is stored as JSON string (via JSON.stringify in saveProjectState)
@@ -2381,7 +2385,23 @@ function handleCutFiles(files) {
       const v = document.createElement('video'); v.src = url;
       v.onloadedmetadata = () => {
         item.duration = v.duration;
-        item.hasAudio = true; // assume video has audio by default
+        item.width    = v.videoWidth;
+        item.height   = v.videoHeight;
+        // Auto-inherit resolution from first video if project was created with "Auto" preset
+        if(S.proj.autoRes && v.videoWidth > 0 && v.videoHeight > 0){
+          const _isFirstVid = S.cut.media.filter(m => m.type==='video' && m.width).length <= 1;
+          if(_isFirstVid){
+            S.proj.w = v.videoWidth;
+            S.proj.h = v.videoHeight;
+            S.proj.autoRes = false; // only inherit once
+            applyCanvasAspectRatio(S.proj.w, S.proj.h);
+            // Persist updated resolution
+            if(S.currentProject){ S.currentProject.width=S.proj.w; S.currentProject.height=S.proj.h; }
+            if(typeof scheduleSave==='function') scheduleSave();
+            notify(`Canvas set to ${S.proj.w}×${S.proj.h} from video`, '#3fb950');
+          }
+        }
+        item.hasAudio = true;
         v.currentTime = 0.5;
         v.onseeked = () => {
           const tc=document.createElement('canvas');tc.width=64;tc.height=36;
@@ -5511,7 +5531,14 @@ function updateScrubBar(){
   const tc    = document.getElementById('cut-scrub-tc');
   const dur   = document.getElementById('cut-scrub-dur');
   if(!track || !fill || !knob) return;
-  const totalDur = S.proj.dur || 10;
+  // Use actual content length (max clip end) as the scrub bar total duration
+  const _contentEnd = S.cut?.clips?.length
+    ? Math.max(...S.cut.clips.map(c => c.start + (c.dur||0)))
+    : 0;
+  const _ovEnd = (window._overlays||[]).length
+    ? Math.max(...(window._overlays||[]).map(o => o.endTime||0))
+    : 0;
+  const totalDur = Math.max(_contentEnd, _ovEnd, 10); // at least 10s
   const ph = S.cut.ph || 0;
   const pct = Math.max(0, Math.min(1, ph / totalDur)) * 100;
   fill.style.width  = pct + '%';
@@ -5531,7 +5558,9 @@ function setupScrubBar(){
   const seek = (e) => {
     const r = track.getBoundingClientRect();
     const pct = Math.max(0, Math.min(1, (e.clientX - r.left) / r.width));
-    const totalDur = S.proj.dur || 10;
+    const _cEnd = S.cut?.clips?.length ? Math.max(...S.cut.clips.map(c=>c.start+(c.dur||0))) : 0;
+    const _oEnd = (window._overlays||[]).length ? Math.max(...(window._overlays||[]).map(o=>o.endTime||0)) : 0;
+    const totalDur = Math.max(_cEnd, _oEnd, 10);
     S.cut.ph = pct * totalDur;
     updateCutPH();
     syncCutVid();

@@ -8,7 +8,7 @@
     // Cache guard: localStorage version check + bfcache reload
     // No Service Worker — it was intercepting JS module requests
     (function() {
-      var V = '1781600000';
+      var V = '1781700000';
       try {
         if (localStorage.getItem('fstudio_v') !== V) {
           var hadOld = localStorage.getItem('fstudio_v') !== null;
@@ -154,17 +154,26 @@
     <div class="modal-sub">Projects are saved to your account automatically</div>
     <div class="modal-field"><label>Project Name</label><input id="np-name" value="Untitled Project"></div>
     <div class="modal-field"><label>Application</label>
-      <select id="np-app"><option value="canvas">Canvas — Photo editing</option><option value="cut">Footage — Video editing</option></select>
+      <select id="np-app"><option value="canvas">Canvas — Photo editing</option><option value="cut" selected>Footage — Video editing</option></select>
     </div>
-    <div class="modal-grid">
-      <div class="modal-field"><label>Width (px)</label><input id="np-w" type="number" value="1920"></div>
-      <div class="modal-field"><label>Height (px)</label><input id="np-h" type="number" value="1080"></div>
+    <div class="modal-field">
+      <label>Resolution</label>
+      <select id="np-res-preset" onchange="(function(v){const g=document.getElementById('np-custom-res');if(v==='custom'){g.style.display='grid';}else if(v==='auto'){g.style.display='none';document.getElementById('np-w').value='1920';document.getElementById('np-h').value='1080';}else{g.style.display='none';const p=v.split('x');document.getElementById('np-w').value=p[0];document.getElementById('np-h').value=p[1];}}).call(this,this.value)">
+        <option value="auto">Auto — inherit from first video</option>
+        <option value="1920x1080" selected>1920 × 1080 — Full HD</option>
+        <option value="1280x720">1280 × 720 — HD</option>
+        <option value="3840x2160">3840 × 2160 — 4K</option>
+        <option value="1080x1920">1080 × 1920 — Vertical (9:16)</option>
+        <option value="1080x1080">1080 × 1080 — Square</option>
+        <option value="custom">Custom…</option>
+      </select>
     </div>
-    <div class="modal-grid">
-      <div class="modal-field"><label>Duration (seconds)</label><input id="np-dur" type="number" value="30" min="1"></div>
-      <div class="modal-field"><label>Frame Rate</label>
-        <select id="np-fps"><option value="24">24 fps — Cinematic</option><option value="25">25 fps — PAL</option><option value="30" selected>30 fps — Standard</option><option value="60">60 fps — Smooth</option></select>
-      </div>
+    <div id="np-custom-res" class="modal-grid" style="display:none">
+      <div class="modal-field"><label>Width (px)</label><input id="np-w" type="number" value="1920" min="1"></div>
+      <div class="modal-field"><label>Height (px)</label><input id="np-h" type="number" value="1080" min="1"></div>
+    </div>
+    <div class="modal-field"><label>Frame Rate</label>
+      <select id="np-fps"><option value="24">24 fps — Cinematic</option><option value="25">25 fps — PAL</option><option value="30" selected>30 fps — Standard</option><option value="60">60 fps — Smooth</option></select>
     </div>
     <div class="modal-footer">
       <button class="btn-cancel" onclick="closeNPModal()">Cancel</button>
