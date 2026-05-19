@@ -1300,95 +1300,123 @@ async function startExport(){
     }
 
     // Step 5: Encode video frames
+    // Strategy: play each video clip at real speed, capture frames via requestVideoFrameCallback.
+    // This avoids per-frame seeks (which are slow) — browser decodes naturally.
     status.textContent = 'Rendering video frames...';
-    let lastClipI = -1;
-    for(let fi = 0; fi < totalFrames; fi++){
-      const t   = fi / fps;  // ABSOLUTE timestamp — never accumulated
-      const tUs = Math.round(t * 1_000_000);
 
-      // Compose frame
+    // Helper: compose and encode one frame at timeline time t
+    const _composeAndEncode = (t, forceKeyframe) => {
+      const tUs = Math.round(t * 1_000_000);
       const fhNow = S.cut.clips.find(c => c.type==='frame_hold' && t>=c.start && t<c.start+c.dur);
       if(fhNow){
-        if(fhNow._imgData && (!fhNow._img || !fhNow._img.complete)){
-          fhNow._img = new Image();
-          await new Promise(r=>{ fhNow._img.onload=r; fhNow._img.onerror=r; fhNow._img.src=fhNow._imgData; setTimeout(r,1000); });
-        }
         ctx.fillStyle='#000'; ctx.fillRect(0,0,W,H);
         if(fhNow._img?.complete){
           const ci=S.cut.clips.indexOf(fhNow), parts=[];
-          (S.cut.effects[ci]||[]).forEach(ef=>{
-            if(ef.visible===false) return;
-            const e=CUT_EFFECTS[ef.i]; if(!e||e.type==='transition') return;
-            const es=fhNow.start+(ef.startOffset||0), ee=es+(ef.effectDur??fhNow.dur);
-            if(t<es||t>=ee) return;
-            if(e.type==='range') parts.push(e.prop+'('+ef.v+e.unit+')');
-            else if(e.type==='toggle') parts.push(e.filter);
-          });
-          ctx.save(); if(parts.length) ctx.filter=parts.join(' ');
-          ctx.drawImage(fhNow._img,0,0,W,H);
-          ctx.filter='none'; ctx.restore();
+          (S.cut.effects[ci]||[]).forEach(ef=>{ if(ef.visible===false)return; const e=CUT_EFFECTS[ef.i]; if(!e||e.type==='transition')return; const es=fhNow.start+(ef.startOffset||0),ee=es+(ef.effectDur??fhNow.dur); if(t<es||t>=ee)return; if(e.type==='range')parts.push(e.prop+'('+ef.v+e.unit+')'); else if(e.type==='toggle')parts.push(e.filter); });
+          ctx.save(); if(parts.length)ctx.filter=parts.join(' '); ctx.drawImage(fhNow._img,0,0,W,H); ctx.filter='none'; ctx.restore();
         }
       } else {
         const clip = videoClips.find(c => t>=c.start && t<c.start+c.dur);
         if(clip){
-          const vid = drawEls[clip.mediaIdx];
-          const ci  = videoClips.indexOf(clip);
-          if(ci !== lastClipI || !vid?._seekDone){
-            lastClipI = ci;
-            if(vid){
-              const ft = (clip.fileStart||0) + Math.max(0,(t-clip.start)*(clip.speed||1));
-              vid.muted = true; vid.playbackRate = clip.speed||1;
-              vid.currentTime = ft;
-              await new Promise(r=>{
-                if(vid.readyState>=2){r();return;}
-                const h=()=>{ vid.removeEventListener('seeked',h); r(); };
-                vid.addEventListener('seeked',h);
-                setTimeout(r, 3000);
-              });
-              vid._seekDone = true;
-            }
-          } else if(vid){
-            // Advance by one frame
-            const ft = (clip.fileStart||0) + Math.max(0,(t-clip.start)*(clip.speed||1));
-            if(Math.abs(vid.currentTime - ft) > (1/fps)*2) vid.currentTime = ft;
-          }
+          const vid=drawEls[clip.mediaIdx];
           ctx.fillStyle='#000'; ctx.fillRect(0,0,W,H);
           if(vid && vid.readyState>=2){
             const vci=S.cut.clips.indexOf(clip), vparts=[];
-            (S.cut.effects[vci]||[]).forEach(ef=>{
-              if(ef.visible===false) return;
-              const e=CUT_EFFECTS[ef.i]; if(!e||e.type==='transition') return;
-              const es=clip.start+(ef.startOffset||0), ee=es+(ef.effectDur??clip.dur);
-              if(t<es||t>=ee) return;
-              if(e.type==='range') vparts.push(e.prop+'('+ef.v+e.unit+')');
-              else if(e.type==='toggle') vparts.push(e.filter);
-            });
-            ctx.save(); if(vparts.length) ctx.filter=vparts.join(' ');
-            try{ ctx.drawImage(vid,0,0,W,H); }catch(e){}
-            ctx.filter='none'; ctx.restore();
+            (S.cut.effects[vci]||[]).forEach(ef=>{ if(ef.visible===false)return; const e=CUT_EFFECTS[ef.i]; if(!e||e.type==='transition')return; const es=clip.start+(ef.startOffset||0),ee=es+(ef.effectDur??clip.dur); if(t<es||t>=ee)return; if(e.type==='range')vparts.push(e.prop+'('+ef.v+e.unit+')'); else if(e.type==='toggle')vparts.push(e.filter); });
+            ctx.save(); if(vparts.length)ctx.filter=vparts.join(' '); try{ctx.drawImage(vid,0,0,W,H);}catch(e){} ctx.filter='none'; ctx.restore();
           }
-        } else {
-          ctx.fillStyle='#000'; ctx.fillRect(0,0,W,H);
-        }
+        } else { ctx.fillStyle='#000'; ctx.fillRect(0,0,W,H); }
       }
+      if((window._overlays||[]).some(o=>t>=o.startTime&&t<o.endTime)&&window.renderOverlaysOnCanvas)
+        window.renderOverlaysOnCanvas(ctx,W,H,t,new Set());
+      if(videoEncoder.encodeQueueSize < 30){
+        const vf = new VideoFrame(canvas, { timestamp:tUs, duration:Math.round(1_000_000/fps) });
+        videoEncoder.encode(vf, { keyFrame: forceKeyframe || false });
+        vf.close();
+      }
+    };
 
-      // Draw overlays
-      if((window._overlays||[]).some(o=>t>=o.startTime&&t<o.endTime) && window.renderOverlaysOnCanvas)
-        window.renderOverlaysOnCanvas(ctx, W, H, t, new Set());
+    // Process each video clip by playing it at speed and capturing frames via RVFC
+    let _encodedFrames = 0;
+    const totalFrames2 = Math.ceil(totalDur * fps);
 
-      // Encode frame
-      const vf = new VideoFrame(canvas, {
-        timestamp: tUs,
-        duration: Math.round(1_000_000 / fps)
+    for(let ci=0; ci<videoClips.length; ci++){
+      const clip = videoClips[ci];
+      const vid  = drawEls[clip.mediaIdx];
+      if(!vid) continue;
+
+      const clipStartFrame = Math.round(clip.start * fps);
+      const clipEndFrame   = Math.round((clip.start + clip.dur) * fps);
+      const clipFrames     = clipEndFrame - clipStartFrame;
+
+      // Seek to clip start
+      vid.muted = true; vid.playbackRate = clip.speed||1;
+      const startFileT = clip.fileStart||0;
+      vid.currentTime = startFileT;
+      await new Promise(r=>{
+        if(vid.readyState>=2){r();return;}
+        const h=()=>{ vid.removeEventListener('seeked',h); r(); };
+        vid.addEventListener('seeked',h); setTimeout(r,4000);
       });
-      videoEncoder.encode(vf, { keyFrame: fi % (fps*2) === 0 });
-      vf.close();
 
-      // Progress + yield every 15 frames
-      const pct = Math.min(95, Math.round(fi / totalFrames * 100));
-      bar.style.width = pct + '%';
-      status.textContent = `Encoding: ${pct}% · frame ${fi+1}/${totalFrames}`;
-      if(fi % 15 === 0) await new Promise(r => setTimeout(r, 0));
+      // Capture frames via requestVideoFrameCallback (native, no per-frame seeks)
+      await new Promise(resolveClip => {
+        let framesGrabbed = 0;
+        const grabFrame = (now, meta) => {
+          // Calculate which timeline frame this corresponds to
+          const fileTime = vid.currentTime;
+          const tlTime   = clip.start + (fileTime - startFileT) / (clip.speed||1);
+          const frameIdx = Math.round(tlTime * fps);
+
+          _composeAndEncode(tlTime, framesGrabbed === 0);
+          _encodedFrames++;
+          framesGrabbed++;
+
+          const pct = Math.min(95, Math.round(_encodedFrames / totalFrames2 * 100));
+          bar.style.width = pct + '%';
+          status.textContent = `Encoding: ${pct}% · ${tlTime.toFixed(1)}s / ${totalDur.toFixed(1)}s`;
+
+          if(framesGrabbed < clipFrames && tlTime < clip.start + clip.dur - 0.01){
+            vid.requestVideoFrameCallback(grabFrame);
+          } else {
+            resolveClip();
+          }
+        };
+
+        // Start playing and register callback
+        if('requestVideoFrameCallback' in vid){
+          vid.requestVideoFrameCallback(grabFrame);
+          try{ vid.play(); }catch(e){ resolveClip(); }
+        } else {
+          // Fallback: step through by seeking every N frames
+          (async () => {
+            for(let f=0; f<clipFrames; f++){
+              const fileT = startFileT + (f / fps) * (clip.speed||1);
+              vid.currentTime = fileT;
+              await new Promise(r=>{ const h=()=>{vid.removeEventListener('seeked',h);r();}; vid.addEventListener('seeked',h); setTimeout(r,500); });
+              _composeAndEncode(clip.start + f/fps, f===0);
+              _encodedFrames++;
+              if(f%10===0){
+                bar.style.width=Math.min(95,Math.round(_encodedFrames/totalFrames2*100))+'%';
+                status.textContent=`Encoding: ${Math.min(95,Math.round(_encodedFrames/totalFrames2*100))}%`;
+                await new Promise(r=>setTimeout(r,0));
+              }
+            }
+            resolveClip();
+          })();
+        }
+      });
+
+      if(vid && !vid.paused) vid.pause();
+    }
+
+    // Fill any gaps (frame_hold clips, black gaps)
+    for(let fi=0; fi<totalFrames2; fi++){
+      const t = fi/fps;
+      const hasVidClip = videoClips.some(c=>t>=c.start&&t<c.start+c.dur);
+      if(!hasVidClip){
+        _composeAndEncode(t, false);
+      }
     }
 
     await videoEncoder.flush();
