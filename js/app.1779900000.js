@@ -1193,35 +1193,249 @@ async function startExport(){
     notify('✓ Export downloaded — '+fname+' ('+(mimeType.includes('mp4')?'MP4':'WebM')+')','#3fb950');
   };
 
-  // Render and encode using real-time RAF loop
-  await _renderWithRealTimePacing();
+  // ── EXPORT ENGINE: WebCodecs + mp4-muxer (deterministic, frame-accurate) ──
+  // Architecture follows Adobe Premiere principles:
+  //   1. Every frame composed at t = frameIndex/fps (never accumulated)
+  //   2. Audio decoded offline via OfflineAudioContext (no drift)
+  //   3. VideoEncoder pushes frames to muxer directly (no captureStream)
+  //   4. Falls back to MediaRecorder RAF loop if WebCodecs unavailable
 
-  async function _renderWithRealTimePacing(){
-    // ── REAL-TIME RENDER LOOP (fallback / final output) ─────────────────────
+  const _canUseWebCodecs = typeof VideoEncoder !== 'undefined'
+    && typeof Mp4Muxer !== 'undefined';
+
+  if(_canUseWebCodecs){
+    await _exportWebCodecs();
+  } else {
+    await _exportMediaRecorder();
+  }
+
+  // ── PATH A: WebCodecs + mp4-muxer ─────────────────────────────────────────
+  async function _exportWebCodecs(){
+    const totalFrames = Math.ceil(totalDur * fps);
+
+    // Step 1: Decode all audio offline
+    status.textContent = 'Decoding audio...';
+    let _mixedAudio = null;
+    try {
+      const _offCtx = new OfflineAudioContext(2, Math.ceil(totalDur * 48000), 48000);
+      await Promise.all(_audioCandidates.map(async ({clip:ac}) => {
+        if(S.cut.mutedTracks?.[ac.track]) return;
+        const item = S.cut.media[ac.mediaIdx];
+        if(!item?.url) return;
+        try {
+          const resp = await fetch(item.url);
+          const buf  = await _offCtx.decodeAudioData(await resp.arrayBuffer());
+          const gn   = _offCtx.createGain();
+          gn.gain.value = ac.volume !== undefined ? Math.min(1, ac.volume) : 1.0;
+          const src  = _offCtx.createBufferSource();
+          src.buffer = buf;
+          src.connect(gn); gn.connect(_offCtx.destination);
+          src.start(Math.max(0, ac.start), ac.fileStart||0, ac.dur);
+        } catch(e){ console.warn('[Export] Audio decode:', e.message); }
+      }));
+      _mixedAudio = await _offCtx.startRendering();
+    } catch(e){ console.warn('[Export] OfflineAudio failed:', e); }
+
+    // Step 2: Set up mp4-muxer
+    const muxer = new Mp4Muxer.Muxer({
+      target: new Mp4Muxer.ArrayBufferTarget(),
+      video: { codec: 'avc', width: W, height: H },
+      audio: _mixedAudio ? { codec: 'aac', sampleRate: 48000, numberOfChannels: 2 } : undefined,
+      fastStart: 'in-memory'
+    });
+
+    // Step 3: Configure encoders
+    let _videoEncDone = false;
+    const videoEncoder = new VideoEncoder({
+      output: (chunk, meta) => muxer.addVideoChunk(chunk, meta),
+      error: (e) => console.error('[VideoEncoder]', e)
+    });
+    videoEncoder.configure({
+      codec: 'avc1.42001f',
+      width: W, height: H,
+      bitrate: BR,
+      framerate: fps,
+      avc: { format: 'annexb' }
+    });
+
+    let audioEncoder = null;
+    if(_mixedAudio){
+      audioEncoder = new AudioEncoder({
+        output: (chunk, meta) => muxer.addAudioChunk(chunk, meta),
+        error: (e) => console.error('[AudioEncoder]', e)
+      });
+      audioEncoder.configure({
+        codec: 'mp4a.40.2',
+        sampleRate: 48000,
+        numberOfChannels: 2,
+        bitrate: 192000
+      });
+    }
+
+    // Step 4: Encode audio chunks (samples per video frame)
+    if(_mixedAudio && audioEncoder){
+      const samplesPerFrame = Math.ceil(48000 / fps);
+      const totalSamples = _mixedAudio.length;
+      for(let s = 0; s < totalSamples; s += samplesPerFrame){
+        const count = Math.min(samplesPerFrame, totalSamples - s);
+        const L = _mixedAudio.getChannelData(0).slice(s, s + count);
+        const R = _mixedAudio.numberOfChannels > 1
+          ? _mixedAudio.getChannelData(1).slice(s, s + count)
+          : L;
+        const interleaved = new Float32Array(count * 2);
+        for(let i = 0; i < count; i++){ interleaved[i*2]=L[i]; interleaved[i*2+1]=R[i]; }
+        const audioData = new AudioData({
+          format: 'f32',
+          sampleRate: 48000,
+          numberOfFrames: count,
+          numberOfChannels: 2,
+          timestamp: Math.round(s / 48000 * 1_000_000),
+          data: interleaved
+        });
+        audioEncoder.encode(audioData);
+        audioData.close();
+      }
+      await audioEncoder.flush();
+      audioEncoder.close();
+    }
+
+    // Step 5: Encode video frames
+    status.textContent = 'Rendering video frames...';
+    let lastClipI = -1;
+    for(let fi = 0; fi < totalFrames; fi++){
+      const t   = fi / fps;  // ABSOLUTE timestamp — never accumulated
+      const tUs = Math.round(t * 1_000_000);
+
+      // Compose frame
+      const fhNow = S.cut.clips.find(c => c.type==='frame_hold' && t>=c.start && t<c.start+c.dur);
+      if(fhNow){
+        if(fhNow._imgData && (!fhNow._img || !fhNow._img.complete)){
+          fhNow._img = new Image();
+          await new Promise(r=>{ fhNow._img.onload=r; fhNow._img.onerror=r; fhNow._img.src=fhNow._imgData; setTimeout(r,1000); });
+        }
+        ctx.fillStyle='#000'; ctx.fillRect(0,0,W,H);
+        if(fhNow._img?.complete){
+          const ci=S.cut.clips.indexOf(fhNow), parts=[];
+          (S.cut.effects[ci]||[]).forEach(ef=>{
+            if(ef.visible===false) return;
+            const e=CUT_EFFECTS[ef.i]; if(!e||e.type==='transition') return;
+            const es=fhNow.start+(ef.startOffset||0), ee=es+(ef.effectDur??fhNow.dur);
+            if(t<es||t>=ee) return;
+            if(e.type==='range') parts.push(e.prop+'('+ef.v+e.unit+')');
+            else if(e.type==='toggle') parts.push(e.filter);
+          });
+          ctx.save(); if(parts.length) ctx.filter=parts.join(' ');
+          ctx.drawImage(fhNow._img,0,0,W,H);
+          ctx.filter='none'; ctx.restore();
+        }
+      } else {
+        const clip = videoClips.find(c => t>=c.start && t<c.start+c.dur);
+        if(clip){
+          const vid = drawEls[clip.mediaIdx];
+          const ci  = videoClips.indexOf(clip);
+          if(ci !== lastClipI || !vid?._seekDone){
+            lastClipI = ci;
+            if(vid){
+              const ft = (clip.fileStart||0) + Math.max(0,(t-clip.start)*(clip.speed||1));
+              vid.muted = true; vid.playbackRate = clip.speed||1;
+              vid.currentTime = ft;
+              await new Promise(r=>{
+                if(vid.readyState>=2){r();return;}
+                const h=()=>{ vid.removeEventListener('seeked',h); r(); };
+                vid.addEventListener('seeked',h);
+                setTimeout(r, 3000);
+              });
+              vid._seekDone = true;
+            }
+          } else if(vid){
+            // Advance by one frame
+            const ft = (clip.fileStart||0) + Math.max(0,(t-clip.start)*(clip.speed||1));
+            if(Math.abs(vid.currentTime - ft) > (1/fps)*2) vid.currentTime = ft;
+          }
+          ctx.fillStyle='#000'; ctx.fillRect(0,0,W,H);
+          if(vid && vid.readyState>=2){
+            const vci=S.cut.clips.indexOf(clip), vparts=[];
+            (S.cut.effects[vci]||[]).forEach(ef=>{
+              if(ef.visible===false) return;
+              const e=CUT_EFFECTS[ef.i]; if(!e||e.type==='transition') return;
+              const es=clip.start+(ef.startOffset||0), ee=es+(ef.effectDur??clip.dur);
+              if(t<es||t>=ee) return;
+              if(e.type==='range') vparts.push(e.prop+'('+ef.v+e.unit+')');
+              else if(e.type==='toggle') vparts.push(e.filter);
+            });
+            ctx.save(); if(vparts.length) ctx.filter=vparts.join(' ');
+            try{ ctx.drawImage(vid,0,0,W,H); }catch(e){}
+            ctx.filter='none'; ctx.restore();
+          }
+        } else {
+          ctx.fillStyle='#000'; ctx.fillRect(0,0,W,H);
+        }
+      }
+
+      // Draw overlays
+      if((window._overlays||[]).some(o=>t>=o.startTime&&t<o.endTime) && window.renderOverlaysOnCanvas)
+        window.renderOverlaysOnCanvas(ctx, W, H, t, new Set());
+
+      // Encode frame
+      const vf = new VideoFrame(canvas, {
+        timestamp: tUs,
+        duration: Math.round(1_000_000 / fps)
+      });
+      videoEncoder.encode(vf, { keyFrame: fi % (fps*2) === 0 });
+      vf.close();
+
+      // Progress + yield every 15 frames
+      const pct = Math.min(95, Math.round(fi / totalFrames * 100));
+      bar.style.width = pct + '%';
+      status.textContent = `Encoding: ${pct}% · frame ${fi+1}/${totalFrames}`;
+      if(fi % 15 === 0) await new Promise(r => setTimeout(r, 0));
+    }
+
+    await videoEncoder.flush();
+    videoEncoder.close();
+
+    // Step 6: Finalize muxer → download
+    status.textContent = 'Finalizing MP4...';
+    bar.style.width = '99%';
+    muxer.finalize();
+
+    const { buffer } = muxer.target;
+    const blob = new Blob([buffer], { type: 'video/mp4' });
+    const url  = URL.createObjectURL(blob);
+    const a    = document.createElement('a');
+    a.href = url;
+    const fname = (S.currentProject?.name||'export').replace(/[^\w\s-]/g,'').trim().replace(/\s+/g,'_');
+    a.download = `${fname}_${W}x${H}_${fps}fps.mp4`;
+    document.body.appendChild(a); a.click(); document.body.removeChild(a);
+    setTimeout(()=>URL.revokeObjectURL(url), 30000);
+    bar.style.width = '100%';
+    document.getElementById('export-modal')?.remove();
+    notify(`✓ Export downloaded — ${fname} (MP4, ${(blob.size/1024/1024).toFixed(1)} MB)`, '#3fb950');
+
+    // Cleanup
+    Object.values(drawEls).forEach(v=>{ try{v.pause();if(document.body.contains(v))v.remove();}catch(e){} });
+    if(window._exportAudioCtx){ try{window._exportAudioCtx.close();}catch(e){} window._exportAudioCtx=null; }
+  }
+
+  // ── PATH B: MediaRecorder fallback (old browsers) ──────────────────────────
+  async function _exportMediaRecorder(){
     recorder.start(200);
-    status.textContent = 'Rendering...';
-
+    status.textContent = 'Rendering (fallback mode)...';
     const msPerFrame = 1000 / fps;
     const startTs = performance.now();
-    let lastRafT = 0;
-    let lastClipIdx = -1;
-    let lastActiveVid = null;
+    let lastRafT = 0, lastClipIdx = -1, lastActiveVid = null;
 
-    // Start audio clips
     _audioCandidates.forEach(({clip:ac, idx}) => {
       const a = audioEls[idx]; if(!a) return;
       if(S.cut.mutedTracks?.[ac.track]) return;
       if(ac.start <= 0.1){
         const vol = ac.volume !== undefined ? Math.min(1, ac.volume) : 1.0;
-        a.muted=false; a.volume=vol;
-        a.currentTime = ac.fileStart||0;
+        a.muted=false; a.volume=vol; a.currentTime=ac.fileStart||0;
         try{ a.play(); }catch(e){}
       }
-      if(window._exportAudioCtx && window._exportAudioCtx.state==='suspended')
-        window._exportAudioCtx.resume().catch(()=>{});
+      if(window._exportAudioCtx?.state==='suspended') window._exportAudioCtx.resume().catch(()=>{});
     });
 
-    // Start first video
     const firstClip = videoClips.find(c => c.start <= 0.01);
     if(firstClip){
       const vid = drawEls[firstClip.mediaIdx];
@@ -1243,14 +1457,9 @@ async function startExport(){
           if(fhNow){
             if(fhNow._imgData && (!fhNow._img || !fhNow._img.complete)){ fhNow._img=new Image(); fhNow._img.src=fhNow._imgData; }
             ctx.fillStyle='#000'; ctx.fillRect(0,0,W,H);
-            if(fhNow._img?.complete){
-              const fhCi=S.cut.clips.indexOf(fhNow), fhParts=[];
-              (S.cut.effects[fhCi]||[]).forEach(ef=>{ if(ef.visible===false)return; const e=CUT_EFFECTS[ef.i]; if(!e||e.type==='transition')return; const es=fhNow.start+(ef.startOffset||0),ee=es+(ef.effectDur??fhNow.dur); if(t<es||t>=ee)return; if(e.type==='range')fhParts.push(e.prop+'('+ef.v+e.unit+')'); else if(e.type==='toggle')fhParts.push(e.filter); });
-              ctx.save(); if(fhParts.length) ctx.filter=fhParts.join(' ');
-              ctx.drawImage(fhNow._img,0,0,W,H); ctx.filter='none'; ctx.restore();
-            }
-            if(lastActiveVid && !lastActiveVid.paused) lastActiveVid.pause();
+            if(fhNow._img?.complete){ ctx.drawImage(fhNow._img,0,0,W,H); }
             if((window._overlays||[]).some(o=>t>=o.startTime&&t<o.endTime)&&window.renderOverlaysOnCanvas) window.renderOverlaysOnCanvas(ctx,W,H,t,new Set());
+            if(lastActiveVid&&!lastActiveVid.paused) lastActiveVid.pause();
           } else {
             const clip = videoClips.find(c => t>=c.start && t<c.start+c.dur);
             if(clip){
@@ -1267,12 +1476,11 @@ async function startExport(){
             if(S.cut.mutedTracks?.[ac.track]) return;
             const a=audioEls[idx]; if(!a) return;
             const vol=ac.volume!==undefined?Math.min(1,ac.volume):1.0;
-            if(t>=ac.start&&t<ac.start+ac.dur){ a.muted=false;a.volume=vol; if(window._exportAudioCtx?.state==='suspended') window._exportAudioCtx.resume().catch(()=>{}); if(a.paused){a.currentTime=(ac.fileStart||0)+Math.max(0,t-ac.start);try{a.play();}catch(e){}} else if(Math.abs(a.currentTime-((ac.fileStart||0)+Math.max(0,t-ac.start)))>0.5) a.currentTime=(ac.fileStart||0)+Math.max(0,t-ac.start); }
+            if(t>=ac.start&&t<ac.start+ac.dur){ a.muted=false;a.volume=vol; if(window._exportAudioCtx?.state==='suspended') window._exportAudioCtx.resume().catch(()=>{}); if(a.paused){a.currentTime=(ac.fileStart||0)+Math.max(0,t-ac.start);try{a.play();}catch(e){}} }
             else if(!a.paused){ a.pause(); }
           });
-          const pct=Math.min(98,Math.round((t/totalDur)*100));
-          bar.style.width=pct+'%';
-          status.textContent=`Rendering: ${pct}% · ${t.toFixed(1)}s / ${totalDur.toFixed(1)}s`;
+          bar.style.width = Math.min(98,Math.round((t/totalDur)*100))+'%';
+          status.textContent = `Rendering: ${Math.min(98,Math.round((t/totalDur)*100))}% · ${t.toFixed(1)}s / ${totalDur.toFixed(1)}s`;
         }
         requestAnimationFrame(rafLoop);
       }
@@ -1280,6 +1488,7 @@ async function startExport(){
     });
   }
 }
+
 
 
 
