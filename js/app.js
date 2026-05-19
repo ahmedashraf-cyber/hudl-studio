@@ -997,82 +997,105 @@ async function startExport(){
   const ctx=canvas.getContext('2d');
 
 
-  // EXPORT AUDIO v3: single video element approach
-  // One element = one captureStream() = continuous audio in MediaRecorder
-  // No AudioContext, no suspended state issues, no multi-track mixing problems
-  status.textContent='Loading video files...';
+  // ── EXPORT AUDIO v4: Decoded PCM approach ──────────────────────────────────
+  // Uses AudioBufferSourceNode (decoded PCM) instead of MediaElementSourceNode.
+  // PCM buffers never choke under memory load; no 17s streaming cutoff.
 
-  // Persistent per-media video elements - stay loaded, each connected to AudioContext
-  // No src changes during rendering = AudioContext connections never break
-  const drawEls = {}; // mediaIdx -> <video> element
-  status.textContent='Pre-loading media...';
+  // Disconnect _exportMasterVid from AudioContext to prevent ghost audio from stale clips
+  if(window._exportMvSrc){ try{ window._exportMvSrc.disconnect(); }catch(e){} window._exportMvSrc=null; }
+  if(window._exportMasterVid){ try{ window._exportMasterVid.pause(); window._exportMasterVid.muted=true; }catch(e){} }
+
+  const _audioCtx    = window._exportAudioCtx;
+  const _masterGain  = window._exportMasterGain;
+  const _audioDest   = window._exportAudioDest;
+
+  if(_audioCtx && _audioCtx.state==='suspended') await _audioCtx.resume();
+
+  // Pre-load video elements for DRAWING only (muted — audio comes from decoded PCM buffers)
+  const drawEls = {}; // mediaIdx -> <video> element (muted, drawing only)
+  status.textContent='Pre-loading video frames...';
   const _uniqueIdxs = [...new Set(videoClips.map(c=>c.mediaIdx))];
-  const _actxPre = window._exportAudioCtx;
-  const _mbusPre = window._exportMasterGain;
   for(const mIdx of _uniqueIdxs){
     const item = S.cut.media[mIdx];
     if(!item?.url) continue;
     const v = document.createElement('video');
-    v.src = item.url; v.preload='auto'; v.muted=false; v.volume=1.0;
+    v.src = item.url; v.preload='auto'; v.muted=true; // MUTED — audio handled separately
     v.style.display='none'; v.playsInline=true;
     document.body.appendChild(v);
     await new Promise(r=>{ if(v.readyState>=3){r();return;} v.oncanplaythrough=r; v.onerror=r; setTimeout(r,15000); });
-    // Connect to AudioContext master bus - persistent connection for this media file
-    if(_actxPre && _mbusPre){
-      try{ const _s=_actxPre.createMediaElementSource(v); _s.connect(_mbusPre); v._audSrc=_s; }
-      catch(e){ console.warn('audio connect mIdx='+mIdx+':', e.message); }
-    }
     drawEls[mIdx] = v;
-    status.textContent='Pre-loading: '+(Object.keys(drawEls).length)+'/'+_uniqueIdxs.length;
+    status.textContent='Pre-loading video: '+(Object.keys(drawEls).length)+'/'+_uniqueIdxs.length;
   }
 
-  // masterVid is from showExportModal (already muted, only used for AudioContext unlock)
-  // drawEls handle all video+audio during rendering
-  const masterVid = window._exportMasterVid; // reference only, not used in renderFrame
-
-  // Use AudioContext stream from showExportModal gesture
-  // AudioContext was created AND resumed synchronously in the Export button click
-  const _audioCtx    = window._exportAudioCtx;
-  const _masterGain  = window._exportMasterGain;
-  const _audioDest   = window._exportAudioDest;
-  const masterAudioTracks = _audioDest ? _audioDest.stream.getAudioTracks() : (window._exportMasterAudioTracks||[]);
-  console.log('Export audio: ctx='+(_audioCtx?.state||'null'), 'tracks='+masterAudioTracks.length,
-    masterAudioTracks.map(t=>t.readyState+'/'+t.enabled).join(','));
-  // Resume AudioContext again in case browser suspended between modal open and export click
-  if(_audioCtx && _audioCtx.state==='suspended') _audioCtx.resume();
-
-  // drawEls[firstClip.mediaIdx] is already loaded and connected to AudioContext
-  // No need to load masterVid separately
-
-  // Preload standalone audio-only clips
-  // ALL audio clips (including voiceovers/linked tracks) — key by clip index not mediaIdx
-  // so multiple clips using the same file each get their own element
-  const audioOnlyClips = S.cut.clips
-    .filter(c => c.type==='audio')
-    .sort((a,b) => a.start-b.start);
-  const audioEls = {}; // clipIndex -> <audio> element
-  for(let _aci=0; _aci<audioOnlyClips.length; _aci++){
-    const clip = audioOnlyClips[_aci];
-    const item = S.cut.media[clip.mediaIdx];
-    if(!item?.url) continue;
-    if(S.cut.mutedTracks?.[clip.track]) continue;
-    const a = document.createElement('audio');
-    a.src = item.url; a.preload='auto';
-    a.muted = false; a.volume = (clip.volume !== undefined ? Math.min(1, clip.volume/100) : 1.0);
-    a.style.display = 'none';
-    document.body.appendChild(a);
-    await new Promise(r=>{ a.oncanplaythrough=r; a.onerror=r; setTimeout(r,8000); });
-    audioEls[_aci] = a;
+  // Decode audio PCM buffers for all audio sources
+  // ── Video clip audio: decode each unique video file ──
+  status.textContent='Decoding audio tracks...';
+  const _audioBuffers = {}; // mediaIdx -> AudioBuffer (decoded PCM)
+  const _allAudioMediaIdxs = new Set([
+    ...videoClips.map(c=>c.mediaIdx),
+    ...S.cut.clips.filter(c=>c.type==='audio').map(c=>c.mediaIdx)
+  ]);
+  for(const mIdx of _allAudioMediaIdxs){
+    const item = S.cut.media[mIdx];
+    if(!item?.url || !_audioCtx) continue;
+    try{
+      const resp = await fetch(item.url);
+      const arrBuf = await resp.arrayBuffer();
+      const decoded = await _audioCtx.decodeAudioData(arrBuf);
+      _audioBuffers[mIdx] = decoded;
+      status.textContent='Decoding audio: '+Object.keys(_audioBuffers).length+'/'+_allAudioMediaIdxs.size;
+    }catch(e){ console.warn('Audio decode failed for mIdx='+mIdx+':', e.message); }
   }
 
-  // Standalone audio clips are connected via AudioContext (below) - no captureStream needed
-
-  // Also connect standalone audio elements to the AudioContext master bus
+  // ── Schedule ALL audio clips as AudioBufferSourceNodes ──
+  // This plays the full audio in advance, perfectly timed, no streaming starvation.
   if(_audioCtx && _masterGain){
-    for(const a of Object.values(audioEls)){
-      try{ const _as=_audioCtx.createMediaElementSource(a); _as.connect(_masterGain); }catch(e){}
+    const _exportStartTime = _audioCtx.currentTime + 0.2; // 200ms head start
+
+    // Video clip audio (from decoded PCM)
+    for(const clip of videoClips){
+      const buf = _audioBuffers[clip.mediaIdx];
+      if(!buf) continue;
+      if(S.cut.mutedTracks?.[clip.track]) continue;
+      const vol = clip.volume !== undefined ? Math.min(1, clip.volume/100) : 1.0;
+      const src = _audioCtx.createBufferSource();
+      src.buffer = buf;
+      src.playbackRate.value = clip.speed || 1;
+      const gainNode = _audioCtx.createGain();
+      gainNode.gain.value = vol;
+      src.connect(gainNode); gainNode.connect(_masterGain);
+      // when to start in AudioContext timeline, and which part of the file to play
+      const _acStart = _exportStartTime + clip.start;
+      const _fileOffset = clip.fileStart || 0;
+      const _clipDur = clip.dur;
+      src.start(_acStart, _fileOffset, _clipDur * (clip.speed||1));
     }
+
+    // Audio-only clips (voiceovers, music)
+    const _audioOnlyForSchedule = S.cut.clips.filter(c=>c.type==='audio').sort((a,b)=>a.start-b.start);
+    for(const clip of _audioOnlyForSchedule){
+      const buf = _audioBuffers[clip.mediaIdx];
+      if(!buf) continue;
+      if(S.cut.mutedTracks?.[clip.track]) continue;
+      const vol = clip.volume !== undefined ? Math.min(1, clip.volume/100) : 1.0;
+      const src = _audioCtx.createBufferSource();
+      src.buffer = buf;
+      const gainNode = _audioCtx.createGain();
+      gainNode.gain.value = vol;
+      src.connect(gainNode); gainNode.connect(_masterGain);
+      const _acStart = _exportStartTime + clip.start;
+      const _fileOffset = clip.fileStart || 0;
+      src.start(_acStart, _fileOffset, clip.dur);
+    }
+
+    // Store start time so renderFrame can sync audio context
+    window._exportAcStartTime = _exportStartTime;
   }
+
+  // audioOnlyClips / audioEls kept for per-frame position tracking (no longer plays audio)
+  const audioOnlyClips = S.cut.clips.filter(c=>c.type==='audio').sort((a,b)=>a.start-b.start);
+  const audioEls = {}; // empty — audio handled by AudioBufferSourceNodes above
+
   // Build final stream: canvas video + AudioContext master bus output
   // Single clean audio stream from AudioContext - no duplicates
   const videoStream = canvas.captureStream(fps);
@@ -1128,7 +1151,10 @@ async function startExport(){
   };
 
   recorder.start(500); // collect every 500ms for stable chunks
-  status.textContent='Rendering with audio...';
+  status.textContent='Preparing audio...';
+
+  // Wait for the AudioContext pre-roll (200ms head start we gave the audio scheduler)
+  await new Promise(r => setTimeout(r, 220));
 
   const dt=1/fps;
   let t=0;
@@ -1187,7 +1213,8 @@ async function startExport(){
         if(vid){
           const _spd = clip.speed || 1;
           const fileTime = (clip.fileStart||0) + Math.max(0,(t - clip.start)*_spd);
-          vid.volume = clip.volume !== undefined ? Math.min(1, clip.volume/100) : 1.0;
+          vid.muted = true;  // audio handled by AudioBufferSourceNode, not this element
+          vid.volume = 0;    // belt+suspenders: mute at element level too
           vid.playbackRate = _spd;
           vid.currentTime = fileTime;
           await new Promise(r=>{
@@ -1220,19 +1247,8 @@ async function startExport(){
       lastClipIdx = -1;
     }
 
-    // ── Standalone audio clips ──
-    for(let _aci2=0; _aci2<audioOnlyClips.length; _aci2++){
-      const ac = audioOnlyClips[_aci2];
-      if(S.cut.mutedTracks?.[ac.track]) continue;
-      const a = audioEls[_aci2]; if(!a) continue;
-      if(t >= ac.start && t < ac.start + ac.dur){
-        const aT = (ac.fileStart||0) + Math.max(0, t - ac.start);
-        a.muted = false;
-        a.volume = (ac.volume !== undefined ? Math.min(1, ac.volume/100) : 1.0);
-        if(a.paused){ a.currentTime = aT; try{ a.play(); }catch(e){} }
-        else if(Math.abs(a.currentTime - aT) > 0.5) a.currentTime = aT;
-      } else if(!a.paused){ a.pause(); }
-    }
+    // ── Standalone audio: handled by pre-scheduled AudioBufferSourceNodes ──
+    // No per-frame element manipulation needed — PCM buffers run independently
 
     // ── Progress ──
     const pct = Math.min(98, Math.round((t / totalDur) * 100));
