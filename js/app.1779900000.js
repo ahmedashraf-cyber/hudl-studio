@@ -1049,9 +1049,10 @@ async function startExport(){
     });
   }));
 
-  // masterVid is from showExportModal (already muted, only used for AudioContext unlock)
-  // drawEls handle all video+audio during rendering
-  const masterVid = window._exportMasterVid; // reference only, not used in renderFrame
+  // Disconnect _exportMasterVid from AudioContext — prevent video clip audio leak into stream
+  if(window._exportMvSrc){ try{ window._exportMvSrc.disconnect(); }catch(e){} window._exportMvSrc=null; }
+  if(window._exportMasterVid){ try{ window._exportMasterVid.pause(); window._exportMasterVid.muted=true; }catch(e){} }
+  const masterVid = window._exportMasterVid;
 
   // Use AudioContext stream from showExportModal gesture
   // AudioContext was created AND resumed synchronously in the Export button click
@@ -1067,27 +1068,27 @@ async function startExport(){
   // drawEls[firstClip.mediaIdx] is already loaded and connected to AudioContext
   // No need to load masterVid separately
 
-  // Preload standalone audio-only clips — parallel, proper addEventListener
+  // Preload ALL audio clips (voiceover, music, linked audio) — keyed by clip index
+  // Include linkedToVideo clips — they are real audio tracks that must export
   const audioOnlyClips = S.cut.clips
-    .filter(c=>c.type==='audio'&&!c.linkedToVideo)
-    .sort((a,b)=>a.start-b.start);
-  const audioEls = {};
-  const _audioUnique = [...new Set(audioOnlyClips.map(c=>c.mediaIdx))];
-  if(_audioUnique.length > 0){
-    status.textContent = 'Pre-loading audio: 0/' + _audioUnique.length;
+    .filter(c => c.type==='audio')
+    .sort((a,b) => a.start-b.start);
+  const audioEls = {}; // clipIndex -> <audio> element
+  const _audioCandidates = audioOnlyClips
+    .map((c,i) => ({clip:c, idx:i}))
+    .filter(({clip}) => !S.cut.mutedTracks?.[clip.track] && S.cut.media[clip.mediaIdx]?.url);
+  if(_audioCandidates.length > 0){
+    status.textContent = 'Pre-loading audio: 0/' + _audioCandidates.length;
     let _aLoaded = 0;
-    await Promise.all(_audioUnique.map(mIdx => {
-      const item = S.cut.media[mIdx];
-      if(!item?.url) return Promise.resolve();
-      const clip = audioOnlyClips.find(c=>c.mediaIdx===mIdx);
-      if(clip && S.cut.mutedTracks?.[clip.track]) return Promise.resolve();
+    await Promise.all(_audioCandidates.map(({clip, idx}) => {
+      const item = S.cut.media[clip.mediaIdx];
       const a = document.createElement('audio');
       a.src = item.url; a.preload = 'auto';
       a.muted = false; a.volume = 1.0; a.style.display = 'none';
       document.body.appendChild(a);
-      audioEls[mIdx] = a;
+      audioEls[idx] = a;
       return new Promise(r => {
-        if(a.readyState >= 2){ _aLoaded++; status.textContent='Pre-loading audio: '+_aLoaded+'/'+_audioUnique.length; r(); return; }
+        if(a.readyState >= 2){ _aLoaded++; status.textContent='Pre-loading audio: '+_aLoaded+'/'+_audioCandidates.length; r(); return; }
         let _aDone = false;
         const done = () => {
           if(_aDone) return; _aDone = true;
@@ -1096,7 +1097,7 @@ async function startExport(){
           a.removeEventListener('loadedmetadata', done);
           a.removeEventListener('error',          done);
           _aLoaded++;
-          status.textContent = 'Pre-loading audio: ' + _aLoaded + '/' + _audioUnique.length;
+          status.textContent = 'Pre-loading audio: ' + _aLoaded + '/' + _audioCandidates.length;
           r();
         };
         a.addEventListener('canplaythrough', done);
@@ -1124,13 +1125,13 @@ async function startExport(){
       _finalGain.connect(_finalDest);
       // Connect audio elements to new context for stream capture
       // Use try/catch - element may already be connected to previous context
-      for(const a of Object.values(audioEls)){
+      for(const {idx} of _audioCandidates){
+        const a = audioEls[idx]; if(!a) continue;
         try{
           const s = _finalAudioCtx.createMediaElementSource(a);
           s.connect(_finalGain);
         }catch(e){
-          // Already connected or error — element will play through default output
-          console.warn('[Export] Audio element connect failed (may already be connected):', e.message);
+          console.warn('[Export] Audio element connect failed:', e.message);
         }
       }
       window._exportAudioCtx   = _finalAudioCtx;
@@ -1301,17 +1302,18 @@ async function startExport(){
       lastClipIdx = -1;
     }
 
-    // ── Standalone audio clips ──
-    for(const ac of audioOnlyClips){
-      if(S.cut.mutedTracks?.[ac.track]) continue;
-      const a = audioEls[ac.mediaIdx]; if(!a) continue;
+    // ── Standalone audio clips (voiceover, music) ──
+    _audioCandidates.forEach(({clip:ac, idx}) => {
+      if(S.cut.mutedTracks?.[ac.track]) return;
+      const a = audioEls[idx]; if(!a) return;
+      const vol = ac.volume !== undefined ? Math.min(1, ac.volume) : 1.0;
       if(t >= ac.start && t < ac.start + ac.dur){
         const aT = (ac.fileStart||0) + Math.max(0, t - ac.start);
-        a.muted = false;
+        a.muted = false; a.volume = vol;
         if(a.paused){ a.currentTime = aT; try{ a.play(); }catch(e){} }
         else if(Math.abs(a.currentTime - aT) > 0.5) a.currentTime = aT;
       } else if(!a.paused){ a.pause(); }
-    }
+    });
 
     // ── Progress ──
     const pct = Math.min(98, Math.round((t / totalDur) * 100));
