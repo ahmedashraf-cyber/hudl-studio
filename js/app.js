@@ -1007,28 +1007,33 @@ async function startExport(){
   const drawEls = {}; // mediaIdx -> <video> element (MUTED, drawing only)
   status.textContent='Pre-loading media...';
   const _uniqueIdxs = [...new Set(videoClips.map(c=>c.mediaIdx))];
-  for(const mIdx of _uniqueIdxs){
+
+  // Load ALL elements in parallel — not serial — so 20 clips take 5s max, not 100s
+  await Promise.all(_uniqueIdxs.map(mIdx => {
     const item = S.cut.media[mIdx];
-    if(!item?.url) continue;
+    if(!item?.url) return Promise.resolve();
     const v = document.createElement('video');
-    v.muted = true; v.volume = 0; v.preload='auto';
-    v.style.display='none'; v.playsInline=true;
+    v.muted = true; v.volume = 0; v.preload='metadata';
+    v.style.display = 'none'; v.playsInline = true;
     v.src = item.url;
     document.body.appendChild(v);
-    v.load(); // explicit load() call — triggers buffering immediately
-    // Wait for readyState >= 2 (HAVE_CURRENT_DATA) — enough to drawImage()
-    // canplaythrough requires full buffer; we only need the first frame
-    await new Promise(r => {
+    drawEls[mIdx] = v; // register immediately so renderFrame can use it
+    return new Promise(r => {
       if(v.readyState >= 2){ r(); return; }
-      const done = () => { v.removeEventListener('loadeddata', done); v.removeEventListener('canplay', done); v.removeEventListener('error', done); r(); };
-      v.addEventListener('loadeddata', done);  // fires at readyState=2
-      v.addEventListener('canplay',    done);  // fires at readyState=3, fallback
-      v.addEventListener('error',      done);  // unblock on error too
-      setTimeout(done, 5000); // 5s max per element — don't stall entire export
+      const done = () => {
+        v.removeEventListener('loadeddata', done);
+        v.removeEventListener('canplay',    done);
+        v.removeEventListener('error',      done);
+        r();
+      };
+      v.addEventListener('loadeddata', done);
+      v.addEventListener('canplay',    done);
+      v.addEventListener('error',      done);
+      setTimeout(done, 8000); // 8s hard cap per element
+      v.load();
     });
-    drawEls[mIdx] = v;
-    status.textContent='Pre-loading: '+(Object.keys(drawEls).length)+'/'+_uniqueIdxs.length;
-  }
+  }));
+  status.textContent='Pre-loading: '+Object.keys(drawEls).length+'/'+_uniqueIdxs.length+' ready';
 
   // masterVid is from showExportModal (already muted, only used for AudioContext unlock)
   // drawEls handle all video+audio during rendering
