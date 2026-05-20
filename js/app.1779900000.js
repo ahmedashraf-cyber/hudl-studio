@@ -1359,14 +1359,16 @@ async function startExport(){
 
       if(!vid){ _totalEncoded = clipEndFr; continue; }
 
-      // Seek to start
+      // Seek to start — only wait if video has data (readyState>=1)
       vid.muted = true; vid.playbackRate = spd;
-      vid.currentTime = fileStart;
-      await new Promise(r => {
-        if(vid.readyState>=2){r();return;}
-        const h=()=>{vid.removeEventListener('seeked',h);r();};
-        vid.addEventListener('seeked',h); setTimeout(r,3000);
-      });
+      if(vid.readyState >= 1){
+        vid.currentTime = fileStart;
+        await new Promise(r => {
+          if(vid.readyState>=2){r();return;}
+          const h=()=>{vid.removeEventListener('seeked',h);r();};
+          vid.addEventListener('seeked',h); setTimeout(r,2000);
+        });
+      }
 
       const clipFrameCount = clipEndFr - clipStartFr;
 
@@ -1379,12 +1381,14 @@ async function startExport(){
         const tlT   = clip.start + f / fps;
 
         if(f === 0 || f % SEEK_INTERVAL === 0){
-          vid.currentTime = fileT;
-          await new Promise(r => {
-            const h = () => { vid.removeEventListener('seeked', h); r(); };
-            vid.addEventListener('seeked', h);
-            setTimeout(r, 2000);
-          });
+          if(vid.readyState >= 1){
+            vid.currentTime = fileT;
+            await new Promise(r => {
+              const h = () => { vid.removeEventListener('seeked', h); r(); };
+              vid.addEventListener('seeked', h);
+              setTimeout(r, 500); // 500ms max — enough for real browser, fast fail otherwise
+            });
+          }
         }
 
         _composeAndEncode(tlT, f === 0);
