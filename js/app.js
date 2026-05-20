@@ -1200,13 +1200,10 @@ async function startExport(){
   // - setTimeout pacing ensures file duration = project duration
   // - Videos play naturally at speed, no per-frame seeks
 
-  const _canUseWebCodecs = typeof VideoEncoder !== 'undefined' && typeof Mp4Muxer !== 'undefined';
-
-  if(_canUseWebCodecs){
-    await _exportWebCodecs();
-  } else {
-    await _exportMediaRecorder();
-  }
+  // Use MediaRecorder + RAF real-time loop
+  // WebCodecs seek-per-frame approach is too slow for large projects
+  // MediaRecorder captures canvas in real-time with correct duration
+  await _exportMediaRecorder();
 
   async function _exportWebCodecs(){
     const totalFrames = Math.ceil(totalDur * fps);
