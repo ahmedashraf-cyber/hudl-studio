@@ -1359,9 +1359,12 @@ async function startExport(){
     if(firstClip){ const vid=drawEls[firstClip.mediaIdx]; if(vid){vid.muted=true;vid.volume=0;vid.playbackRate=firstClip.speed||1;vid.currentTime=firstClip.fileStart||0;lastActiveVid=vid;lastClipIdx=0;try{await vid.play();}catch(e){}} }
 
     await new Promise(resolve => {
-      function rafLoop(rafNow){
-        const elapsed=(rafNow-startTs)/1000; const t_=elapsed;
-        if(window._exportCancelled || window._currentExportToken !== _exportToken){ resolve(); return; }
+      const _startTs = startTs;
+      const _token = _exportToken;
+      const msPerFrame = Math.round(1000 / fps);
+      function tick(){
+        if(window._exportCancelled || window._currentExportToken !== _token){ resolve(); return; }
+        const t_=(Date.now()-_startTs)/1000;
         if(t_>=totalDur){
           if(lastActiveVid&&!lastActiveVid.paused)lastActiveVid.pause();
           _audioCandidates.forEach(({idx})=>{try{audioEls[idx]?.pause();}catch(e){}});
@@ -1387,9 +1390,12 @@ async function startExport(){
         const pct=Math.min(98,Math.round((t_/totalDur)*100));
         bar.style.width=pct+'%';
         status.textContent=`Rendering: ${pct}% · ${t_.toFixed(1)}s / ${totalDur.toFixed(1)}s`;
-        requestAnimationFrame(rafLoop);
+        // Use setTimeout not RAF — RAF requires renderer thread (can freeze under GPU load)
+        const elapsed = Date.now() - _startTs;
+        const nextFrame = Math.max(1, Math.round(t_ * 1000) + msPerFrame - elapsed);
+        setTimeout(tick, nextFrame);
       }
-      requestAnimationFrame(rafLoop);
+      setTimeout(tick, 0);
     });
   }
 }
