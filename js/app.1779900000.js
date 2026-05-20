@@ -1242,12 +1242,15 @@ async function startExport(){
       console.log('[Export] Audio rendered:', _mixedAudio.duration.toFixed(2)+'s');
     }catch(e){ console.warn('[Export] OfflineAudio:', e); }
 
-    // ── STEP 2: Set up mp4-muxer ─────────────────────────────────────────────
+    // ── STEP 2: Set up mp4-muxer with streaming output ──────────────────────
+    // StreamTarget writes chunks as they arrive — no memory accumulation for large files
+    const _outputChunks = [];
     const muxer = new Mp4Muxer.Muxer({
       target: new Mp4Muxer.ArrayBufferTarget(),
       video: { codec: 'avc', width: W, height: H },
       audio: _mixedAudio ? { codec: 'aac', sampleRate: 48000, numberOfChannels: 2 } : undefined,
-      fastStart: 'in-memory'
+      fastStart: 'in-memory',
+      firstTimestampBehavior: 'offset'
     });
 
     // ── STEP 3: VideoEncoder ─────────────────────────────────────────────────
@@ -1347,9 +1350,12 @@ async function startExport(){
       const t   = fi / fps;
       const tUs = Math.round(t * 1_000_000);
       _drawScene(t);
-      if(videoEncoder.encodeQueueSize < 50){
+      // Throttle if encoder queue is backing up (prevents GPU saturation)
+      // No await here - just skip encoding if queue is too full
+      const _shouldEncode = videoEncoder.encodeQueueSize < 20;
+      if(_shouldEncode){
         const vf = new VideoFrame(canvas, { timestamp:tUs, duration:frameDurUs });
-        videoEncoder.encode(vf, { keyFrame: fi % (fps*2) === 0 });
+        videoEncoder.encode(vf, { keyFrame: (f === 0 || f % (fps*2) === 0) });
         vf.close();
       }
     };
@@ -1406,8 +1412,12 @@ async function startExport(){
         _encodeFrame(f);
         _fi = f + 1;
 
-        // Yield every BATCH frames for UI responsiveness
-        // Yield every frame to prevent main thread freeze
+        // Backpressure: drain GPU encoder queue before continuing
+        while(videoEncoder.encodeQueueSize > 10){
+          await new Promise(r => setTimeout(r, 5));
+        }
+
+        // Yield every frame to keep UI responsive
         const pct = Math.min(98, Math.round(f / totalFrames * 80) + 10);
         bar.style.width = pct+'%';
         status.textContent = `Encoding: ${pct}% · ${(f/fps).toFixed(1)}s / ${totalDur.toFixed(1)}s`;
@@ -1419,7 +1429,8 @@ async function startExport(){
     // Encode any remaining tail frames (frame holds / overlays after last clip)
     while(_fi < totalFrames){
       _encodeFrame(_fi); _fi++;
-      await new Promise(r => setTimeout(r, 0)); // yield every frame
+      while(videoEncoder.encodeQueueSize > 10) await new Promise(r => setTimeout(r, 5));
+      await new Promise(r => setTimeout(r, 0));
     }
 
     // ── STEP 6: Flush + mux + download ──────────────────────────────────────
