@@ -1303,13 +1303,11 @@ async function startExport(){
     // For browsers without rVFC: fall back to timed currentTime advancement.
     status.textContent = 'Encoding video frames...';
 
-    // Make drawEls visible (but tiny/hidden) WITHOUT moving them.
-    // Moving a video element resets readyState to 0 — it loses its buffer.
-    // Instead: style in-place so rVFC fires (rVFC requires element to be in active render tree).
+    // Make drawEls visible in viewport (Chrome won't decode blob URLs outside viewport)
+    // Position at top-left, 1px, nearly invisible — must be in compositor tree to get frames
     Object.values(drawEls).forEach(v => {
-      v.style.cssText = 'position:fixed;left:-9999px;top:0;width:2px;height:2px;opacity:0.01;pointer-events:none;z-index:-1;';
+      v.style.cssText = 'position:fixed;left:0;top:0;width:1px;height:1px;opacity:0.001;pointer-events:none;z-index:9999;';
       v.muted = true;
-      // Ensure it's in document body (already appended during preload)
     });
 
     const _composeAndEncode = (t, isKeyFrame) => {
