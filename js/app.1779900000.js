@@ -1370,35 +1370,30 @@ async function startExport(){
 
       const clipFrameCount = clipEndFr - clipStartFr;
 
-      // Seek-based frame capture - works in all browser contexts including automated
-      // Strategy: seek every SEEK_EVERY frames, use stored frame for in-between
-      // 1080p H264: seek takes ~50-150ms, so seek every 3 frames = 3x fewer seeks
-      const SEEK_INTERVAL = 3; // seek every N frames
+      // Seek every N frames (6x per second at 30fps = 5 frames between seeks)
+      // Always wait for 'seeked' event — never use readyState shortcut (returns stale frame)
+      const SEEK_INTERVAL = Math.max(1, Math.round(fps / 6));
+
       for(let f = 0; f < clipFrameCount; f++){
         const fileT = fileStart + (f / fps) * spd;
         const tlT   = clip.start + f / fps;
 
-        // Seek on first frame and every SEEK_INTERVAL frames
         if(f === 0 || f % SEEK_INTERVAL === 0){
           vid.currentTime = fileT;
           await new Promise(r => {
-            if(vid.readyState >= 2){ r(); return; }
             const h = () => { vid.removeEventListener('seeked', h); r(); };
             vid.addEventListener('seeked', h);
-            setTimeout(r, 300); // 300ms max per seek
+            setTimeout(r, 2000);
           });
         }
-        // Brief yield for browser to update frame
-        await new Promise(r => setTimeout(r, 0));
 
         _composeAndEncode(tlT, f === 0);
         _totalEncoded++;
 
-        if(f % 30 === 0){
-          const pct = Math.min(95, Math.round(_totalEncoded / totalFrames * 80) + 10);
-          bar.style.width = pct + '%';
-          status.textContent = `Encoding: ${pct}% · ${tlT.toFixed(1)}s / ${totalDur.toFixed(1)}s`;
-        }
+        const pct = Math.min(95, Math.round(_totalEncoded / totalFrames * 80) + 10);
+        bar.style.width = pct + '%';
+        status.textContent = `Encoding: ${pct}% · ${tlT.toFixed(1)}s / ${totalDur.toFixed(1)}s`;
+        await new Promise(r => setTimeout(r, 0));
       }
       if(vid && !vid.paused) vid.pause();
     }
