@@ -1397,7 +1397,8 @@ async function startExport(){
         const pct = Math.min(95, Math.round(_totalEncoded / totalFrames * 80) + 10);
         bar.style.width = pct + '%';
         status.textContent = `Encoding: ${pct}% · ${tlT.toFixed(1)}s / ${totalDur.toFixed(1)}s`;
-        await new Promise(r => setTimeout(r, 0));
+        // Yield every 10 frames — per-frame yield adds huge overhead for 5000+ frame projects
+        if(f % 10 === 0) await new Promise(r => setTimeout(r, 0));
       }
       if(vid && !vid.paused) vid.pause();
     }
