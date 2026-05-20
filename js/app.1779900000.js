@@ -984,6 +984,12 @@ async function startExport(){
   btn.disabled=true; btn.textContent='Exporting...';
   progressDiv.style.display='block';
 
+  // Cancel any previous export that's still running
+  window._exportCancelled = true;
+  await new Promise(r => setTimeout(r, 50)); // let old loop check the flag
+  window._exportCancelled = false;
+  const _exportToken = {}; window._currentExportToken = _exportToken;
+
   const videoClips=S.cut.clips.filter(c=>c.type==='video').sort((a,b)=>a.start-b.start);
   if(!videoClips.length){notify('No video clips on timeline','#E31837');btn.disabled=false;btn.textContent='▶ Export';return;}
   // Hard cap at last asset out-point (S.proj.dur is workspace size, not content)
@@ -1355,6 +1361,7 @@ async function startExport(){
     await new Promise(resolve => {
       function rafLoop(rafNow){
         const elapsed=(rafNow-startTs)/1000; const t_=elapsed;
+        if(window._exportCancelled || window._currentExportToken !== _exportToken){ resolve(); return; }
         if(t_>=totalDur){
           if(lastActiveVid&&!lastActiveVid.paused)lastActiveVid.pause();
           _audioCandidates.forEach(({idx})=>{try{audioEls[idx]?.pause();}catch(e){}});
