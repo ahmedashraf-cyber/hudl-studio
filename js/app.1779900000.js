@@ -1303,14 +1303,13 @@ async function startExport(){
     // For browsers without rVFC: fall back to timed currentTime advancement.
     status.textContent = 'Encoding video frames...';
 
-    // Move drawEls off-screen but VISIBLE so rVFC fires
-    const _exportContainer = document.createElement('div');
-    _exportContainer.style.cssText = 'position:fixed;left:-9999px;top:-9999px;width:1px;height:1px;overflow:hidden;pointer-events:none;';
-    document.body.appendChild(_exportContainer);
+    // Make drawEls visible (but tiny/hidden) WITHOUT moving them.
+    // Moving a video element resets readyState to 0 — it loses its buffer.
+    // Instead: style in-place so rVFC fires (rVFC requires element to be in active render tree).
     Object.values(drawEls).forEach(v => {
-      v.style.cssText = 'width:1px;height:1px;opacity:0.01;';
+      v.style.cssText = 'position:fixed;left:-9999px;top:0;width:2px;height:2px;opacity:0.01;pointer-events:none;z-index:-1;';
       v.muted = true;
-      _exportContainer.appendChild(v);
+      // Ensure it's in document body (already appended during preload)
     });
 
     const _composeAndEncode = (t, isKeyFrame) => {
@@ -1374,6 +1373,15 @@ async function startExport(){
       const clipFrameCount = clipEndFr - clipStartFr;
 
       if('requestVideoFrameCallback' in vid){
+        // Ensure video is ready before starting rVFC + play
+        if(vid.readyState < 2){
+          await new Promise(r => {
+            const h = () => { vid.removeEventListener('canplay', h); r(); };
+            vid.addEventListener('canplay', h);
+            setTimeout(r, 3000);
+            vid.load();
+          });
+        }
         // rVFC path: play video, grab each decoded frame
         await new Promise(resolveClip => {
           let grabbed = 0;
@@ -1427,8 +1435,8 @@ async function startExport(){
       if(_totalEncoded % 30 === 0) await new Promise(r => setTimeout(r, 0));
     }
 
-    // Cleanup off-screen container
-    try{ _exportContainer.remove(); }catch(e){}
+    // Cleanup: hide drawEls again
+    Object.values(drawEls).forEach(v => { try{ v.style.display='none'; }catch(e){} });
 
     // ── STEP 6: Flush + mux + download ──────────────────────────────────────
     status.textContent = 'Finalizing MP4...';
