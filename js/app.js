@@ -1352,7 +1352,7 @@ async function startExport(){
       _drawScene(t);
       // Throttle if encoder queue is backing up (prevents GPU saturation)
       // No await here - just skip encoding if queue is too full
-      const _shouldEncode = videoEncoder.encodeQueueSize < 20;
+      const _shouldEncode = true; // always encode — never skip frames
       if(_shouldEncode){
         const vf = new VideoFrame(canvas, { timestamp:tUs, duration:frameDurUs });
         videoEncoder.encode(vf, { keyFrame: (f === 0 || f % (fps*2) === 0) });
@@ -1412,10 +1412,8 @@ async function startExport(){
         _encodeFrame(f);
         _fi = f + 1;
 
-        // Backpressure: drain GPU encoder queue before continuing
-        while(videoEncoder.encodeQueueSize > 10){
-          await new Promise(r => setTimeout(r, 5));
-        }
+        // Brief backpressure yield — 10ms max, don't block indefinitely
+        if(videoEncoder.encodeQueueSize > 30) await new Promise(r => setTimeout(r, 10));
 
         // Yield every frame to keep UI responsive
         const pct = Math.min(98, Math.round(f / totalFrames * 80) + 10);
@@ -1429,7 +1427,7 @@ async function startExport(){
     // Encode any remaining tail frames (frame holds / overlays after last clip)
     while(_fi < totalFrames){
       _encodeFrame(_fi); _fi++;
-      while(videoEncoder.encodeQueueSize > 10) await new Promise(r => setTimeout(r, 5));
+      if(videoEncoder.encodeQueueSize > 30) await new Promise(r => setTimeout(r, 10));
       await new Promise(r => setTimeout(r, 0));
     }
 
