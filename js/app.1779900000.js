@@ -1357,7 +1357,9 @@ async function startExport(){
     // Process ALL frames in order using a seek-chain approach
     // Group frames by clip so we only seek once per clip transition
     let _fi = 0; // global frame index
-    const _BATCH = 5; // encode N frames between UI yields (DOM updates)
+    // Yield every frame — critical to prevent main thread freeze
+    // VideoFrame creation + encode is CPU-heavy; must yield to browser after each frame
+    const _BATCH = 1;
 
     const _seekAndRun = (vid, fileTime) => new Promise(r => {
       vid.muted = true; vid.volume = 0;
@@ -1380,12 +1382,10 @@ async function startExport(){
       while(_fi < clipStart){
         _encodeFrame(_fi);
         _fi++;
-        if(_fi % _BATCH === 0){
-          const pct = Math.min(98, Math.round(_fi / totalFrames * 80) + 10);
-          bar.style.width = pct+'%';
-          status.textContent = `Encoding: ${pct}% · ${(_fi/fps).toFixed(1)}s / ${totalDur.toFixed(1)}s`;
-          await new Promise(r => setTimeout(r, 0)); // yield to browser
-        }
+        const pct2 = Math.min(98, Math.round(_fi / totalFrames * 80) + 10);
+        bar.style.width = pct2+'%';
+        status.textContent = `Encoding: ${pct2}% · ${(_fi/fps).toFixed(1)}s / ${totalDur.toFixed(1)}s`;
+        await new Promise(r => setTimeout(r, 0)); // yield every frame
       }
 
       // Seek to clip start once
@@ -1407,12 +1407,11 @@ async function startExport(){
         _fi = f + 1;
 
         // Yield every BATCH frames for UI responsiveness
-        if(f % _BATCH === 0){
-          const pct = Math.min(98, Math.round(f / totalFrames * 80) + 10);
-          bar.style.width = pct+'%';
-          status.textContent = `Encoding: ${pct}% · ${(f/fps).toFixed(1)}s / ${totalDur.toFixed(1)}s`;
-          await new Promise(r => setTimeout(r, 0));
-        }
+        // Yield every frame to prevent main thread freeze
+        const pct = Math.min(98, Math.round(f / totalFrames * 80) + 10);
+        bar.style.width = pct+'%';
+        status.textContent = `Encoding: ${pct}% · ${(f/fps).toFixed(1)}s / ${totalDur.toFixed(1)}s`;
+        await new Promise(r => setTimeout(r, 0));
       }
       if(vid && !vid.paused) vid.pause();
     }
@@ -1420,7 +1419,7 @@ async function startExport(){
     // Encode any remaining tail frames (frame holds / overlays after last clip)
     while(_fi < totalFrames){
       _encodeFrame(_fi); _fi++;
-      if(_fi % _BATCH === 0) await new Promise(r => setTimeout(r, 0));
+      await new Promise(r => setTimeout(r, 0)); // yield every frame
     }
 
     // ── STEP 6: Flush + mux + download ──────────────────────────────────────
