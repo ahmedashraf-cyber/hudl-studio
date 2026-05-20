@@ -1370,59 +1370,37 @@ async function startExport(){
 
       const clipFrameCount = clipEndFr - clipStartFr;
 
-      if('requestVideoFrameCallback' in vid){
-        // Ensure video is ready before starting rVFC + play
-        if(vid.readyState < 2){
+      // Seek-based frame capture - works in all browser contexts including automated
+      // Strategy: seek every SEEK_EVERY frames, use stored frame for in-between
+      // 1080p H264: seek takes ~50-150ms, so seek every 3 frames = 3x fewer seeks
+      const SEEK_INTERVAL = 3; // seek every N frames
+      for(let f = 0; f < clipFrameCount; f++){
+        const fileT = fileStart + (f / fps) * spd;
+        const tlT   = clip.start + f / fps;
+
+        // Seek on first frame and every SEEK_INTERVAL frames
+        if(f === 0 || f % SEEK_INTERVAL === 0){
+          vid.currentTime = fileT;
           await new Promise(r => {
-            const h = () => { vid.removeEventListener('canplay', h); r(); };
-            vid.addEventListener('canplay', h);
-            setTimeout(r, 3000);
-            vid.load();
+            if(vid.readyState >= 2){ r(); return; }
+            const h = () => { vid.removeEventListener('seeked', h); r(); };
+            vid.addEventListener('seeked', h);
+            setTimeout(r, 300); // 300ms max per seek
           });
         }
-        // rVFC path: play video, grab each decoded frame
-        await new Promise(resolveClip => {
-          let grabbed = 0;
-          const onFrame = (now, meta) => {
-            const fileT   = vid.currentTime;
-            const tlT     = clip.start + (fileT - fileStart) / spd;
-            _composeAndEncode(tlT, grabbed === 0);
-            grabbed++;
-            _totalEncoded++;
-            const pct = Math.min(95, Math.round(_totalEncoded / totalFrames * 80) + 10);
-            bar.style.width = pct+'%';
-            status.textContent = `Encoding: ${pct}% · ${tlT.toFixed(1)}s / ${totalDur.toFixed(1)}s`;
-            if(grabbed < clipFrameCount && tlT < clip.start + clip.dur - 0.05){
-              vid.requestVideoFrameCallback(onFrame);
-            } else {
-              vid.pause();
-              resolveClip();
-            }
-          };
-          vid.requestVideoFrameCallback(onFrame);
-          vid.play().catch(()=>{});
-        });
-      } else {
-        // Fallback: step currentTime by 1/fps, use 16ms yield
-        for(let f=0; f<clipFrameCount; f++){
-          const fileT = fileStart + (f/fps)*spd;
-          const tlT   = clip.start + f/fps;
-          if(f > 0 && Math.abs(vid.currentTime - fileT) > 0.1){
-            vid.currentTime = fileT;
-            await new Promise(r => setTimeout(r, 16)); // 1 rAF worth of time
-          } else {
-            await new Promise(r => setTimeout(r, 0));
-          }
-          _composeAndEncode(tlT, f===0);
-          _totalEncoded++;
-          if(f%30===0){
-            const pct=Math.min(95,Math.round(_totalEncoded/totalFrames*80)+10);
-            bar.style.width=pct+'%';
-            status.textContent=`Encoding: ${pct}% · ${tlT.toFixed(1)}s / ${totalDur.toFixed(1)}s`;
-          }
+        // Brief yield for browser to update frame
+        await new Promise(r => setTimeout(r, 0));
+
+        _composeAndEncode(tlT, f === 0);
+        _totalEncoded++;
+
+        if(f % 30 === 0){
+          const pct = Math.min(95, Math.round(_totalEncoded / totalFrames * 80) + 10);
+          bar.style.width = pct + '%';
+          status.textContent = `Encoding: ${pct}% · ${tlT.toFixed(1)}s / ${totalDur.toFixed(1)}s`;
         }
       }
-      if(vid&&!vid.paused) vid.pause();
+      if(vid && !vid.paused) vid.pause();
     }
 
     // Encode tail (frame holds / gaps after last clip)
