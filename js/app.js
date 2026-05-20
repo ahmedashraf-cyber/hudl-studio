@@ -1298,23 +1298,23 @@ async function startExport(){
     bar.style.width = '10%';
 
     // ── STEP 5: Video frame composition + encoding ───────────────────────────
-    // The right way: seek each clip once, then step frame-by-frame using
-    // a chained seeked-event approach (no await per frame — much faster).
-    //
-    // For each clip:
-    //   1. Seek to start → wait for seeked
-    //   2. Draw frame → encode → advance currentTime by 1/fps
-    //   3. Wait for seeked → draw → encode → repeat
-    //   4. Done when we've encoded all frames for this clip
-    //
-    // This is 10-50x faster than per-frame await because we pipeline:
-    // while encoding frame N, browser is seeking to frame N+1.
-
+    // Strategy: make video elements visible (positioned off-screen) so browser
+    // delivers decoded frames. Use requestVideoFrameCallback to capture each frame.
+    // For browsers without rVFC: fall back to timed currentTime advancement.
     status.textContent = 'Encoding video frames...';
 
-    // Helper: draw the current scene onto canvas at timeline time t
-    const _drawScene = (t) => {
-      // Frame hold
+    // Move drawEls off-screen but VISIBLE so rVFC fires
+    const _exportContainer = document.createElement('div');
+    _exportContainer.style.cssText = 'position:fixed;left:-9999px;top:-9999px;width:1px;height:1px;overflow:hidden;pointer-events:none;';
+    document.body.appendChild(_exportContainer);
+    Object.values(drawEls).forEach(v => {
+      v.style.cssText = 'width:1px;height:1px;opacity:0.01;';
+      v.muted = true;
+      _exportContainer.appendChild(v);
+    });
+
+    const _composeAndEncode = (t, isKeyFrame) => {
+      const tUs = Math.round(t * 1_000_000);
       const fh = S.cut.clips.find(c => c.type==='frame_hold' && t>=c.start && t<c.start+c.dur);
       if(fh){
         ctx.fillStyle='#000'; ctx.fillRect(0,0,W,H);
@@ -1323,113 +1323,112 @@ async function startExport(){
           (S.cut.effects[ci]||[]).forEach(ef=>{ if(ef.visible===false)return; const e=CUT_EFFECTS[ef.i]; if(!e||e.type==='transition')return; const es=fh.start+(ef.startOffset||0),ee=es+(ef.effectDur??fh.dur); if(t<es||t>=ee)return; if(e.type==='range')parts.push(e.prop+'('+ef.v+e.unit+')'); else if(e.type==='toggle')parts.push(e.filter); });
           ctx.save(); if(parts.length)ctx.filter=parts.join(' '); ctx.drawImage(fh._img,0,0,W,H); ctx.filter='none'; ctx.restore();
         }
-        if((window._overlays||[]).some(o=>t>=o.startTime&&t<o.endTime)&&window.renderOverlaysOnCanvas)
-          window.renderOverlaysOnCanvas(ctx,W,H,t,new Set());
-        return;
-      }
-      // Video clip
-      const clip = videoClips.find(c => t>=c.start && t<c.start+c.dur);
-      if(clip){
-        const vid = drawEls[clip.mediaIdx];
-        ctx.fillStyle='#000'; ctx.fillRect(0,0,W,H);
-        if(vid && vid.readyState>=2){
-          const ci=S.cut.clips.indexOf(clip), parts=[];
-          (S.cut.effects[ci]||[]).forEach(ef=>{ if(ef.visible===false)return; const e=CUT_EFFECTS[ef.i]; if(!e||e.type==='transition')return; const es=clip.start+(ef.startOffset||0),ee=es+(ef.effectDur??clip.dur); if(t<es||t>=ee)return; if(e.type==='range')parts.push(e.prop+'('+ef.v+e.unit+')'); else if(e.type==='toggle')parts.push(e.filter); });
-          ctx.save(); if(parts.length)ctx.filter=parts.join(' '); try{ctx.drawImage(vid,0,0,W,H);}catch(e){} ctx.filter='none'; ctx.restore();
-        }
       } else {
+        const clip = videoClips.find(c => t>=c.start && t<c.start+c.dur);
         ctx.fillStyle='#000'; ctx.fillRect(0,0,W,H);
-      }
-      // Overlays
-      if((window._overlays||[]).some(o=>t>=o.startTime&&t<o.endTime)&&window.renderOverlaysOnCanvas)
-        window.renderOverlaysOnCanvas(ctx,W,H,t,new Set());
-    };
-
-    // Helper: push one frame to the video encoder
-    const _encodeFrame = (fi) => {
-      const t   = fi / fps;
-      const tUs = Math.round(t * 1_000_000);
-      _drawScene(t);
-      // Throttle if encoder queue is backing up (prevents GPU saturation)
-      // No await here - just skip encoding if queue is too full
-      const _shouldEncode = true; // always encode — never skip frames
-      if(_shouldEncode){
-        const vf = new VideoFrame(canvas, { timestamp:tUs, duration:frameDurUs });
-        videoEncoder.encode(vf, { keyFrame: (f === 0 || f % (fps*2) === 0) });
-        vf.close();
-      }
-    };
-
-    // Process ALL frames in order using a seek-chain approach
-    // Group frames by clip so we only seek once per clip transition
-    let _fi = 0; // global frame index
-    // Yield every frame — critical to prevent main thread freeze
-    // VideoFrame creation + encode is CPU-heavy; must yield to browser after each frame
-    const _BATCH = 1;
-
-    const _seekAndRun = (vid, fileTime) => new Promise(r => {
-      vid.muted = true; vid.volume = 0;
-      if(Math.abs(vid.currentTime - fileTime) < 0.001){ r(); return; }
-      const h = () => { vid.removeEventListener('seeked', h); r(); };
-      vid.addEventListener('seeked', h);
-      vid.currentTime = fileTime;
-      setTimeout(r, 2000); // hard cap — never hang
-    });
-
-    for(let ci=0; ci<videoClips.length; ci++){
-      const clip       = videoClips[ci];
-      const vid        = drawEls[clip.mediaIdx];
-      const clipStart  = Math.round(clip.start * fps);
-      const clipEnd    = Math.round((clip.start + clip.dur) * fps);
-      const spd        = clip.speed || 1;
-      const fileStart  = clip.fileStart || 0;
-
-      // Encode any gap (frame holds / black) before this clip
-      while(_fi < clipStart){
-        _encodeFrame(_fi);
-        _fi++;
-        const pct2 = Math.min(98, Math.round(_fi / totalFrames * 80) + 10);
-        bar.style.width = pct2+'%';
-        status.textContent = `Encoding: ${pct2}% · ${(_fi/fps).toFixed(1)}s / ${totalDur.toFixed(1)}s`;
-        await new Promise(r => setTimeout(r, 0)); // yield every frame
-      }
-
-      // Seek to clip start once
-      if(vid) await _seekAndRun(vid, fileStart);
-
-      // Encode all frames in this clip
-      for(let f = clipStart; f < clipEnd; f++){
-        // Advance video position (no await — just set currentTime, draw immediately)
-        if(vid){
-          const fileT = fileStart + ((f - clipStart) / fps) * spd;
-          // Only set currentTime if drifted > 2 frames (avoid unnecessary seeks)
-          if(Math.abs(vid.currentTime - fileT) > (1/fps) * 2.5){
-            vid.currentTime = fileT;
-            // Short yield to let browser update the video frame
-            await new Promise(r => setTimeout(r, 4));
+        if(clip){
+          const vid=drawEls[clip.mediaIdx];
+          if(vid && vid.readyState>=2){
+            const ci=S.cut.clips.indexOf(clip), parts=[];
+            (S.cut.effects[ci]||[]).forEach(ef=>{ if(ef.visible===false)return; const e=CUT_EFFECTS[ef.i]; if(!e||e.type==='transition')return; const es=clip.start+(ef.startOffset||0),ee=es+(ef.effectDur??clip.dur); if(t<es||t>=ee)return; if(e.type==='range')parts.push(e.prop+'('+ef.v+e.unit+')'); else if(e.type==='toggle')parts.push(e.filter); });
+            ctx.save(); if(parts.length)ctx.filter=parts.join(' '); try{ctx.drawImage(vid,0,0,W,H);}catch(e){} ctx.filter='none'; ctx.restore();
           }
         }
-        _encodeFrame(f);
-        _fi = f + 1;
+      }
+      if((window._overlays||[]).some(o=>t>=o.startTime&&t<o.endTime)&&window.renderOverlaysOnCanvas)
+        window.renderOverlaysOnCanvas(ctx,W,H,t,new Set());
+      const vf = new VideoFrame(canvas, { timestamp:tUs, duration:frameDurUs });
+      videoEncoder.encode(vf, { keyFrame: isKeyFrame });
+      vf.close();
+    };
 
-        // Brief backpressure yield — 10ms max, don't block indefinitely
-        if(videoEncoder.encodeQueueSize > 30) await new Promise(r => setTimeout(r, 10));
+    let _totalEncoded = 0;
 
-        // Yield every frame to keep UI responsive
-        const pct = Math.min(98, Math.round(f / totalFrames * 80) + 10);
-        bar.style.width = pct+'%';
-        status.textContent = `Encoding: ${pct}% · ${(f/fps).toFixed(1)}s / ${totalDur.toFixed(1)}s`;
+    for(let ci=0; ci<videoClips.length; ci++){
+      const clip     = videoClips[ci];
+      const vid      = drawEls[clip.mediaIdx];
+      const clipStartFr = Math.round(clip.start * fps);
+      const clipEndFr   = Math.round((clip.start + clip.dur) * fps);
+      const spd         = clip.speed || 1;
+      const fileStart   = clip.fileStart || 0;
+
+      // Encode gaps before this clip
+      while(_totalEncoded < clipStartFr){
+        const t = _totalEncoded / fps;
+        _composeAndEncode(t, _totalEncoded === 0);
+        _totalEncoded++;
         await new Promise(r => setTimeout(r, 0));
       }
-      if(vid && !vid.paused) vid.pause();
+
+      if(!vid){ _totalEncoded = clipEndFr; continue; }
+
+      // Seek to start
+      vid.muted = true; vid.playbackRate = spd;
+      vid.currentTime = fileStart;
+      await new Promise(r => {
+        if(vid.readyState>=2){r();return;}
+        const h=()=>{vid.removeEventListener('seeked',h);r();};
+        vid.addEventListener('seeked',h); setTimeout(r,3000);
+      });
+
+      const clipFrameCount = clipEndFr - clipStartFr;
+
+      if('requestVideoFrameCallback' in vid){
+        // rVFC path: play video, grab each decoded frame
+        await new Promise(resolveClip => {
+          let grabbed = 0;
+          const onFrame = (now, meta) => {
+            const fileT   = vid.currentTime;
+            const tlT     = clip.start + (fileT - fileStart) / spd;
+            _composeAndEncode(tlT, grabbed === 0);
+            grabbed++;
+            _totalEncoded++;
+            const pct = Math.min(95, Math.round(_totalEncoded / totalFrames * 80) + 10);
+            bar.style.width = pct+'%';
+            status.textContent = `Encoding: ${pct}% · ${tlT.toFixed(1)}s / ${totalDur.toFixed(1)}s`;
+            if(grabbed < clipFrameCount && tlT < clip.start + clip.dur - 0.05){
+              vid.requestVideoFrameCallback(onFrame);
+            } else {
+              vid.pause();
+              resolveClip();
+            }
+          };
+          vid.requestVideoFrameCallback(onFrame);
+          vid.play().catch(()=>{});
+        });
+      } else {
+        // Fallback: step currentTime by 1/fps, use 16ms yield
+        for(let f=0; f<clipFrameCount; f++){
+          const fileT = fileStart + (f/fps)*spd;
+          const tlT   = clip.start + f/fps;
+          if(f > 0 && Math.abs(vid.currentTime - fileT) > 0.1){
+            vid.currentTime = fileT;
+            await new Promise(r => setTimeout(r, 16)); // 1 rAF worth of time
+          } else {
+            await new Promise(r => setTimeout(r, 0));
+          }
+          _composeAndEncode(tlT, f===0);
+          _totalEncoded++;
+          if(f%30===0){
+            const pct=Math.min(95,Math.round(_totalEncoded/totalFrames*80)+10);
+            bar.style.width=pct+'%';
+            status.textContent=`Encoding: ${pct}% · ${tlT.toFixed(1)}s / ${totalDur.toFixed(1)}s`;
+          }
+        }
+      }
+      if(vid&&!vid.paused) vid.pause();
     }
 
-    // Encode any remaining tail frames (frame holds / overlays after last clip)
-    while(_fi < totalFrames){
-      _encodeFrame(_fi); _fi++;
-      if(videoEncoder.encodeQueueSize > 30) await new Promise(r => setTimeout(r, 10));
-      await new Promise(r => setTimeout(r, 0));
+    // Encode tail (frame holds / gaps after last clip)
+    while(_totalEncoded < totalFrames){
+      const t = _totalEncoded / fps;
+      _composeAndEncode(t, false);
+      _totalEncoded++;
+      if(_totalEncoded % 30 === 0) await new Promise(r => setTimeout(r, 0));
     }
+
+    // Cleanup off-screen container
+    try{ _exportContainer.remove(); }catch(e){}
 
     // ── STEP 6: Flush + mux + download ──────────────────────────────────────
     status.textContent = 'Finalizing MP4...';
