@@ -3454,6 +3454,9 @@ function cutAddToTL(i) {
     // Also move playhead to start of new clip
     S.cut.ph = startSec;
     updateCutPH();
+    // Re-sync audio after playhead moved — keeps voiceover playing at new position if applicable
+    if(S.cut.playing) startAudioPlayback();
+    else syncAudioPlayback();
   }, 80);
   // Ensure viewport frame has correct dimensions, then initialize video
   applyCanvasAspectRatio(S.proj.w||1920, S.proj.h||1080);
@@ -4328,8 +4331,12 @@ function cutDelete(){
   S.cut.sel=null;
   stopAudioPlayback();
   renderCutTimeline();
-  // Re-sync mute state after deletion (un-mute video if no standalone audio left)
-  setTimeout(()=>{ _syncVideoMute(); },50);
+  // Re-sync mute state and audio after deletion
+  setTimeout(()=>{
+    _syncVideoMute();
+    if(S.cut.playing) startAudioPlayback();
+    else syncAudioPlayback();
+  }, 60);
   notify('Clip deleted');
   scheduleSave();
 }
