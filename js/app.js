@@ -4754,15 +4754,12 @@ function cutTogglePlay(){
 function _syncVideoMute(){
   const mv = document.getElementById('cut-main-vid');
   if (!mv) return;
-  const ph = S.cut.ph;
-  // If any standalone audio clip is playing at this position, mute the video
-  // to prevent the video audio from mixing with the standalone audio track
-  const standaloneAudioActive = S.cut.clips.some(c =>
-    c.type === 'audio' && !c.linkedToVideo &&
-    ph >= c.start && ph < c.start + c.dur &&
-    S.cut.media[c.mediaIdx]?.url
-  );
-  mv.muted = standaloneAudioActive;
+  // Only mute video if its specific track is muted via toggleTrackMute
+  // Standalone audio clips (voiceover/music) should play ALONGSIDE video — never mute it
+  const ci = parseInt(mv.dataset.clipIdx);
+  const clip = !isNaN(ci) ? S.cut.clips[ci] : null;
+  const trackMuted = clip ? !!(S.cut.mutedTracks?.[clip.track]) : false;
+  mv.muted = trackMuted;
 }
 
 function stopCutPlay(){
