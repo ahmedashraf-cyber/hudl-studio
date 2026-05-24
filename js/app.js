@@ -925,7 +925,7 @@ function showExportModal(){
 }
 
 async function startExport(){
-  // ── UI setup ─────────────────────────────────────────────────────────────
+  // ── UI setup ──────────────────────────────────────────────────────────────
   const fname   = (document.getElementById('exp-filename')?.value||'export').trim().replace(/[^\w\s-]/g,'').replace(/\s+/g,'_')||'export';
   const qParts  = (document.getElementById('exp-quality')?.value||'1920,1080,8000000').split(',');
   const W       = parseInt(qParts[0])||1920;
@@ -939,259 +939,235 @@ async function startExport(){
   const etaEl   = document.getElementById('exp-eta');
   const progDiv = document.getElementById('exp-progress');
 
-  btn.disabled = true; btn.textContent = 'Exporting...';
-  progDiv.style.display = 'block';
+  btn.disabled=true; btn.textContent='Exporting...';
+  progDiv.style.display='block';
 
-  // Cancel any ghost export from a previous session
-  window._exportCancelled = true;
-  await new Promise(r => setTimeout(r, 60));
-  window._exportCancelled = false;
-  const _tok = Symbol(); window._exportTok = _tok;
-  const _alive = () => !window._exportCancelled && window._exportTok === _tok;
+  // Kill any previous export loop
+  window._exportCancelled=true;
+  await new Promise(r=>setTimeout(r,80));
+  window._exportCancelled=false;
+  const _tok=Symbol(); window._exportTok=_tok;
+  const _alive=()=>!window._exportCancelled && window._exportTok===_tok;
 
-  const _setStatus = (msg, pct, ph, eta) => {
-    if(!_alive()) return;
-    if(status)  status.textContent  = msg;
-    if(bar)     bar.style.width     = (pct||0)+'%';
-    if(phaseEl) phaseEl.textContent = ph  || '';
-    if(etaEl)   etaEl.textContent   = eta || '';
+  const _set=(msg,pct,ph,eta)=>{
+    if(!_alive())return;
+    if(status)  status.textContent =msg;
+    if(bar)     bar.style.width    =(pct||0)+'%';
+    if(phaseEl) phaseEl.textContent=ph||'';
+    if(etaEl)   etaEl.textContent  =eta||'';
   };
-  const _fail = (msg) => {
-    if(status)  status.textContent  = '✖ '+msg;
-    if(phaseEl) phaseEl.textContent = '';
-    if(etaEl)   etaEl.textContent   = '';
-    if(bar)     bar.style.width     = '0%';
-    if(btn){ btn.disabled=false; btn.textContent='↺ Retry'; btn.onclick=startExport; }
+  const _fail=(msg)=>{
+    if(status)  status.textContent ='✖ '+msg;
+    if(phaseEl) phaseEl.textContent='';
+    if(etaEl)   etaEl.textContent  ='';
+    if(bar)     bar.style.width    ='0%';
+    if(btn){btn.disabled=false;btn.textContent='↺ Retry';btn.onclick=startExport;}
   };
 
   // ── Timeline data ─────────────────────────────────────────────────────────
-  const videoClips = S.cut.clips.filter(c=>c.type==='video').sort((a,b)=>a.start-b.start);
-  if(!videoClips.length){ _fail('No video clips on timeline'); return; }
-  const _allEnds   = S.cut.clips.map(c=>c.start+c.dur);
-  const _ovEnds    = (window._overlays||[]).map(o=>o.endTime||0);
-  const totalDur   = Math.max(0.1,..._allEnds,..._ovEnds);
-  const totalFrames = Math.ceil(totalDur * fps);
-  const frameDurUs  = Math.round(1_000_000 / fps);
+  const videoClips=S.cut.clips.filter(c=>c.type==='video').sort((a,b)=>a.start-b.start);
+  if(!videoClips.length){_fail('No video clips on timeline');return;}
+  const totalDur=Math.max(0.1,...S.cut.clips.map(c=>c.start+c.dur),...(window._overlays||[]).map(o=>o.endTime||0));
 
-  // Audio clips = ONLY type==='audio' tracks (never video native audio)
-  const audioClips = S.cut.clips
-    .filter(c=>c.type==='audio' && !S.cut.mutedTracks?.[c.track])
-    .sort((a,b)=>a.start-b.start);
+  // Audio = ONLY type==='audio' clips (never video native audio)
+  const audioClips=S.cut.clips.filter(c=>c.type==='audio'&&!S.cut.mutedTracks?.[c.track]).sort((a,b)=>a.start-b.start);
 
-  // ── Canvas (must be in DOM for drawImage to work with blob URLs) ──────────
-  const canvas = document.createElement('canvas');
-  canvas.width = W; canvas.height = H;
-  canvas.style.cssText = 'position:fixed;left:-9999px;top:0;width:1px;height:1px;opacity:0;pointer-events:none;';
+  // ── Canvas — MUST be in DOM so captureStream captures draws ──────────────
+  const canvas=document.createElement('canvas');
+  canvas.width=W; canvas.height=H;
+  canvas.style.cssText='position:fixed;left:0;top:0;width:1px;height:1px;opacity:0.001;pointer-events:none;z-index:1;';
   document.body.appendChild(canvas);
-  const ctx = canvas.getContext('2d');
+  const ctx=canvas.getContext('2d');
 
   // ── PHASE 1: Pre-load video elements ─────────────────────────────────────
-  _setStatus('Loading video files...', 2, 'Phase 1/4 — Loading', '');
-  const drawEls = {};
-  const uniqueIdxs = [...new Set(videoClips.map(c=>c.mediaIdx))];
-  await Promise.all(uniqueIdxs.map(mIdx => {
-    const item = S.cut.media[mIdx];
-    if(!item?.url) return Promise.resolve();
-    const v = document.createElement('video');
-    v.muted=true; v.volume=0; v.preload='auto'; v.playsInline=true;
-    v.style.cssText='position:fixed;left:0;top:0;width:2px;height:2px;opacity:0.001;pointer-events:none;z-index:9999;';
-    v.src = item.url;
-    document.body.appendChild(v);
-    drawEls[mIdx] = v;
+  _set('Loading video files...',3,'Phase 1/4 — Loading','');
+  const drawEls={};
+  await Promise.all([...new Set(videoClips.map(c=>c.mediaIdx))].map(mIdx=>{
+    const item=S.cut.media[mIdx];
+    if(!item?.url)return Promise.resolve();
+    const v=document.createElement('video');
+    v.muted=true;v.volume=0;v.preload='auto';v.playsInline=true;
+    // Must be visible in viewport for Chrome to decode blob URLs
+    v.style.cssText='position:fixed;left:0;top:0;width:2px;height:2px;opacity:0.001;pointer-events:none;z-index:2;';
+    v.src=item.url; document.body.appendChild(v); drawEls[mIdx]=v;
     return new Promise(r=>{
       if(v.readyState>=2){r();return;}
-      let done=false;
-      const resolve=()=>{if(done)return;done=true;v.removeEventListener('loadeddata',resolve);v.removeEventListener('canplay',resolve);v.removeEventListener('error',resolve);r();};
-      v.addEventListener('loadeddata',resolve);v.addEventListener('canplay',resolve);v.addEventListener('error',resolve);
-      setTimeout(resolve,12000); v.load();
+      let ok=false;
+      const done=()=>{if(ok)return;ok=true;['loadeddata','canplay','error'].forEach(e=>v.removeEventListener(e,done));r();};
+      ['loadeddata','canplay','error'].forEach(e=>v.addEventListener(e,done));
+      setTimeout(done,12000); v.load();
     });
   }));
   if(!_alive()){canvas.remove();return;}
 
-  // ── PHASE 2: Decode audio offline ─────────────────────────────────────────
-  _setStatus('Decoding audio...', 8, 'Phase 2/4 — Audio', '');
-  let _mixedAudio = null;
-  if(audioClips.length>0){
+  // ── PHASE 2: Decode audio tracks offline ─────────────────────────────────
+  _set('Decoding audio...',8,'Phase 2/4 — Audio','');
+  let _mixedAudio=null;
+  if(audioClips.length){
     try{
-      const _sr=48000;
-      const _offCtx=new OfflineAudioContext(2,Math.ceil(totalDur*_sr)+_sr,_sr);
+      const offCtx=new OfflineAudioContext(2,Math.ceil(totalDur*48000)+48000,48000);
       await Promise.all(audioClips.map(async ac=>{
-        const item=S.cut.media[ac.mediaIdx];
-        if(!item?.url)return;
+        const item=S.cut.media[ac.mediaIdx]; if(!item?.url)return;
         try{
-          const resp=await fetch(item.url);
-          const buf=await _offCtx.decodeAudioData(await resp.arrayBuffer());
-          const src=_offCtx.createBufferSource();
-          const gn=_offCtx.createGain();
+          const buf=await offCtx.decodeAudioData(await(await fetch(item.url)).arrayBuffer());
+          const src=offCtx.createBufferSource();
+          const gn=offCtx.createGain();
           src.buffer=buf; gn.gain.value=ac.volume!==undefined?Math.min(1,ac.volume):1;
-          src.connect(gn);gn.connect(_offCtx.destination);
+          src.connect(gn); gn.connect(offCtx.destination);
           src.start(Math.max(0,ac.start),ac.fileStart||0,ac.dur);
-        }catch(e){console.warn('[Export] audio decode:',e.message);}
+        }catch(e){console.warn('[Export] audio:',e.message);}
       }));
-      _mixedAudio=await _offCtx.startRendering();
+      _mixedAudio=await offCtx.startRendering();
+      console.log('[Export] audio rendered:',_mixedAudio.duration.toFixed(1)+'s');
     }catch(e){console.warn('[Export] OfflineAudio:',e);}
   }
   if(!_alive()){canvas.remove();return;}
 
-  // ── PHASE 3: Set up mp4-muxer + encoders ─────────────────────────────────
-  _setStatus('Setting up encoder...', 12, 'Phase 3/4 — Setup', '');
+  // ── PHASE 3: Set up MediaRecorder + AudioContext ──────────────────────────
+  _set('Setting up recorder...',12,'Phase 3/4 — Setup','');
 
-  const muxer = new Mp4Muxer.Muxer({
-    target: new Mp4Muxer.ArrayBufferTarget(),
-    video: { codec:'avc', width:W, height:H },
-    audio: _mixedAudio ? { codec:'aac', sampleRate:48000, numberOfChannels:2 } : undefined,
-    fastStart: 'in-memory',
-    firstTimestampBehavior: 'offset'
-  });
+  // Fresh AudioContext for recording — created right before recorder.start()
+  let recCtx=null, recGain=null, recDest=null;
+  try{
+    recCtx=new(window.AudioContext||window.webkitAudioContext)({sampleRate:48000});
+    await Promise.race([recCtx.resume(),new Promise(r=>setTimeout(r,500))]);
+    recGain=recCtx.createGain(); recGain.gain.value=1;
+    recDest=recCtx.createMediaStreamDestination();
+    recGain.connect(recDest);
+  }catch(e){console.warn('[Export] recCtx:',e);}
 
-  // VideoEncoder
-  const videoEncoder = new VideoEncoder({
-    output: (chunk,meta) => muxer.addVideoChunk(chunk,meta),
-    error: e => console.error('[VideoEncoder]',e)
-  });
-  videoEncoder.configure({
-    codec:'avc1.42001f', width:W, height:H,
-    bitrate:BR, framerate:fps,
-    avc:{format:'annexb'}
-  });
+  const videoStream=canvas.captureStream(fps);
+  const audioTracks=recDest?.stream.getAudioTracks().filter(t=>t.readyState==='live')||[];
+  const finalStream=audioTracks.length
+    ?new MediaStream([...videoStream.getVideoTracks(),...audioTracks])
+    :videoStream;
 
-  // AudioEncoder + encode PCM → AAC now (before video loop)
-  if(_mixedAudio){
-    const audioEncoder = new AudioEncoder({
-      output:(chunk,meta)=>muxer.addAudioChunk(chunk,meta),
-      error:e=>console.error('[AudioEncoder]',e)
-    });
-    audioEncoder.configure({codec:'mp4a.40.2',sampleRate:48000,numberOfChannels:2,bitrate:192000});
-    const chunkSize=1024;
-    const L=_mixedAudio.getChannelData(0);
-    const R=_mixedAudio.numberOfChannels>1?_mixedAudio.getChannelData(1):L;
-    const total=_mixedAudio.length;
-    for(let s=0;s<total;s+=chunkSize){
-      const n=Math.min(chunkSize,total-s);
-      const buf=new Float32Array(n*2);
-      for(let i=0;i<n;i++){buf[i*2]=L[s+i];buf[i*2+1]=R[s+i];}
-      const ad=new AudioData({format:'f32',sampleRate:48000,numberOfFrames:n,numberOfChannels:2,
-        timestamp:Math.round(s/48000*1_000_000),data:buf});
-      audioEncoder.encode(ad); ad.close();
-    }
-    await audioEncoder.flush(); audioEncoder.close();
+  // Best supported WebM codec
+  const mimeType=['video/webm;codecs=vp9,opus','video/webm;codecs=vp8,opus','video/webm'].find(m=>MediaRecorder.isTypeSupported(m))||'video/webm';
+  const chunks=[];
+  const recorder=new MediaRecorder(finalStream,{mimeType,videoBitsPerSecond:BR,audioBitsPerSecond:192000});
+  recorder.ondataavailable=e=>{if(e.data?.size>0)chunks.push(e.data);};
+
+  recorder.onstop=async()=>{
+    if(!_alive()){canvas.remove();return;}
+    _set('Packaging...',99,'Packaging','');
+    await new Promise(r=>setTimeout(r,200));
+    const blob=new Blob(chunks,{type:mimeType});
+    const url=URL.createObjectURL(blob);
+    const a=document.createElement('a');
+    a.href=url; a.download=`${fname}_${W}x${H}_${fps}fps.webm`;
+    document.body.appendChild(a); a.click(); document.body.removeChild(a);
+    setTimeout(()=>URL.revokeObjectURL(url),60000);
+    canvas.remove();
+    Object.values(drawEls).forEach(v=>{try{v.pause();if(document.body.contains(v))v.remove();}catch(e){}});
+    try{if(recCtx)recCtx.close();}catch(e){}
+    try{if(window._exportAudioCtx){window._exportAudioCtx.close();window._exportAudioCtx=null;}}catch(e){}
+    _set('Done!',100,'','');
+    document.getElementById('export-modal')?.remove();
+    notify(`✓ Export — ${fname}.webm  (${(blob.size/1024/1024).toFixed(1)} MB · ${totalDur.toFixed(0)}s)`,'#3fb950');
+  };
+
+  // ── PHASE 4: Real-time render loop ────────────────────────────────────────
+  // setInterval draws frames at real-time pace.
+  // captureStream records wall-clock time → file duration = totalDur seconds.
+  // Audio PCM scheduled on recCtx AFTER recorder.start() so it plays during recording.
+
+  recorder.start(500); // 500ms chunks
+
+  // Schedule decoded audio to start with recording
+  if(_mixedAudio&&recCtx&&recGain){
+    try{
+      const audioT0=recCtx.currentTime+0.05;
+      const src=recCtx.createBufferSource();
+      src.buffer=_mixedAudio; src.connect(recGain);
+      src.start(audioT0,0,_mixedAudio.duration);
+    }catch(e){console.warn('[Export] audio schedule:',e);}
   }
-  if(!_alive()){canvas.remove();return;}
 
-  // ── PHASE 4: Encode video frames ──────────────────────────────────────────
-  _setStatus('Encoding frames...', 14, 'Phase 4/4 — Rendering', 'Calculating...');
-  const encodeStart = Date.now();
+  const renderStartMs=Date.now();
+  const msPerFrame=Math.round(1000/fps);
   let lastClipIdx=-1, lastVid=null;
 
-  // Seek first clip so first frames aren't black
-  if(videoClips[0]&&drawEls[videoClips[0].mediaIdx]){
-    const v=drawEls[videoClips[0].mediaIdx];
-    v.currentTime=videoClips[0].fileStart||0;
-    v.playbackRate=videoClips[0].speed||1;
-    await new Promise(r=>{const h=()=>{v.removeEventListener('seeked',h);r();};v.addEventListener('seeked',h);setTimeout(r,3000);});
+  // Pre-seek first clip so first frame isn't black
+  const fc=videoClips[0];
+  if(fc&&drawEls[fc.mediaIdx]){
+    const v=drawEls[fc.mediaIdx];
+    v.currentTime=fc.fileStart||0; v.playbackRate=fc.speed||1;
+    await new Promise(r=>{const h=()=>{v.removeEventListener('seeked',h);r();};v.addEventListener('seeked',h);setTimeout(r,2000);});
     try{await v.play();}catch(e){}
     lastVid=v; lastClipIdx=0;
   }
 
-  for(let fi=0;fi<totalFrames;fi++){
-    if(!_alive()) break;
-    const t   = fi/fps;   // ABSOLUTE timestamp — never accumulated
-    const tUs = Math.round(t*1_000_000);
+  _set('Rendering...',14,'Phase 4/4 — Rendering','Calculating...');
 
-    // ── Draw scene ──────────────────────────────────────────────────────────
-    const fh=S.cut.clips.find(c=>c.type==='frame_hold'&&t>=c.start&&t<c.start+c.dur);
-    if(fh){
-      if(fh._imgData&&(!fh._img||!fh._img.complete)){
-        fh._img=new Image();
-        await new Promise(r=>{fh._img.onload=r;fh._img.onerror=r;fh._img.src=fh._imgData;setTimeout(r,1000);});
+  await new Promise(resolve=>{
+    const intervalId=setInterval(()=>{
+      if(!_alive()){
+        clearInterval(intervalId);
+        if(recorder.state!=='inactive')recorder.stop();
+        resolve(); return;
       }
-      ctx.fillStyle='#000';ctx.fillRect(0,0,W,H);
-      if(fh._img?.complete){
-        const ci=S.cut.clips.indexOf(fh),parts=[];
-        (S.cut.effects[ci]||[]).forEach(ef=>{if(ef.visible===false)return;const e=CUT_EFFECTS[ef.i];if(!e||e.type==='transition')return;const es=fh.start+(ef.startOffset||0),ee=es+(ef.effectDur??fh.dur);if(t<es||t>=ee)return;if(e.type==='range')parts.push(e.prop+'('+ef.v+e.unit+')');else if(e.type==='toggle')parts.push(e.filter);});
-        ctx.save();if(parts.length)ctx.filter=parts.join(' ');ctx.drawImage(fh._img,0,0,W,H);ctx.filter='none';ctx.restore();
+      const elapsed=(Date.now()-renderStartMs)/1000;
+      if(elapsed>=totalDur){
+        clearInterval(intervalId);
+        if(lastVid&&!lastVid.paused)lastVid.pause();
+        if(recorder.state!=='inactive')recorder.stop();
+        resolve(); return;
       }
-      if(lastVid&&!lastVid.paused)lastVid.pause();
-    } else {
-      const clip=videoClips.find(c=>t>=c.start&&t<c.start+c.dur);
-      if(clip){
-        const vid=drawEls[clip.mediaIdx];
-        const ci=videoClips.indexOf(clip);
-        if(ci!==lastClipIdx){
-          if(lastVid&&lastVid!==vid&&!lastVid.paused)lastVid.pause();
-          lastClipIdx=ci; lastVid=vid;
-          if(vid){
-            const ft=(clip.fileStart||0)+Math.max(0,(t-clip.start)*(clip.speed||1));
-            vid.muted=true;vid.volume=0;vid.playbackRate=clip.speed||1;
-            vid.currentTime=ft;
-            await new Promise(r=>{const h=()=>{vid.removeEventListener('seeked',h);r();};vid.addEventListener('seeked',h);setTimeout(r,2000);});
-            try{await vid.play();}catch(e){}
-          }
-        } else if(vid){
-          // Keep video in sync (advance by 1 frame naturally — no seek needed)
-          const ft=(clip.fileStart||0)+Math.max(0,(t-clip.start)*(clip.speed||1));
-          if(Math.abs(vid.currentTime-ft)>(1/fps)*3) vid.currentTime=ft;
-        }
+
+      // Draw scene at current elapsed time
+      const t=elapsed;
+      const fh=S.cut.clips.find(c=>c.type==='frame_hold'&&t>=c.start&&t<c.start+c.dur);
+      if(fh){
+        if(fh._imgData&&(!fh._img||!fh._img.complete)){fh._img=new Image();fh._img.src=fh._imgData;}
         ctx.fillStyle='#000';ctx.fillRect(0,0,W,H);
-        if(vid&&vid.readyState>=2){
-          const ci2=S.cut.clips.indexOf(clip),vp=[];
-          (S.cut.effects[ci2]||[]).forEach(ef=>{if(ef.visible===false)return;const e=CUT_EFFECTS[ef.i];if(!e||e.type==='transition')return;const es=clip.start+(ef.startOffset||0),ee=es+(ef.effectDur??clip.dur);if(t<es||t>=ee)return;if(e.type==='range')vp.push(e.prop+'('+ef.v+e.unit+')');else if(e.type==='toggle')vp.push(e.filter);});
-          ctx.save();if(vp.length)ctx.filter=vp.join(' ');
-          try{ctx.drawImage(vid,0,0,W,H);}catch(e){}
-          ctx.filter='none';ctx.restore();
+        if(fh._img?.complete){
+          const ci=S.cut.clips.indexOf(fh),p=[];
+          (S.cut.effects[ci]||[]).forEach(ef=>{if(ef.visible===false)return;const e=CUT_EFFECTS[ef.i];if(!e||e.type==='transition')return;const es=fh.start+(ef.startOffset||0),ee=es+(ef.effectDur??fh.dur);if(t<es||t>=ee)return;if(e.type==='range')p.push(e.prop+'('+ef.v+e.unit+')');else if(e.type==='toggle')p.push(e.filter);});
+          ctx.save();if(p.length)ctx.filter=p.join(' ');ctx.drawImage(fh._img,0,0,W,H);ctx.filter='none';ctx.restore();
         }
+        if(lastVid&&!lastVid.paused)lastVid.pause();
       } else {
-        ctx.fillStyle='#000';ctx.fillRect(0,0,W,H);
-        if(lastVid&&!lastVid.paused){lastVid.pause();lastVid=null;}lastClipIdx=-1;
+        const clip=videoClips.find(c=>t>=c.start&&t<c.start+c.dur);
+        if(clip){
+          const vid=drawEls[clip.mediaIdx];
+          const ci=videoClips.indexOf(clip);
+          if(ci!==lastClipIdx){
+            if(lastVid&&lastVid!==vid&&!lastVid.paused)lastVid.pause();
+            lastClipIdx=ci; lastVid=vid;
+            if(vid){
+              const ft=(clip.fileStart||0)+Math.max(0,(t-clip.start)*(clip.speed||1));
+              vid.muted=true;vid.volume=0;vid.playbackRate=clip.speed||1;
+              vid.currentTime=ft;
+              vid.play().catch(()=>{});
+            }
+          }
+          ctx.fillStyle='#000';ctx.fillRect(0,0,W,H);
+          if(vid&&vid.readyState>=2){
+            const ci2=S.cut.clips.indexOf(clip),vp=[];
+            (S.cut.effects[ci2]||[]).forEach(ef=>{if(ef.visible===false)return;const e=CUT_EFFECTS[ef.i];if(!e||e.type==='transition')return;const es=clip.start+(ef.startOffset||0),ee=es+(ef.effectDur??clip.dur);if(t<es||t>=ee)return;if(e.type==='range')vp.push(e.prop+'('+ef.v+e.unit+')');else if(e.type==='toggle')vp.push(e.filter);});
+            ctx.save();if(vp.length)ctx.filter=vp.join(' ');
+            try{ctx.drawImage(vid,0,0,W,H);}catch(e){}
+            ctx.filter='none';ctx.restore();
+          }
+        } else {
+          ctx.fillStyle='#000';ctx.fillRect(0,0,W,H);
+          if(lastVid&&!lastVid.paused){lastVid.pause();lastVid=null;}lastClipIdx=-1;
+        }
       }
-    }
-    // Overlays
-    if((window._overlays||[]).some(o=>t>=o.startTime&&t<o.endTime)&&window.renderOverlaysOnCanvas)
-      window.renderOverlaysOnCanvas(ctx,W,H,t,new Set());
+      // Overlays on top
+      if((window._overlays||[]).some(o=>t>=o.startTime&&t<o.endTime)&&window.renderOverlaysOnCanvas)
+        window.renderOverlaysOnCanvas(ctx,W,H,t,new Set());
 
-    // Encode frame
-    while(videoEncoder.encodeQueueSize>20) await new Promise(r=>setTimeout(r,5));
-    const vf=new VideoFrame(canvas,{timestamp:tUs,duration:frameDurUs});
-    videoEncoder.encode(vf,{keyFrame:fi%(fps*2)===0});
-    vf.close();
-
-    // Progress + yield every 5 frames
-    if(fi%5===0){
-      const elapsed=(Date.now()-encodeStart)/1000;
-      const rate=elapsed>1?fi/elapsed:fps;
-      const rem=rate>0?Math.max(0,(totalFrames-fi)/rate):0;
-      const pct=Math.min(98,Math.round(fi/totalFrames*84)+14);
-      const remStr=rem>1?`~${Math.ceil(rem)}s remaining`:'Almost done...';
-      _setStatus(`Encoding: ${pct}%`,pct,`Phase 4/4 — Frame ${fi+1}/${totalFrames}`,remStr);
-      await new Promise(r=>setTimeout(r,0));
-    }
-  }
-
-  if(!_alive()){canvas.remove();Object.values(drawEls).forEach(v=>{try{v.pause();v.remove();}catch(e){}});return;}
-
-  // ── Flush + finalize ──────────────────────────────────────────────────────
-  _setStatus('Finalizing MP4...', 98, 'Packaging...', '');
-  await videoEncoder.flush(); videoEncoder.close();
-  if(lastVid&&!lastVid.paused) lastVid.pause();
-  muxer.finalize();
-
-  const {buffer} = muxer.target;
-  const blob = new Blob([buffer],{type:'video/mp4'});
-  const url  = URL.createObjectURL(blob);
-  const a    = document.createElement('a');
-  a.href=url; a.download=`${fname}_${W}x${H}_${fps}fps.mp4`;
-  document.body.appendChild(a); a.click(); document.body.removeChild(a);
-  setTimeout(()=>URL.revokeObjectURL(url),60000);
-
-  // Cleanup
-  canvas.remove();
-  Object.values(drawEls).forEach(v=>{try{v.pause();if(document.body.contains(v))v.remove();}catch(e){}});
-  try{if(window._exportAudioCtx){window._exportAudioCtx.close();window._exportAudioCtx=null;}}catch(e){}
-
-  _setStatus('Done!',100,'','');
-  document.getElementById('export-modal')?.remove();
-  notify(`✓ Export — ${fname}.mp4  (${(blob.size/1024/1024).toFixed(1)} MB · ${totalDur.toFixed(0)}s)`,'#3fb950');
+      // Progress
+      const pct=Math.min(98,Math.round((elapsed/totalDur)*84)+14);
+      const remSec=Math.max(0,totalDur-elapsed);
+      const remStr=remSec>1?`~${Math.ceil(remSec)}s remaining`:'Almost done...';
+      _set(`Rendering: ${pct}%`,pct,`Phase 4/4 — ${elapsed.toFixed(1)}s / ${totalDur.toFixed(1)}s`,remStr);
+    }, msPerFrame);
+  });
 }
+
 
 
 
