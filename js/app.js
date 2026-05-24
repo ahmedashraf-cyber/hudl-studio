@@ -4325,8 +4325,21 @@ function cutDelete(){
   S.cut.clips.splice(ci,1);
   // Also delete linked audio
   if(c.type==='video'){
+    // Find any linked audio clip for this video
     const li=S.cut.clips.findIndex(a=>a.linkedToVideo&&a.mediaIdx===c.mediaIdx&&Math.abs(a.start-c.start)<0.5);
-    if(li>=0) S.cut.clips.splice(li,1);
+    if(li>=0){
+      // Unlink the audio instead of deleting it — user may want to keep the audio track
+      // Only auto-delete if the audio clip is directly on top of the video (same start, same dur)
+      // and user hasn't explicitly moved it
+      const linkedAudio = S.cut.clips[li];
+      const isSamePosition = Math.abs(linkedAudio.start - c.start) < 0.1 && Math.abs(linkedAudio.dur - c.dur) < 0.1;
+      if(isSamePosition){
+        // Audio untouched — keep it but unlink so it plays independently
+        linkedAudio.linkedToVideo = false;
+        linkedAudio.name = linkedAudio.name.replace(' [Audio]','') + ' (Audio)';
+      }
+      // If user manually moved the audio clip, keep it as-is (already detached effectively)
+    }
   }
   S.cut.sel=null;
   stopAudioPlayback();
