@@ -376,6 +376,13 @@ html,body{width:100%;height:100%;overflow:hidden;font-family:'DM Sans',sans-seri
 
 /* ── TACTICAL BOARD ─────────────────────────────────── */
 #tb-tactical{ background:#0d1117; }
+#tac-label-input{
+  position:absolute;z-index:50;
+  background:rgba(8,12,20,0.92);border:1.5px solid #FFEA00;border-radius:5px;
+  color:#fff;font:700 13px 'DM Sans',sans-serif;
+  padding:3px 8px;outline:none;min-width:80px;max-width:200px;
+  display:none;pointer-events:all;
+}
 .tac-tool{
   font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.04em;
   padding:3px 7px;border-radius:4px;cursor:pointer;border:0.5px solid rgba(255,255,255,.1);
@@ -905,6 +912,7 @@ html,body{width:100%;height:100%;overflow:hidden;font-family:'DM Sans',sans-seri
         <!-- ─ Canvas area ─ -->
         <div id="tac-board-wrap" style="position:relative;flex:1;overflow:hidden;background:#0d1117;display:flex;align-items:center;justify-content:center;">
           <canvas id="tac-canvas" style="display:block;cursor:crosshair;touch-action:none;"></canvas>
+          <input id="tac-label-input" type="text" maxlength="40" placeholder="Type label…">
         </div>
         <!-- ─ Animation bar ─ -->
         <div id="tac-anim-bar" style="display:flex;align-items:center;gap:5px;padding:5px 8px;border-top:0.5px solid rgba(255,255,255,0.06);flex-shrink:0;background:#0a0c10;">
@@ -4920,6 +4928,7 @@ const _TAC = {
     if(this.delaunayOn) this._drawDelaunay(ctx,W,H);
     this._drawDrawings(ctx,W,H);
     this._drawCones(ctx,W,H);
+    this._drawLabels(ctx,W,H);
     this._drawPlayers(ctx,W,H);
     this._drawBalls(ctx,W,H);
     if(this.distOn) this._drawDistances(ctx,W,H);
@@ -5254,6 +5263,56 @@ const _TAC = {
     return null;
   },
 
+  // ── TEXT LABELS ────────────────────────────────────────────────
+  _drawLabels(ctx,W,H){
+    if(!this.frame||!this.frame.labels) return;
+    this.frame.labels.forEach(lb=>{
+      if(!lb.text||!lb.text.trim()) return;
+      const x=this.px(lb.x,W), y=this.py(lb.y,H);
+      const sel=(lb.id===this.selId);
+      const fs=Math.round(W*0.018)*(lb.size||1);
+      ctx.save();
+      ctx.font=`700 ${fs}px DM Sans,sans-serif`;
+      const tw=ctx.measureText(lb.text).width;
+      const pw=tw+14, ph=fs+10;
+      // Selection glow
+      if(sel){
+        ctx.shadowColor='#FFEA00'; ctx.shadowBlur=8;
+      }
+      // Dark pill background
+      ctx.fillStyle='rgba(5,8,15,0.82)';
+      ctx.beginPath();
+      ctx.roundRect(x-pw/2, y-ph/2, pw, ph, 4);
+      ctx.fill();
+      ctx.shadowBlur=0;
+      // Colored border
+      ctx.strokeStyle=lb.color||'#FFEA00';
+      ctx.lineWidth=sel?2:1.2;
+      ctx.beginPath();
+      ctx.roundRect(x-pw/2, y-ph/2, pw, ph, 4);
+      ctx.stroke();
+      // Text
+      ctx.fillStyle=lb.color||'#FFEA00';
+      ctx.textAlign='center'; ctx.textBaseline='middle';
+      ctx.fillText(lb.text, x, y);
+      ctx.restore();
+    });
+  },
+
+  _hitLabel(px2,py2,W,H){
+    if(!this.frame||!this.frame.labels) return null;
+    for(let i=this.frame.labels.length-1;i>=0;i--){
+      const lb=this.frame.labels[i];
+      if(!lb.text) continue;
+      const x=this.px(lb.x,W), y=this.py(lb.y,H);
+      const fs=Math.round(W*0.018)*(lb.size||1);
+      // Rough hit box
+      if(Math.abs(px2-x)<lb.text.length*fs*0.35+12 && Math.abs(py2-y)<fs+8)
+        return lb;
+    }
+    return null;
+  },
+
   // ── DRAWINGS (arrows, lines, zones) ───────────────────────────
   _drawDrawings(ctx,W,H){
     if(!this.frame) return;
@@ -5492,7 +5551,7 @@ const _TAC = {
     }
 
     if(this.tool==='select'){
-      const p=this._hitPlayer(x,y,W,H)||this._hitBall(x,y,W,H)||this._hitCone(x,y,W,H);
+      const p=this._hitPlayer(x,y,W,H)||this._hitBall(x,y,W,H)||this._hitCone(x,y,W,H)||this._hitLabel(x,y,W,H);
       if(p){
         this.selId=p.id; this.dragId=p.id;
         this.dragOx=x-this.px(p.x,W); this.dragOy=y-this.py(p.y,H);
@@ -5509,6 +5568,7 @@ const _TAC = {
       const p=this._hitPlayer(x,y,W,H); if(p){ this._removeById(p.id); this._draw(); return; }
       const b=this._hitBall(x,y,W,H);  if(b){ this._removeById(b.id); this._draw(); return; }
       const c=this._hitCone(x,y,W,H);  if(c){ this._removeById(c.id); this._draw(); return; }
+      const lb=this._hitLabel(x,y,W,H); if(lb){ this._removeById(lb.id); this._draw(); return; }
       return;
     }
 
@@ -5560,10 +5620,55 @@ const _TAC = {
       });
       this._draw(); this.save(); return;
     }
+    if(this.tool==='label'){
+      // Show inline input at click position
+      this._openLabelInput(x, y, nx, ny);
+      return;
+    }
     if(this.tool==='arrow'||this.tool==='line'||this.tool==='zone'){
       this.drawPts=[{x:nx,y:ny}];
       return;
     }
+  },
+
+  // Open the floating label input at canvas pixel position
+  _openLabelInput(canvasX, canvasY, nx, ny){
+    const input=document.getElementById('tac-label-input');
+    if(!input) return;
+    const wrap=document.getElementById('tac-board-wrap');
+    if(!wrap) return;
+    const wr=wrap.getBoundingClientRect();
+    const cr=this._canvas.getBoundingClientRect();
+    // Position input at click location relative to the board wrap
+    const ix=(cr.left-wr.left)+(canvasX/this._canvas.width)*cr.width;
+    const iy=(cr.top -wr.top) +(canvasY/this._canvas.height)*cr.height;
+    input.style.left=Math.round(ix)+'px';
+    input.style.top =Math.round(iy)+'px';
+    input.style.display='block';
+    input.value='';
+    input.focus();
+    // Store pending position
+    this._pendingLabelPos={x:nx, y:ny};
+
+    const commit=()=>{
+      const text=input.value.trim();
+      input.style.display='none';
+      input.removeEventListener('keydown', onKey);
+      input.removeEventListener('blur', commit);
+      if(!text) return;
+      if(!this.frame.labels) this.frame.labels=[];
+      this.frame.labels.push({
+        id:this.uid(), text, x:this._pendingLabelPos.x, y:this._pendingLabelPos.y,
+        color:'#FFEA00', size:1,
+      });
+      this._draw(); this.save();
+    };
+    const onKey=e=>{
+      if(e.key==='Enter'){ e.preventDefault(); commit(); }
+      if(e.key==='Escape'){ input.style.display='none'; input.removeEventListener('keydown',onKey); }
+    };
+    input.addEventListener('keydown', onKey);
+    input.addEventListener('blur', commit, {once:true});
   },
 
   _onMove(e){
@@ -5582,7 +5687,8 @@ const _TAC = {
 
     if(this.dragId){
       const cones=this.frame.cones||[];
-      const obj=[...this.frame.players,...this.frame.balls,...cones].find(o=>o.id===this.dragId);
+      const labels=this.frame.labels||[];
+      const obj=[...this.frame.players,...this.frame.balls,...cones,...labels].find(o=>o.id===this.dragId);
       if(obj){
         obj.x=Math.max(0,Math.min(1,this.nx(x-this.dragOx,W)));
         obj.y=Math.max(0,Math.min(1,this.ny(y-this.dragOy,H)));
@@ -5627,18 +5733,52 @@ const _TAC = {
   },
 
   _onDbl(e){
-    // Double-click a player to open editor
     const {x,y}=this._canvasP(e);
     const W=this._canvas.width,H=this._canvas.height;
+    // Double-click player → open editor
     const p=this._hitPlayer(x,y,W,H);
-    if(p){ this.selId=p.id; this._showPlayerEditor(p); this._draw(); }
+    if(p){ this.selId=p.id; this._showPlayerEditor(p); this._draw(); return; }
+    // Double-click label → open inline editor to rename
+    const lb=this._hitLabel(x,y,W,H);
+    if(lb){
+      this.selId=lb.id;
+      const nx=lb.x, ny=lb.y;
+      const cx=this.px(nx,W), cy=this.py(ny,H);
+      const input=document.getElementById('tac-label-input');
+      if(input){
+        const wrap=document.getElementById('tac-board-wrap');
+        const wr=wrap.getBoundingClientRect();
+        const cr=this._canvas.getBoundingClientRect();
+        const ix=(cr.left-wr.left)+(cx/W)*cr.width;
+        const iy=(cr.top-wr.top)+(cy/H)*cr.height;
+        input.style.left=Math.round(ix)+'px';
+        input.style.top=Math.round(iy)+'px';
+        input.style.display='block';
+        input.value=lb.text||'';        input.focus(); input.select();
+        this._pendingLabelPos=null;
+        const commit=()=>{
+          const text=input.value.trim();
+          input.style.display='none';
+          input.removeEventListener('keydown',onKey);
+          if(text) lb.text=text;
+          this._draw(); this.save();
+        };
+        const onKey=e2=>{
+          if(e2.key==='Enter'){ e2.preventDefault(); commit(); }
+          if(e2.key==='Escape'){ input.style.display='none'; input.removeEventListener('keydown',onKey); }
+        };
+        input.addEventListener('keydown',onKey);
+        input.addEventListener('blur',commit,{once:true});
+      }
+    }
   },
 
   _removeById(id){
     if(!this.frame) return;
     this.frame.players=this.frame.players.filter(p=>p.id!==id);
     this.frame.balls=this.frame.balls.filter(b=>b.id!==id);
-    if(this.frame.cones) this.frame.cones=this.frame.cones.filter(c=>c.id!==id);
+    if(this.frame.cones)  this.frame.cones =this.frame.cones.filter(c=>c.id!==id);
+    if(this.frame.labels) this.frame.labels=this.frame.labels.filter(l=>l.id!==id);
     if(this.selId===id) this.selId=null;
     this.save();
   },
