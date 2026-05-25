@@ -1013,6 +1013,61 @@ function getP(e){
 
 // ── CANVAS EVENTS ─────────────────────────────────────────────────
 // ════════════════════════════════════════════════════════════════
+// PHASE 3 — ANCHOR ENGINE (tracker → drawing live binding)
+// ════════════════════════════════════════════════════════════════
+
+function tCenter(tr){
+  if(!tr||!tr.box) return null;
+  return {x:tr.box.x+tr.box.w/2, y:tr.box.y+tr.box.h/2};
+}
+
+// Resolve all anchors on a drawing — mutates start/end/points to live tracker positions
+function resolveAnchors(d){
+  if(!d.anchors||!d.anchors.length) return;
+  d.anchors.forEach(a=>{
+    const tr=S.trackers.find(t=>t.id===a.trackerId);
+    if(!tr||!tr.box) return;
+    const cx=tr.box.x+tr.box.w/2, cy=tr.box.y+tr.box.h/2;
+    const px=cx+(a.ox||0), py=cy+(a.oy||0);
+    if(a.role==='start'&&d.start){d.start.x=px;d.start.y=py;}
+    else if(a.role==='end'&&d.end){d.end.x=px;d.end.y=py;}
+    else if(a.role==='center'){d.x=px;d.y=py;}
+    else if(a.role&&a.role.startsWith('pt_')){
+      const i=parseInt(a.role.slice(3));
+      if(d.points&&d.points[i]){d.points[i].x=px;d.points[i].y=py;}
+    }
+  });
+}
+
+// Find nearest tracker within SNAP_R
+function nearestTracker(px,py){
+  let best=null,bestD=SNAP_R||90;
+  S.trackers.forEach(tr=>{
+    const c=tCenter(tr); if(!c) return;
+    const d=Math.hypot(px-c.x,py-c.y);
+    if(d<bestD){bestD=d;best=tr;}
+  });
+  return best;
+}
+
+// Build an anchor for a point — returns null if no tracker nearby
+function makeAnchor(px,py,role){
+  const tr=nearestTracker(px,py); if(!tr) return null;
+  const c=tCenter(tr);
+  return {trackerId:tr.id,role,ox:px-c.x,oy:py-c.y};
+}
+
+// Draw the yellow snap ring when hovering near a tracker
+function drawSnapIndicator(ctx,px,py){
+  const tr=nearestTracker(px,py); if(!tr) return;
+  const c=tCenter(tr);
+  ctx.save(); ctx.strokeStyle='#FFEA00'; ctx.lineWidth=2;
+  ctx.globalAlpha=0.75; ctx.setLineDash([4,3]);
+  ctx.beginPath(); ctx.arc(c.x,c.y,(SNAP_R||90)*0.7,0,Math.PI*2); ctx.stroke();
+  ctx.setLineDash([]); ctx.restore();
+}
+
+// ════════════════════════════════════════════════════════════════
 // CANVAS INTERACTION — select/move/resize + drawing + snapping
 // ════════════════════════════════════════════════════════════════
 
@@ -1591,8 +1646,10 @@ function redraw(extra){
   const activeId=S.events.find(ev=>t>=ev.time&&t<=ev.endTime)?.id||null;
 
   S.drawings.forEach(d=>{
-    if(!d.eid||d.eid===activeId||(S.selEvent&&d.eid===S.selEvent.id))
+    if(!d.eid||d.eid===activeId||(S.selEvent&&d.eid===S.selEvent.id)){
+      resolveAnchors(d);  // live-update positions from tracker boxes
       drawShape(ctx,d);
+    }
   });
 
   // Draft polygon preview with snap indicators
@@ -1621,6 +1678,8 @@ function redraw(extra){
     drawSnapIndicator(ctx, S._mouseP.x, S._mouseP.y);
   }
 
+  // Snap indicator — yellow ring near tracker when drawing
+  if(S._mouseP && (DRAW_TOOLS||[]).includes(S.tool)) drawSnapIndicator(ctx, S._mouseP.x, S._mouseP.y);
   // Draw selection handles for selected drawing
   if(S.selDrawIdx>=0 && S.drawings[S.selDrawIdx]) drawHandles(ctx, S.drawings[S.selDrawIdx]);
   if(extra) drawShape(ctx,extra);
