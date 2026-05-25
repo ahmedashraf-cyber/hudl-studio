@@ -5,8 +5,9 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>TotalMatch Analytics</title>
 <link rel="stylesheet" href="css/main.css">
-<!-- ONNX Runtime Web — runs YOLOv8n football model in the browser -->
-<script src="/js/ort/ort.min.js"></script>
+<!-- TensorFlow.js + COCO-SSD for player detection -->
+<script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.10.0/dist/tf.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/coco-ssd@2.2.3/dist/coco-ssd.min.js"></script>
 <style>
 /* ── RESET ────────────────────────────────────────────── */
 *{box-sizing:border-box;margin:0;padding:0;}
@@ -820,7 +821,7 @@ html,body{width:100%;height:100%;overflow:hidden;font-family:'DM Sans',sans-seri
             <span id="ai-status-text">Not loaded yet</span>
             <button class="tm-add-btn" id="tm-load-ai-btn" onclick="loadAI()" style="padding:5px 10px;font-size:10px;flex:1;margin-top:4px;margin-left:auto;">Load AI</button>
           </div>
-          <div id="tm-ai-loaded" style="display:none;font-size:10px;color:#30D158;margin-top:4px;">✓ YOLOv8n ready — football tracking active</div>
+          <div id="tm-ai-loaded" style="display:none;font-size:10px;color:#30D158;margin-top:4px;">✓ COCO-SSD ready — tracking active</div>
         </div>
       </div>
 
@@ -901,7 +902,7 @@ const S = {
   drawings:[], isDrawing:false, drawStart:null, penPts:[], draftPts:[],
   trackers:[], trackData:{},    // Phase 2 tracking
   assignMode:null, assignBox:null, pendingPt:null,
-  cocoModel:null, aiRunning:false, aiEnabled:false, // cocoModel kept for compat
+  cocoModel:null, aiRunning:false, aiEnabled:false,
   teamColors:{A:'#58a6ff',B:'#E8590C'},
   tagGroups:[
     {id:'pos',name:'In Possession',color:'#30D158',tags:['Build-up','Progression','Final Third','Att Wing','Box Attack']},
@@ -2386,171 +2387,59 @@ function _svgDragStart(e){
 function ns(tag){ return document.createElementNS('http://www.w3.org/2000/svg',tag); }
 function attr(el,obj){ Object.entries(obj).forEach(([k,v])=>el.setAttribute(k,v)); }
 
-// ── PHASE 2: YOLOv8n ONNX TRACKING ──────────────────────────────
-// YOLOv8n football model running in-browser via ONNX Runtime Web.
-// No server, no Python, no install. Model: 13MB, ~120ms/frame on CPU.
-// Replaces COCO-SSD (which was trained on generic objects, not football).
-//
-// Architecture:
-//   loadAI()  — loads yolov8n.onnx + nms-yolov8.onnx into ORT sessions
-//   syncAI()  — runs inference on current frame, feeds detections into
-//               the existing updateTrackerFromDetections() pipeline
-//               (unchanged — same logic as before)
-
+// ── PHASE 2: COCO-SSD TRACKING ────────────────────────────────────
 let _aiCanvas=null, _aiCtx=null;
-let _ortSession=null, _nmsSession=null;
-
-// YOLOv8 ONNX post-processing constants
-const YOLO_INPUT_W = 640, YOLO_INPUT_H = 640;
-const YOLO_CONF_THRESH = 0.35;
-const YOLO_IOU_THRESH  = 0.45;
-const YOLO_TOPK        = 100;
 
 async function loadAI(){
-  if(_ortSession){ notify('AI model already loaded'); return; }
+  if(S.cocoModel){ notify('AI model already loaded'); return; }
   $('tm-load-ai-btn').style.display='none';
   $('ai-status-spin').style.display='flex';
-  $('ai-status-text').textContent='Loading YOLOv8n…';
+  $('ai-status-text').textContent='Loading COCO-SSD…';
   $('tm-ai-banner').classList.remove('gone');
-  $('ai-text').textContent='Loading football AI…';
-  notify('Loading YOLOv8n football model (~13MB)…','#d29922');
+  $('ai-text').textContent='Loading AI model…';
+  notify('Loading AI — this may take 15–30s on first load','#d29922');
   try{
-    // Tell ORT where to find the WASM backend files (self-hosted)
-    ort.env.wasm.wasmPaths = '/js/ort/';
-
-    // Load both sessions in parallel
-    const [sess, nmsSess] = await Promise.all([
-      ort.InferenceSession.create('/models/yolov8n.onnx',
-        {executionProviders:['wasm'], graphOptimizationLevel:'all'}),
-      ort.InferenceSession.create('/models/nms-yolov8.onnx',
-        {executionProviders:['wasm'], graphOptimizationLevel:'all'}),
-    ]);
-    _ortSession = sess;
-    _nmsSession = nmsSess;
-    S.aiEnabled = true;
-
-    // Offscreen canvas for inference at 640×640
-    _aiCanvas = document.createElement('canvas');
-    _aiCanvas.width = YOLO_INPUT_W; _aiCanvas.height = YOLO_INPUT_H;
-    _aiCtx = _aiCanvas.getContext('2d', {willReadFrequently:true});
-
+    S.cocoModel = await cocoSsd.load({base:'lite_mobilenet_v2'});
+    S.aiEnabled=true;
     $('ai-status-spin').style.display='none';
-    $('ai-status-text').textContent='YOLOv8n ready';
+    $('ai-status-text').textContent='COCO-SSD ready';
     $('tm-ai-loaded').style.display='block';
     $('tm-ai-banner').classList.add('ready');
     $('ai-text').textContent='AI ready';
     $('ai-spin').style.display='none';
     document.querySelector('#tm-ai-banner .tm-spin')?.remove();
     const dot=document.createElement('div'); dot.className='ai-dot'; $('tm-ai-banner').prepend(dot);
-    notify('YOLOv8n loaded — football tracking active','#30D158');
+    notify('AI model loaded — tracking active','#30D158');
+    _aiCanvas=document.createElement('canvas'); _aiCanvas.width=320; _aiCanvas.height=180;
+    _aiCtx=_aiCanvas.getContext('2d');
   }catch(err){
     $('ai-status-spin').style.display='none';
     $('ai-status-text').textContent='Load failed';
     $('tm-load-ai-btn').style.display='';
     $('tm-ai-banner').classList.add('gone');
-    notify('AI load failed: '+err.message,'#E31837');
-    console.error('[YOLO]',err);
+    notify('AI model failed to load: '+err.message,'#E31837');
+    console.error('[TotalMatch AI]',err);
   }
 }
 
-// Pre-process video frame → Float32 tensor [1,3,640,640], NCHW, normalized 0-1
-function _preprocess(video){
-  // Letterbox: fit video into 640×640 preserving aspect ratio
-  const vw = video.videoWidth||1280, vh = video.videoHeight||720;
-  const scale = Math.min(YOLO_INPUT_W/vw, YOLO_INPUT_H/vh);
-  const nw = Math.round(vw*scale), nh = Math.round(vh*scale);
-  const dx = (YOLO_INPUT_W-nw)/2, dy = (YOLO_INPUT_H-nh)/2;
-
-  _aiCtx.fillStyle='#888';
-  _aiCtx.fillRect(0,0,YOLO_INPUT_W,YOLO_INPUT_H);
-  _aiCtx.drawImage(video, dx, dy, nw, nh);
-
-  const {data} = _aiCtx.getImageData(0,0,YOLO_INPUT_W,YOLO_INPUT_H);
-  const n = YOLO_INPUT_W * YOLO_INPUT_H;
-  const tensor = new Float32Array(3 * n);
-  // NCHW: R channel, G channel, B channel, each normalized /255
-  for(let i=0,j=0; i<data.length; i+=4,j++){
-    tensor[j]         = data[i]   / 255; // R
-    tensor[j+n]       = data[i+1] / 255; // G
-    tensor[j+2*n]     = data[i+2] / 255; // B
-  }
-  return {tensor, scale, dx, dy};
-}
-
-// Post-process: convert raw YOLO output → [{x,y,w,h,score}] in video pixel space
-function _postprocess(rawOutput, scale, dx, dy, videoW, videoH){
-  // rawOutput shape: [1, 84, 8400] — 84 = 4 box coords + 80 class scores
-  const data = rawOutput.data;
-  const numBoxes = 8400;
-  // Class 0 = person in COCO (which YOLOv8n was trained on)
-  const detections = [];
-  for(let i=0; i<numBoxes; i++){
-    // Box: cx,cy,w,h (normalized, 0-1 in 640×640 space)
-    const cx  = data[0*numBoxes + i];
-    const cy  = data[1*numBoxes + i];
-    const bw  = data[2*numBoxes + i];
-    const bh  = data[3*numBoxes + i];
-    // Person class score (class 0)
-    const score = data[4*numBoxes + i]; // offset 4 = first class
-    if(score < YOLO_CONF_THRESH) continue;
-    // Convert from letterboxed 640×640 → original video pixel space
-    const x1_lb = cx - bw/2, y1_lb = cy - bh/2;
-    const x1 = (x1_lb - dx) / scale;
-    const y1 = (y1_lb - dy) / scale;
-    const w  = bw / scale;
-    const h  = bh / scale;
-    // Clamp to video bounds
-    const x = Math.max(0, x1);
-    const y = Math.max(0, y1);
-    detections.push({x, y, w:Math.min(w, videoW-x), h:Math.min(h, videoH-y), score});
-  }
-  return detections;
-}
-
-// Run inference — throttled to ~8fps (heavy model)
 let _lastAiTime=-1;
 async function syncAI(){
-  if(!S.aiEnabled||!_ortSession||S.aiRunning||!S.trackers.length)return;
+  if(!S.aiEnabled||!S.cocoModel||S.aiRunning||!S.trackers.length)return;
   const v=$('tm-video'); if(!v||v.readyState<2)return;
   const t=v.currentTime;
-  if(Math.abs(t-_lastAiTime)<0.12)return; // ~8fps inference
+  if(Math.abs(t-_lastAiTime)<0.08)return;
   _lastAiTime=t; S.aiRunning=true;
   try{
-    const vw=v.videoWidth||1280, vh=v.videoHeight||720;
-    const {tensor, scale, dx, dy} = _preprocess(v);
-
-    // Run detection
-    const inputTensor = new ort.Tensor('float32', tensor, [1,3,YOLO_INPUT_W,YOLO_INPUT_H]);
-    const {output0} = await _ortSession.run({images: inputTensor});
-
-    // Run NMS
-    const config = new ort.Tensor('float32',
-      [YOLO_TOPK, YOLO_IOU_THRESH, YOLO_CONF_THRESH], [1,1,3]);
-    const nmsOut = await _nmsSession.run({detection: output0, config});
-    const selected = nmsOut.selected.data; // [N, 7]: batch,cls,score,x1,y1,x2,y2
-
-    // Convert to our detection format (video pixel space, x/y/w/h)
-    const detections = [];
-    for(let i=0; i<selected.length; i+=7){
-      const cls = selected[i+1];
-      if(cls !== 0) continue; // person class only
-      const score = selected[i+2];
-      // Coords are in 640×640 letterboxed space
-      const x1 = (selected[i+3] - dx) / scale;
-      const y1 = (selected[i+4] - dy) / scale;
-      const x2 = (selected[i+5] - dx) / scale;
-      const y2 = (selected[i+6] - dy) / scale;
-      detections.push({
-        x: Math.max(0,x1), y: Math.max(0,y1),
-        w: Math.min(x2-x1, vw), h: Math.min(y2-y1, vh),
-        score
-      });
-    }
-
-    // Feed into existing tracker update pipeline (unchanged)
-    S.trackers.forEach(tr=>updateTrackerFromDetections(tr,detections,t));
-
-    // Record tracking data
+    _aiCtx.drawImage(v,0,0,320,180);
+    const preds=await S.cocoModel.detect(_aiCanvas);
+    const people=preds.filter(p=>p.class==='person'&&p.score>0.35);
+    const scaleX=1280/320, scaleY=720/180;
+    const scaled=people.map(p=>({
+      x:p.bbox[0]*scaleX, y:p.bbox[1]*scaleY,
+      w:p.bbox[2]*scaleX, h:p.bbox[3]*scaleY,
+      score:p.score
+    }));
+    S.trackers.forEach(tr=>updateTrackerFromDetections(tr,scaled,t));
     const frame=Math.round(t*25);
     S.trackers.forEach(tr=>{
       if(tr.box){
@@ -2558,12 +2447,11 @@ async function syncAI(){
         const arr=S.trackData[tr.id];
         const tR=+t.toFixed(3);
         if(!arr.length||Math.abs(arr[arr.length-1].t-tR)>0.04)
-          arr.push({frame,t:tR,x:+tr.box.x.toFixed(1),y:+tr.box.y.toFixed(1),
-            w:+tr.box.w.toFixed(1),h:+tr.box.h.toFixed(1),lost:tr.lost?1:0});
+          arr.push({frame,t:tR,x:+tr.box.x.toFixed(1),y:+tr.box.y.toFixed(1),w:+tr.box.w.toFixed(1),h:+tr.box.h.toFixed(1),lost:tr.lost?1:0});
       }
     });
     renderTrackerList(); updateTeamCts(); updateTrackerSVG(); drawMap();
-  }catch(e){ console.warn('[YOLO sync]',e); }
+  }catch(e){ console.warn('[AI sync]',e); }
   S.aiRunning=false;
 }
 
