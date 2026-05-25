@@ -1343,6 +1343,9 @@ function isHit(d,p){
       return d.start&&d.end&&Math.abs(Math.hypot(p.x-d.start.x,p.y-d.start.y)-Math.hypot(d.end.x-d.start.x,d.end.y-d.start.y))<M;
     case 'offside':
       return d.start&&Math.abs(p.y-d.start.y)<M;
+    case 'zoom':
+      // Hit the circle of the zoom lens
+      return d.start&&Math.hypot(p.x-d.start.x,p.y-d.start.y)<(d.radius||80)+16;
   }
   return false;
 }
@@ -1354,6 +1357,7 @@ function getCtrlPts(d){
     return [{...d.start,role:'start'},{...d.end,role:'end'}];
   if(d.type==='polygon') return (d.points||[]).map((p,i)=>({...p,role:`pt_${i}`}));
   if(d.type==='dot'||d.type==='text') return [{x:d.x,y:d.y,role:'center'}];
+  if(d.type==='zoom') return [{x:d.start.x,y:d.start.y,role:'center'}];
   return [];
 }
 
@@ -1371,7 +1375,11 @@ function applyPtDrag(d,role,dx,dy){
   if(d.anchors) d.anchors=d.anchors.filter(a=>a.role!==role);
   if(role==='start'&&d.start){d.start.x+=dx;d.start.y+=dy;}
   else if(role==='end'&&d.end){d.end.x+=dx;d.end.y+=dy;}
-  else if(role==='center'){d.x+=dx;d.y+=dy;}
+  else if(role==='center'){
+    d.x+=dx;d.y+=dy;
+    // For zoom lens, center role moves the start point
+    if(d.type==='zoom'&&d.start){d.start.x+=dx;d.start.y+=dy;}
+  }
   else if(role.startsWith('pt_')){const i=parseInt(role.slice(3));if(d.points?.[i]){d.points[i].x+=dx;d.points[i].y+=dy;}}
   // Re-snap to nearest tracker at new position
   let np=null;
@@ -1729,12 +1737,12 @@ function drawShape(ctx, d){
       const w=Math.abs(d.end.x-d.start.x), h=Math.abs(d.end.y-d.start.y);
       if(w<2||h<2) break;
       ctx.save();
+      ctx.fillStyle=hex2rgba(d.color,.12); ctx.fillRect(x,y,w,h);
       ctx.beginPath(); ctx.rect(x,y,w,h); ctx.clip();
-      // Diagonal hatch fill
-      ctx.strokeStyle=hex2rgba(d.color,.35); ctx.lineWidth=1;
-      const step=10;
-      for(let i=-(h);i<w+h;i+=step){
-        ctx.beginPath(); ctx.moveTo(x+i,y); ctx.lineTo(x+i+h,y+h); ctx.stroke();
+      ctx.strokeStyle=hex2rgba(d.color,.5); ctx.lineWidth=1.5;
+      const step=12;
+      for(let i=-(h+step);i<w+h+step;i+=step){
+        ctx.beginPath(); ctx.moveTo(x+i,y); ctx.lineTo(x+i+h+w,y+h+w); ctx.stroke();
       }
       ctx.restore();
       // Solid border
@@ -1746,14 +1754,15 @@ function drawShape(ctx, d){
       const r=Math.sqrt((d.end.x-d.start.x)**2+(d.end.y-d.start.y)**2);
       if(r<2) break;
       ctx.save();
-      ctx.beginPath(); ctx.arc(d.start.x,d.start.y,r,0,Math.PI*2); ctx.clip();
-      // Diagonal hatch fill
-      ctx.strokeStyle=hex2rgba(d.color,.35); ctx.lineWidth=1;
-      const step=10;
-      for(let i=-(r*2);i<r*2;i+=step){
+      ctx.beginPath(); ctx.arc(d.start.x,d.start.y,r,0,Math.PI*2);
+      ctx.fillStyle=hex2rgba(d.color,.12); ctx.fill();
+      ctx.clip();
+      ctx.strokeStyle=hex2rgba(d.color,.5); ctx.lineWidth=1.5;
+      const step=12;
+      for(let i=-(r*2+step);i<r*2+step;i+=step){
         ctx.beginPath();
-        ctx.moveTo(d.start.x-r+i, d.start.y-r);
-        ctx.lineTo(d.start.x-r+i+r*2, d.start.y+r); ctx.stroke();
+        ctx.moveTo(d.start.x-r+i, d.start.y-r*2);
+        ctx.lineTo(d.start.x-r+i+r*4, d.start.y+r*2); ctx.stroke();
       }
       ctx.restore();
       // Solid border
@@ -1764,21 +1773,25 @@ function drawShape(ctx, d){
     case 'polygon': {
       const pts = d.points||[]; if(pts.length<2) break;
       ctx.save();
-      // Clip to polygon for hatch fill
+      // Build path once, reuse for fill + clip
       ctx.beginPath(); ctx.moveTo(pts[0].x,pts[0].y);
-      pts.forEach(p=>ctx.lineTo(p.x,p.y)); ctx.closePath(); ctx.clip();
+      pts.forEach(p=>ctx.lineTo(p.x,p.y)); ctx.closePath();
+      // Semi-transparent base fill (makes hatch visible over video)
+      ctx.fillStyle=hex2rgba(d.color,.12); ctx.fill();
+      // Clip to polygon for hatch lines
+      ctx.clip();
       // Bounding box
       const pxs=pts.map(p=>p.x), pys=pts.map(p=>p.y);
       const pbx=Math.min(...pxs),pby=Math.min(...pys);
       const pbw=Math.max(...pxs)-pbx, pbh=Math.max(...pys)-pby;
       // Diagonal hatch fill
-      ctx.strokeStyle=hex2rgba(d.color,.35); ctx.lineWidth=1;
-      const step=10;
-      for(let i=-pbh;i<pbw+pbh;i+=step){
-        ctx.beginPath(); ctx.moveTo(pbx+i,pby); ctx.lineTo(pbx+i+pbh,pby+pbh); ctx.stroke();
+      ctx.strokeStyle=hex2rgba(d.color,.5); ctx.lineWidth=1.5;
+      const step=12;
+      for(let i=-(pbh+step);i<pbw+pbh+step;i+=step){
+        ctx.beginPath(); ctx.moveTo(pbx+i,pby); ctx.lineTo(pbx+i+pbh+pbw,pby+pbh+pbw); ctx.stroke();
       }
       ctx.restore();
-      // Border
+      // Border on top
       ctx.lineWidth=2.5; ctx.strokeStyle=d.color;
       ctx.beginPath(); ctx.moveTo(pts[0].x,pts[0].y);
       pts.forEach(p=>ctx.lineTo(p.x,p.y)); ctx.closePath(); ctx.stroke();
@@ -1860,9 +1873,17 @@ function drawShape(ctx, d){
     case 'spot': {
       if(!d.start||!d.end) break;
       const r=Math.sqrt((d.end.x-d.start.x)**2+(d.end.y-d.start.y)**2);
-      ctx.fillStyle='rgba(0,0,0,.68)'; ctx.fillRect(0,0,1280,720);
-      ctx.globalCompositeOperation='destination-out';
-      ctx.beginPath(); ctx.arc(d.start.x,d.start.y,r,0,Math.PI*2); ctx.fill(); break;
+      const cx=d.start.x, cy=d.start.y;
+      // Radial gradient: transparent at center → dark at edges (Footage-style)
+      // Inner radius = spotlight circle, outer = diagonal of canvas
+      const outerR = Math.sqrt(1280*1280+720*720);
+      const grad=ctx.createRadialGradient(cx,cy,r*0.6, cx,cy,outerR);
+      grad.addColorStop(0,'rgba(0,0,0,0)');
+      grad.addColorStop(0.15,'rgba(0,0,0,0.55)');
+      grad.addColorStop(1,'rgba(0,0,0,0.88)');
+      ctx.fillStyle=grad;
+      ctx.fillRect(0,0,1280,720);
+      break;
     }
     case 'offside': {
       // Tactical offside / pressing line — horizontal snap
@@ -3410,15 +3431,15 @@ function connectShapes(type){
     if(S.tool!=='zoom') return;
     const p = canvasP(e);
     _zoomStart = p;
+    _zoomCurr = 2.5; // default zoom level
   }, {passive:true});
 
   cvs.addEventListener('pointermove', e=>{
     if(S.tool!=='zoom'||!_zoomStart) return;
     const p = canvasP(e);
     const r = Math.max(20, Math.hypot(p.x-_zoomStart.x, p.y-_zoomStart.y));
-    // Live preview
     redraw({type:'zoom',start:{x:_zoomStart.x,y:_zoomStart.y},
-      radius:r,zoom:2.5,color:S.drawColor,opacity:S.drawOpacity});
+      radius:r,zoom:_zoomCurr||2.5,color:S.drawColor,opacity:S.drawOpacity});
   }, {passive:true});
 
   cvs.addEventListener('pointerup', e=>{
@@ -3426,13 +3447,31 @@ function connectShapes(type){
     const p = canvasP(e);
     const r = Math.max(40, Math.hypot(p.x-_zoomStart.x, p.y-_zoomStart.y));
     S.drawings.push({type:'zoom',start:{x:_zoomStart.x,y:_zoomStart.y},
-      radius:r, zoom:2.5, color:S.drawColor, opacity:S.drawOpacity,
+      radius:r, zoom:_zoomCurr||2.5, color:S.drawColor, opacity:S.drawOpacity,
       eid:S.selEvent?.id||null});
     _zoomStart=null;
     S.selDrawIdx=S.drawings.length-1;
     redraw(); scheduleSave();
-    notify('Zoom lens added — drag to move it','#58a6ff');
+    notify('Zoom lens placed — use Select tool to move it, scroll to resize','#58a6ff');
   }, {passive:true});
+
+  // Scroll wheel on canvas: resize selected zoom lens OR adjust zoom level
+  cvs.addEventListener('wheel', e=>{
+    e.preventDefault();
+    const delta = e.deltaY > 0 ? -0.25 : 0.25;
+    // If a zoom drawing is selected, adjust its zoom level
+    if(S.selDrawIdx>=0 && S.drawings[S.selDrawIdx]?.type==='zoom'){
+      const d=S.drawings[S.selDrawIdx];
+      d.zoom=Math.max(1.5, Math.min(6, (d.zoom||2.5)+delta));
+      redraw(); scheduleSave();
+      notify('Zoom: '+d.zoom.toFixed(1)+'×','#58a6ff');
+      return;
+    }
+    // If zoom tool active and dragging, adjust live zoom level
+    if(S.tool==='zoom' && _zoomStart){
+      _zoomCurr=Math.max(1.5,Math.min(6,(_zoomCurr||2.5)+delta));
+    }
+  }, {passive:false});
 }
 
 // ── End new features ─────────────────────────────────────────────
