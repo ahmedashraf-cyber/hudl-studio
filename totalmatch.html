@@ -1976,71 +1976,93 @@ function drawShape(ctx, d){
     }
     case 'spot': {
       if(!d.start||!d.end) break;
-      // d.start = tip of the cone (top), d.end = where user dragged (sets cone length + width)
-      const tx=d.start.x, ty=d.start.y; // tip
-      const ex=d.end.x,   ey=d.end.y;
-      const coneLen=Math.sqrt((ex-tx)**2+(ey-ty)**2);
-      if(coneLen<10) break;
-      // Cone angle from tip direction
-      const ang=Math.atan2(ey-ty,ex-tx); // direction user dragged
-      const halfAngle=Math.PI/7; // ~26° half-angle — narrow beam
-      const beamW=coneLen*Math.tan(halfAngle); // half-width at the base
+      // d.start = pool center (user clicks on the player)
+      // d.end   = drag sets pool radius
+      // Light source is always above the top of the frame — classic stage spotlight
+      const px=d.start.x, py=d.start.y;
+      const poolRx=Math.max(40, Math.sqrt((d.end.x-px)**2+(d.end.y-py)**2));
+      const poolRy=poolRx*0.35; // flat perspective ellipse
 
-      // Dark overlay everywhere first
-      ctx.fillStyle='rgba(0,0,0,0.82)'; ctx.fillRect(0,0,1280,720);
+      // Parse hex color
+      const col=d.color||'#ffffff';
+      const hx=col.replace('#','');
+      const cr=parseInt(hx.slice(0,2),16)||255;
+      const cg=parseInt(hx.slice(2,4),16)||255;
+      const cb=parseInt(hx.slice(4,6),16)||200;
+
+      // ── 1. Dark overlay everywhere ─────────────────────────────
+      ctx.fillStyle='rgba(0,0,0,0.82)';
+      ctx.fillRect(0,0,1280,720);
+
+      // ── 2. Beam cone — trapezoid from light source above ───────
+      // Source is a narrow point above the top of the canvas
+      const srcX = px;
+      const srcY = -60; // above canvas top (off-screen light fixture)
+      const beamHalfW = poolRx * 1.08; // beam is slightly wider than pool
 
       ctx.save();
-      // Build cone path: tip → two base corners (perpendicular to beam direction)
-      const perpX=-Math.sin(ang), perpY=Math.cos(ang);
-      const bx1=tx+Math.cos(ang)*coneLen+perpX*beamW;
-      const by1=ty+Math.sin(ang)*coneLen+perpY*beamW;
-      const bx2=tx+Math.cos(ang)*coneLen-perpX*beamW;
-      const by2=ty+Math.sin(ang)*coneLen-perpY*beamW;
-
       ctx.beginPath();
-      ctx.moveTo(tx,ty);
-      ctx.lineTo(bx1,by1);
-      // Curved base (arc connecting the two base corners through the midpoint)
-      ctx.quadraticCurveTo(
-        tx+Math.cos(ang)*coneLen*1.06, ty+Math.sin(ang)*coneLen*1.06,
-        bx2,by2
-      );
+      ctx.moveTo(srcX, srcY);
+      ctx.lineTo(px - beamHalfW, py + poolRy * 0.6);
+      ctx.lineTo(px + beamHalfW, py + poolRy * 0.6);
       ctx.closePath();
-
-      // Clip to cone shape
       ctx.clip();
 
-      // Inside cone: bright radial glow from tip
-      const glow=ctx.createRadialGradient(tx,ty,0, tx,ty,coneLen*1.1);
-      // Use the drawing color with glow effect
-      const col=d.color||'#00e5ff';
-      const rgb=hex2rgba(col,1).match(/\d+/g)||['0','200','255'];
-      glow.addColorStop(0,  `rgba(${rgb[0]},${rgb[1]},${rgb[2]},0.95)`);
-      glow.addColorStop(0.3,`rgba(${rgb[0]},${rgb[1]},${rgb[2]},0.55)`);
-      glow.addColorStop(0.7,`rgba(${rgb[0]},${rgb[1]},${rgb[2]},0.18)`);
-      glow.addColorStop(1,  `rgba(${rgb[0]},${rgb[1]},${rgb[2]},0.0)`);
+      // Beam gradient: faint at top, builds up toward pool (light scatters in air)
+      const beamLen = py - srcY;
+      const beamGrad = ctx.createLinearGradient(srcX, srcY, srcX, py);
+      beamGrad.addColorStop(0,    `rgba(${cr},${cg},${cb},0.0)`);
+      beamGrad.addColorStop(0.3,  `rgba(${cr},${cg},${cb},0.08)`);
+      beamGrad.addColorStop(0.75, `rgba(${cr},${cg},${cb},0.28)`);
+      beamGrad.addColorStop(1,    `rgba(${cr},${cg},${cb},0.50)`);
 
-      // Erase the dark overlay inside cone and replace with glow
-      ctx.globalCompositeOperation='destination-out';
-      ctx.fillStyle='rgba(0,0,0,1)'; ctx.fillRect(0,0,1280,720);
-      ctx.globalCompositeOperation='source-over';
-      ctx.fillStyle=glow; ctx.fillRect(0,0,1280,720);
-
+      // Punch through the dark overlay inside the beam
+      ctx.globalCompositeOperation = 'destination-out';
+      ctx.fillStyle = 'rgba(0,0,0,0.9)';
+      ctx.fillRect(0,0,1280,720);
+      ctx.globalCompositeOperation = 'source-over';
+      ctx.fillStyle = beamGrad;
+      ctx.fillRect(0,0,1280,720);
       ctx.restore();
 
-      // Pool of light at the base — ellipse glow on the "floor"
+      // ── 3. Visible beam edge rays ──────────────────────────────
       ctx.save();
-      const poolCx=tx+Math.cos(ang)*coneLen;
-      const poolCy=ty+Math.sin(ang)*coneLen;
-      const poolRx=beamW*0.9, poolRy=beamW*0.35;
-      const poolGrad=ctx.createRadialGradient(poolCx,poolCy,0,poolCx,poolCy,poolRx);
-      poolGrad.addColorStop(0,  `rgba(${rgb[0]},${rgb[1]},${rgb[2]},0.7)`);
-      poolGrad.addColorStop(0.5,`rgba(${rgb[0]},${rgb[1]},${rgb[2]},0.25)`);
-      poolGrad.addColorStop(1,  `rgba(${rgb[0]},${rgb[1]},${rgb[2]},0.0)`);
-      ctx.globalAlpha=0.85;
+      ctx.globalAlpha = 0.20 * (d.opacity ?? 1);
+      ctx.strokeStyle = `rgb(${cr},${cg},${cb})`;
+      ctx.lineWidth = 1.5;
+      ctx.beginPath(); ctx.moveTo(srcX, srcY);
+      ctx.lineTo(px - beamHalfW * 0.98, py); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(srcX, srcY);
+      ctx.lineTo(px + beamHalfW * 0.98, py); ctx.stroke();
+      ctx.restore();
+
+      // ── 4. Pool ellipse on the pitch ───────────────────────────
+      ctx.save();
+      // Use transform to draw an ellipse as a scaled circle
+      ctx.translate(px, py);
+      ctx.scale(1, poolRy / poolRx);
+      const poolGrad = ctx.createRadialGradient(0, 0, 0, 0, 0, poolRx);
+      poolGrad.addColorStop(0,    `rgba(${cr},${cg},${cb},0.95)`);
+      poolGrad.addColorStop(0.30, `rgba(${cr},${cg},${cb},0.70)`);
+      poolGrad.addColorStop(0.65, `rgba(${cr},${cg},${cb},0.28)`);
+      poolGrad.addColorStop(1,    `rgba(${cr},${cg},${cb},0.0)`);
+      ctx.globalAlpha = d.opacity ?? 1;
+      ctx.fillStyle = poolGrad;
       ctx.beginPath();
-      ctx.ellipse(poolCx,poolCy,poolRx,poolRy,ang,0,Math.PI*2);
-      ctx.fillStyle=poolGrad; ctx.fill();
+      ctx.arc(0, 0, poolRx * 1.05, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+
+      // ── 5. Bright white hot-spot at pool center ────────────────
+      ctx.save();
+      ctx.globalAlpha = (d.opacity ?? 1) * 0.85;
+      const hotGrad = ctx.createRadialGradient(px, py, 0, px, py, poolRx * 0.38);
+      hotGrad.addColorStop(0, 'rgba(255,255,255,1)');
+      hotGrad.addColorStop(1, 'rgba(255,255,255,0)');
+      ctx.fillStyle = hotGrad;
+      ctx.beginPath();
+      ctx.ellipse(px, py, poolRx * 0.38, poolRy * 0.38, 0, 0, Math.PI * 2);
+      ctx.fill();
       ctx.restore();
       break;
     }
