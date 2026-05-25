@@ -1086,18 +1086,28 @@ function updateTrackerBoxesFromData(){
     if(!box) return;
     if(!tr.box){
       // No box at all — initialize from data
-      tr.box={...box}; tr.lost=false;
-    } else if(tr.lost){
-      // Tracker is lost — use recorded data to keep box moving
-      // This is the critical path: lost tracker still follows its recorded path
-      tr.box.x=box.x; tr.box.y=box.y;
-      tr.box.w=box.w; tr.box.h=box.h;
-      // Only un-lost if this is a manually-recorded (non-lost) frame
+      tr.box={...box}; tr.lost=false; return;
+    }
+    if(tr.lost){
+      // Lost tracker — use data to keep the box on the recorded path
+      tr.box.x=box.x; tr.box.y=box.y; tr.box.w=box.w; tr.box.h=box.h;
+      // Un-lost if this is a manually-confirmed (non-lost) frame
       const arr=S.trackData[tr.id]||[];
       const near=arr.find(f=>Math.abs(f.t-t)<0.08&&!f.lost);
       if(near) tr.lost=false;
+      return;
     }
-    // If AI is tracking fine (not lost), don't touch the box — AI owns it
+    // CRITICAL: when AI is disabled, trackData IS the source of truth.
+    // Always update tr.box from data so drawings follow players.
+    if(!S.aiEnabled){
+      tr.box.x=box.x; tr.box.y=box.y; tr.box.w=box.w; tr.box.h=box.h;
+      return;
+    }
+    // AI is enabled and tracker is not lost — AI owns real-time updates.
+    // But blend gently toward data to correct drift over time.
+    const sm=0.08;
+    tr.box.x=tr.box.x*(1-sm)+box.x*sm;
+    tr.box.y=tr.box.y*(1-sm)+box.y*sm;
   });
 }
 
