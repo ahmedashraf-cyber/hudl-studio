@@ -934,6 +934,7 @@ html,body{width:100%;height:100%;overflow:hidden;font-family:'DM Sans',sans-seri
           <button class="tm-add-btn" onclick="tacCompressV()" title="Compress formation vertically" style="font-size:9px;padding:3px 7px;">↕ Compact</button>
           <button class="tm-add-btn" onclick="tacExpandV()" title="Expand formation vertically" style="font-size:9px;padding:3px 7px;">↕ Spread</button>
           <button class="tm-add-btn" onclick="tacVoronoi()" style="font-size:9px;padding:3px 7px;">⬡ Voronoi</button>
+          <button class="tm-add-btn" id="tac-delaunay-btn" onclick="tacDelaunay()" style="font-size:9px;padding:3px 7px;" title="Delaunay passing lanes">△ Passing</button>
           <button class="tm-add-btn" id="tac-zones-btn" onclick="tacToggleZones()" style="font-size:9px;padding:3px 7px;" title="Show/hide horizontal thirds (def / mid / att)">▤ Thirds</button>
           <button class="tm-add-btn" id="tac-lanes-btn" onclick="tacToggleLanes()" style="font-size:9px;padding:3px 7px;" title="Show/hide vertical channels (5 lanes)">⬝ Lanes</button>
           <button class="tm-add-btn" id="tac-curve-btn" onclick="tacToggleCurveMode()" style="font-size:9px;padding:3px 7px;" title="Toggle curve edit mode — drag control points to curve player paths">⌒ Curves</button>
@@ -4448,6 +4449,7 @@ const _TAC = {
   homeColor: '#E31837',
   awayColor: '#1a3a8f',
   voronoiOn: false,
+  delaunayOn: false,
   distOn: true,
   selId: null,       // selected object id
   drawPts: [],       // in-progress arrow/line points
@@ -4485,8 +4487,9 @@ const _TAC = {
         this.homeColor = d.homeColor||'#E31837';
         this.awayColor = d.awayColor||'#1a3a8f';
         if(d._curves)  this._curves  = d._curves;
-        if(d.zonesOn)  this.zonesOn  = d.zonesOn;
-        if(d.lanesOn)  this.lanesOn  = d.lanesOn;
+        if(d.zonesOn)    this.zonesOn    = d.zonesOn;
+        if(d.lanesOn)    this.lanesOn    = d.lanesOn;
+        if(d.delaunayOn) this.delaunayOn = d.delaunayOn;
         document.getElementById('tac-home-color').value = this.homeColor;
         document.getElementById('tac-away-color').value = this.awayColor;
       }
@@ -4503,7 +4506,7 @@ const _TAC = {
       _uid: this._uid, scenes: this.scenes,
       homeColor: this.homeColor, awayColor: this.awayColor,
       _curves: this._curves,
-      zonesOn: this.zonesOn, lanesOn: this.lanesOn,
+      zonesOn: this.zonesOn, lanesOn: this.lanesOn, delaunayOn: this.delaunayOn,
     })); }catch(e){}
   },
 
@@ -4874,7 +4877,8 @@ const _TAC = {
     ctx.clearRect(0,0,W,H);
     this._drawPitch(ctx,W,H);
     if(!this.frame) return;
-    if(this.voronoiOn) this._drawVoronoi(ctx,W,H);
+    if(this.voronoiOn)  this._drawVoronoi(ctx,W,H);
+    if(this.delaunayOn) this._drawDelaunay(ctx,W,H);
     this._drawDrawings(ctx,W,H);
     this._drawPlayers(ctx,W,H);
     this._drawBalls(ctx,W,H);
@@ -5189,6 +5193,86 @@ const _TAC = {
     ctx.putImageData(img,0,0);
     // Voronoi edges (approximate with boundary pixels)
     // skipped for perf — the fill conveys it
+  },
+
+  // ── DELAUNAY TRIANGULATION — Bowyer-Watson algorithm ─────────
+  _delaunayTriangulate(pts){
+    if(pts.length<3) return [];
+    const minX=Math.min(...pts.map(p=>p.x)),minY=Math.min(...pts.map(p=>p.y));
+    const maxX=Math.max(...pts.map(p=>p.x)),maxY=Math.max(...pts.map(p=>p.y));
+    const dm=Math.max(maxX-minX,maxY-minY)*3;
+    const mx=(minX+maxX)/2,my=(minY+maxY)/2;
+    const n=pts.length;
+    const all=[...pts,{x:mx-dm,y:my-dm*2},{x:mx,y:my+dm*2},{x:mx+dm*2,y:my-dm}];
+    let tris=[[n,n+1,n+2]];
+    for(let pi=0;pi<n;pi++){
+      const p=all[pi];
+      const bad=tris.filter(t=>this._inCircum(all[t[0]],all[t[1]],all[t[2]],p));
+      const poly=[];
+      for(const t of bad){
+        for(let i=0;i<3;i++){
+          const e=[t[i],t[(i+1)%3]];
+          if(!bad.some(t2=>t2!==t&&t2.includes(e[0])&&t2.includes(e[1]))) poly.push(e);
+        }
+      }
+      tris=tris.filter(t=>!bad.includes(t));
+      for(const e of poly) tris.push([pi,e[0],e[1]]);
+    }
+    return tris.filter(t=>!t.some(v=>v>=n));
+  },
+
+  _inCircum(a,b,c,p){
+    const ax=a.x-p.x,ay=a.y-p.y,bx=b.x-p.x,by=b.y-p.y,cx=c.x-p.x,cy=c.y-p.y;
+    return (ax*(by*(cx*cx+cy*cy)-cy*(bx*bx+by*by))
+           -ay*(bx*(cx*cx+cy*cy)-cx*(bx*bx+by*by))
+           +(ax*ax+ay*ay)*(bx*cy-by*cx))>0;
+  },
+
+  _drawDelaunay(ctx,W,H){
+    if(!this.frame||this.frame.players.length<3) return;
+    const players=this.frame.players;
+    const pts=players.map(p=>({
+      x:this.px(p.x,W),y:this.py(p.y,H),
+      color:p.color||(p.team==='home'?this.homeColor:this.awayColor),
+      team:p.team,
+    }));
+    const tris=this._delaunayTriangulate(pts);
+    const drawn=new Set();
+    // Draw edges
+    for(const tri of tris){
+      for(let i=0;i<3;i++){
+        const a=tri[i],b=tri[(i+1)%3];
+        const key=Math.min(a,b)+','+Math.max(a,b);
+        if(drawn.has(key)) continue;
+        drawn.add(key);
+        const pA=pts[a],pB=pts[b];
+        const cross=(pA.team!==pB.team);
+        const dist=Math.hypot(pB.x-pA.x,pB.y-pA.y);
+        const alpha=Math.max(0.08,1-dist/(W*0.6));
+        ctx.save();
+        ctx.globalAlpha=alpha*(cross?0.55:0.60);
+        ctx.lineWidth=cross?1.2:1.8;
+        ctx.strokeStyle=cross?'rgba(255,60,60,0.9)':(pA.color||'#fff');
+        if(cross) ctx.setLineDash([3,4]);
+        ctx.beginPath(); ctx.moveTo(pA.x,pA.y); ctx.lineTo(pB.x,pB.y); ctx.stroke();
+        ctx.setLineDash([]);
+        // Midpoint dot for same-team close lanes
+        if(!cross&&alpha>0.35){
+          ctx.globalAlpha=alpha*0.45;
+          ctx.fillStyle=pA.color||'#fff';
+          ctx.beginPath(); ctx.arc((pA.x+pB.x)/2,(pA.y+pB.y)/2,2,0,Math.PI*2); ctx.fill();
+        }
+        ctx.restore();
+      }
+    }
+    // Triangle fill for same-team triangles
+    for(const tri of tris){
+      const [pA,pB,pC]=[pts[tri[0]],pts[tri[1]],pts[tri[2]]];
+      if(pA.team!==pB.team||pB.team!==pC.team) continue;
+      ctx.save(); ctx.globalAlpha=0.04; ctx.fillStyle=pA.color||'#fff';
+      ctx.beginPath(); ctx.moveTo(pA.x,pA.y); ctx.lineTo(pB.x,pB.y);
+      ctx.lineTo(pC.x,pC.y); ctx.closePath(); ctx.fill(); ctx.restore();
+    }
   },
 
   _hexToRgb(h){
@@ -5522,6 +5606,21 @@ const _TAC = {
     notify(this.voronoiOn?'Voronoi zones ON':'Voronoi zones OFF', this.voronoiOn?'#30D158':'#8b949e');
   },
 
+  toggleDelaunay(){
+    this.delaunayOn=!this.delaunayOn;
+    const btn=document.getElementById('tac-delaunay-btn');
+    if(btn){
+      btn.style.background  =this.delaunayOn?'rgba(48,209,88,0.15)':'';
+      btn.style.borderColor =this.delaunayOn?'rgba(48,209,88,0.4)':'';
+      btn.style.color       =this.delaunayOn?'#30D158':'';
+    }
+    this._draw();
+    notify(this.delaunayOn
+      ?'Passing lanes ON — team color=lane, red dashed=gap'
+      :'Passing lanes OFF',
+      this.delaunayOn?'#30D158':'#8b949e');
+  },
+
   // ── ORIENTATION ────────────────────────────────────────────────
   toggleOrientation(){
     this.vertical=!this.vertical;
@@ -5759,6 +5858,7 @@ function tacFormationPanel(){
 function tacApplyFormation(team,f){ _TAC.applyFormation(team,f); }
 function tacSetTeamColor(team,c){ _TAC.setTeamColor(team,c); }
 function tacVoronoi(){ _TAC.toggleVoronoi(); }
+function tacDelaunay(){ _TAC.toggleDelaunay(); }
 function tacToggleOrientation(){ _TAC.toggleOrientation(); }
 function tacExportPNG(){ _TAC.exportPNG(); }
 function tacExportGIF(){ _TAC.exportGIF(); }
