@@ -4550,20 +4550,227 @@ const _TAC = {
   prevFrame(){ this.gotoFrame(this.curFrame-1); },
   nextFrame(){ this.gotoFrame(this.curFrame+1); },
 
+  // ── SMOOTH TWEEN ENGINE ────────────────────────────────────────
+  // Instead of jumping between frames, we animate every player from
+  // their position in frame A to their position in frame B using
+  // requestAnimationFrame + ease-in-out-cubic interpolation.
+  //
+  // How it works:
+  //   1. togglePlay() starts the sequence: frame 0 → 1 → 2 → ... → 0
+  //   2. _tweenTo(nextIdx) runs a ~700ms RAF loop per transition
+  //   3. Each RAF tick: interpolate every player's x,y between frames
+  //      using t = easeInOutCubic(elapsed / DURATION)
+  //   4. Draw the interpolated state without mutating frame data
+  //   5. At t=1.0: finalize, wait HOLD_MS, then start next tween
+  //
+  // Player matching: by position in array (index). If teams have the
+  // same formation, index matches. If counts differ, extras just appear.
+
+  TWEEN_MS: 700,   // transition duration in ms — how long the glide takes
+  HOLD_MS:  500,   // how long to hold the final frame before next tween
+
+  _tweenRaf: null,    // current RAF id
+  _tweenFrom: null,   // snapshot of players at start of tween
+  _tweenTo_data: null,// target frame
+  _tweenStart: 0,
+  _tweenNextIdx: 0,
+
+  // Ease-in-out cubic: slow start, fast middle, slow end
+  _ease(t){ return t<0.5 ? 4*t*t*t : 1-Math.pow(-2*t+2,3)/2; },
+
+  // Lerp between two values
+  _lerp(a,b,t){ return a+(b-a)*t; },
+
   togglePlay(){
     if(this.animPlaying){
-      clearInterval(this.animTimer);
+      // Stop — cancel any in-progress tween
+      if(this._tweenRaf){ cancelAnimationFrame(this._tweenRaf); this._tweenRaf=null; }
+      clearTimeout(this._holdTimer);
       this.animPlaying = false;
       document.getElementById('tac-play-btn').textContent = '▶';
+      this._draw(); // redraw clean current frame
       return;
+    }
+    if(!this.scene || this.scene.frames.length < 2){
+      notify('Add at least 2 frames to animate','#E8590C'); return;
     }
     this.animPlaying = true;
     document.getElementById('tac-play-btn').textContent = '⏸';
-    this.animTimer = setInterval(()=>{
-      if(!this.scene) return;
-      const next = (this.curFrame+1) % this.scene.frames.length;
-      this.gotoFrame(next);
-    }, 800);
+    // Start tweening from current frame to next
+    this._startNextTween();
+  },
+
+  _startNextTween(){
+    if(!this.animPlaying || !this.scene) return;
+    const frames = this.scene.frames;
+    const fromIdx = this.curFrame;
+    const toIdx = (fromIdx + 1) % frames.length;
+    this._tweenNextIdx = toIdx;
+
+    // Snapshot current frame players (deep copy — don't mutate)
+    this._tweenFrom = JSON.parse(JSON.stringify(frames[fromIdx]));
+    this._tweenTo_data = JSON.parse(JSON.stringify(frames[toIdx]));
+    this._tweenStart = performance.now();
+
+    const tick = (now) => {
+      if(!this.animPlaying){ return; }
+      const elapsed = now - this._tweenStart;
+      const rawT = Math.min(1, elapsed / this.TWEEN_MS);
+      const t = this._ease(rawT);
+
+      // Draw interpolated state
+      this._drawTweened(t);
+
+      if(rawT < 1){
+        this._tweenRaf = requestAnimationFrame(tick);
+      } else {
+        // Tween complete — land on target frame
+        this._tweenRaf = null;
+        this.curFrame = this._tweenNextIdx;
+        this._renderFrameDots();
+        // Hold for HOLD_MS then start next tween
+        this._holdTimer = setTimeout(()=>{
+          if(this.animPlaying) this._startNextTween();
+        }, this.HOLD_MS);
+      }
+    };
+
+    this._tweenRaf = requestAnimationFrame(tick);
+  },
+
+  // Draw an interpolated state between _tweenFrom and _tweenTo_data at progress t
+  _drawTweened(t){
+    const cvs=this._canvas, ctx=this._ctx;
+    if(!cvs||!ctx) return;
+    const W=cvs.width, H=cvs.height;
+    ctx.clearRect(0,0,W,H);
+    this._drawPitch(ctx,W,H);
+
+    const fromF = this._tweenFrom;
+    const toF   = this._tweenTo_data;
+
+    // ── Draw motion trails for each player ────────────────────
+    // Show a fading arc from start position to current interpolated position
+    // This makes the movement path visible and looks premium
+    const fromPlayers = fromF.players || [];
+    const toPlayers   = toF.players   || [];
+
+    fromPlayers.forEach((fp, i) => {
+      const tp = toPlayers[i];
+      if(!tp) return;
+      const fx = this.px(fp.x, W), fy = this.py(fp.y, H);
+      const tx2= this.px(tp.x, W), ty2= this.py(tp.y, H);
+      const cx2= this.px(this._lerp(fp.x, tp.x, t), W);
+      const cy2= this.py(this._lerp(fp.y, tp.y, t), H);
+      const dist = Math.hypot(tx2-fx, ty2-fy);
+      if(dist < 4) return; // no trail for stationary players
+
+      // Trail line from start → current position
+      ctx.save();
+      const col = fp.color || (fp.team==='home' ? this.homeColor : this.awayColor);
+      // Dashed motion trail
+      ctx.strokeStyle = col;
+      ctx.lineWidth = 2;
+      ctx.globalAlpha = 0.35 * t; // fades in as player moves
+      ctx.setLineDash([4,5]);
+      ctx.beginPath(); ctx.moveTo(fx,fy); ctx.lineTo(cx2,cy2); ctx.stroke();
+      ctx.setLineDash([]);
+
+      // Arrowhead at current position showing direction
+      if(t > 0.15){
+        const ang = Math.atan2(cy2-fy, cx2-fx);
+        const hl = 7;
+        ctx.globalAlpha = 0.55 * t;
+        ctx.fillStyle = col;
+        ctx.beginPath();
+        ctx.moveTo(cx2, cy2);
+        ctx.lineTo(cx2 - hl*Math.cos(ang-Math.PI/6), cy2 - hl*Math.sin(ang-Math.PI/6));
+        ctx.lineTo(cx2 - hl*Math.cos(ang+Math.PI/6), cy2 - hl*Math.sin(ang+Math.PI/6));
+        ctx.closePath(); ctx.fill();
+      }
+
+      // Ghost of start position (fades out)
+      ctx.globalAlpha = (1-t) * 0.3;
+      ctx.beginPath(); ctx.arc(fx, fy, W*0.026, 0, Math.PI*2);
+      ctx.strokeStyle = col; ctx.lineWidth = 1.5; ctx.stroke();
+      ctx.restore();
+    });
+
+    // ── Draw interpolated players ──────────────────────────────
+    const maxLen = Math.max(fromPlayers.length, toPlayers.length);
+    for(let i=0; i<maxLen; i++){
+      const fp = fromPlayers[i];
+      const tp = toPlayers[i];
+      if(!fp && !tp) continue;
+
+      // If player only exists in one frame: fade in/out
+      const alpha = fp && tp ? 1 : (fp ? 1-t : t);
+
+      const startX = fp ? fp.x : tp.x;
+      const startY = fp ? fp.y : tp.y;
+      const endX   = tp ? tp.x : fp.x;
+      const endY   = tp ? tp.y : fp.y;
+
+      const ix = this.px(this._lerp(startX, endX, t), W);
+      const iy = this.py(this._lerp(startY, endY, t), H);
+      const r  = W * 0.026;
+      const p  = fp || tp;
+
+      ctx.save();
+      ctx.globalAlpha = alpha;
+
+      // Selection ring
+      if(p.id === this.selId){
+        ctx.beginPath(); ctx.arc(ix,iy,r+5,0,Math.PI*2);
+        ctx.strokeStyle='#FFEA00'; ctx.lineWidth=2; ctx.stroke();
+      }
+
+      // Body circle
+      ctx.beginPath(); ctx.arc(ix,iy,r,0,Math.PI*2);
+      ctx.fillStyle = p.color || (p.team==='home' ? this.homeColor : this.awayColor);
+      ctx.fill();
+      ctx.strokeStyle='rgba(255,255,255,0.6)'; ctx.lineWidth=1.5; ctx.stroke();
+
+      // Number
+      ctx.fillStyle='#fff';
+      ctx.font=`700 ${Math.round(r*0.85)}px DM Sans,sans-serif`;
+      ctx.textAlign='center'; ctx.textBaseline='middle';
+      ctx.fillText(p.num||'',ix,iy);
+
+      // Name
+      if(p.name){
+        ctx.font=`500 ${Math.round(r*0.55)}px DM Sans,sans-serif`;
+        ctx.fillStyle='rgba(255,255,255,0.85)';
+        ctx.fillText(p.name,ix,iy+r+7);
+      }
+
+      ctx.restore();
+    }
+
+    // ── Interpolated balls ─────────────────────────────────────
+    ctx.textAlign='left'; ctx.textBaseline='alphabetic';
+    const fromBalls = fromF.balls||[], toBalls = toF.balls||[];
+    const maxB = Math.max(fromBalls.length, toBalls.length);
+    for(let i=0;i<maxB;i++){
+      const fb=fromBalls[i], tb=toBalls[i];
+      if(!fb&&!tb) continue;
+      const bx=this.px(this._lerp(fb?fb.x:tb.x, tb?tb.x:fb.x, t), W);
+      const by=this.py(this._lerp(fb?fb.y:tb.y, tb?tb.y:fb.y, t), H);
+      const br=W*0.016;
+      ctx.save();
+      ctx.globalAlpha = (fb&&tb)?1:(fb?1-t:t);
+      ctx.beginPath(); ctx.arc(bx,by,br,0,Math.PI*2);
+      ctx.fillStyle='#FFEA00'; ctx.fill();
+      ctx.strokeStyle='rgba(0,0,0,0.5)'; ctx.lineWidth=1.5; ctx.stroke();
+      ctx.restore();
+    }
+
+    // Drawings from the from-frame (fade out as we transition)
+    if(fromF.drawings?.length){
+      ctx.save(); ctx.globalAlpha = Math.max(0, 1-t*2);
+      this._drawDrawings(ctx,W,H); // uses current frame, ok for fast fade
+      ctx.restore();
+    }
   },
 
   // ── PITCH DRAWING ─────────────────────────────────────────────
