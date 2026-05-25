@@ -517,6 +517,7 @@ html,body{width:100%;height:100%;overflow:hidden;font-family:'DM Sans',sans-seri
   </select>
   <button class="tm-btn" onclick="toggleMap()">⬡ Pitch Map</button>
   <button class="tm-btn" onclick="openPresentation()" style="margin-left:2px;">▣ Present</button>
+  <button class="tm-btn" id="tm-dist-btn" onclick="toggleDistLines()" style="margin-left:2px;">⇔ Distances</button>
   <button class="tm-btn" onclick="exportCSV()" style="margin-left:2px;">↓ CSV</button>
   <button class="tm-btn acc" onclick="tmSave()" style="margin-left:6px;">Save</button>
   <button class="tm-btn" onclick="goBack()" style="margin-left:4px;">← Back</button>
@@ -586,6 +587,14 @@ html,body{width:100%;height:100%;overflow:hidden;font-family:'DM Sans',sans-seri
       <button class="tm-tool" id="tool-spot" onclick="setTool('spot')" title="Spotlight">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="5"/><path d="M12 2v4M12 18v4M2 12h4M18 12h4"/></svg>
         <span>Spot</span>
+      </button>
+      <button class="tm-tool" id="tool-ring" onclick="setTool('ring')" title="3D Ring — auto-pins to nearest tracker">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><ellipse cx="12" cy="14" rx="8" ry="3.5"/><ellipse cx="12" cy="12" rx="8" ry="3.5"/></svg>
+        <span>Ring</span>
+      </button>
+      <button class="tm-tool" id="tool-offside" onclick="setTool('offside')" title="Offside / tactical line">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 12h18"/><path d="M7 8l-4 4 4 4"/><path d="M17 8l4 4-4 4"/></svg>
+        <span>Offside</span>
       </button>
       <div class="tm-divider"></div>
       <button class="tm-tool" id="tool-select" onclick="setTool('select')" title="Select">
@@ -840,6 +849,7 @@ const $ = id => document.getElementById(id);
 const S = {
   sport:'football', loaded:false, dur:0, playing:false, muted:false, speed:1,
   tool:'select', drawColor:'#FFEA00', drawSize:3, drawOpacity:1,
+  _mouseP:null, _draftAnchors:[], showDistLines:true,
   drawings:[], isDrawing:false, drawStart:null, penPts:[], draftPts:[],
   trackers:[], trackData:{},    // Phase 2 tracking
   assignMode:null, assignBox:null, pendingPt:null,
@@ -868,7 +878,7 @@ function setSave(msg,col){ const e=$('tm-save'); if(e){e.textContent=msg;e.style
 let _saveTimer;
 function scheduleSave(){ clearTimeout(_saveTimer); setSave('● Saving…','#d29922'); _saveTimer=setTimeout(tmSave,1600); }
 
-const DRAW_TOOLS=['arrow','curve','dash','zone','circle','polygon','line','pass','dot','text','free','spot','erase'];
+const DRAW_TOOLS=['arrow','curve','dash','zone','circle','polygon','line','pass','dot','text','free','spot','ring','offside','erase'];
 const TRACK_TOOLS=['track-click','track-box'];
 
 // ── VIDEO ─────────────────────────────────────────────────────────
@@ -990,101 +1000,503 @@ function getP(e){
 }
 
 // ── CANVAS EVENTS ─────────────────────────────────────────────────
+// ── Track mouse position for snap ring ───────────────────────────
 const cvs=$('tm-canvas');
-cvs.addEventListener('mousedown',e=>{
-  if(e.button!==0)return;
-  const p=getP(e);
-  // Assign mode
+cvs.addEventListener('mousemove', e => {
+  S._mouseP = getP(e);
+  const p = S._mouseP;
+
+  if(S.assignMode==='box' && S.isDrawing){ S.assignBox.x2=p.x; S.assignBox.y2=p.y; redraw(); return; }
+  if(!S.isDrawing){ redraw(); return; } // redraw to update snap ring
+
+  if(S.tool==='free'||S.tool==='erase'){
+    S.penPts.push(p);
+    redraw({type:S.tool,points:[...S.penPts],color:S.drawColor,size:S.drawSize,opacity:S.drawOpacity});
+  } else {
+    redraw({type:S.tool,start:S.drawStart,end:p,color:S.drawColor,size:S.drawSize,opacity:S.drawOpacity});
+  }
+});
+cvs.addEventListener('mouseleave', () => { S._mouseP=null; });
+
+cvs.addEventListener('mousedown', e => {
+  if(e.button!==0) return;
+  const p = getP(e);
+
+  // Assign tracker mode
   if(S.assignMode){
     if(S.assignMode==='click'){ S.pendingPt={method:'click',...p}; openModal(); }
     else { S.isDrawing=true; S.assignBox={x1:p.x,y1:p.y,x2:p.x,y2:p.y}; }
     return;
   }
-  if(!DRAW_TOOLS.includes(S.tool))return;
-  if(S.tool==='polygon'){ S.draftPts.push(p); redraw(); return; }
+  if(!DRAW_TOOLS.includes(S.tool)) return;
+
+  // Polygon — collect click-by-click points, each snapped to tracker if near
+  if(S.tool==='polygon'){
+    const anchor = makeAnchor(p.x, p.y, `pt_${S.draftPts.length}`);
+    const pt = anchor
+      ? {x: p.x + (anchor.ox||0) - (anchor.ox||0), y: p.y}  // use actual click pos
+      : p;
+    // Store snap anchor for this draft point
+    if(!S._draftAnchors) S._draftAnchors=[];
+    if(anchor) S._draftAnchors.push(anchor);
+    S.draftPts.push(p); redraw(); return;
+  }
+
   if(S.tool==='text'){ addText(p); return; }
-  if(S.tool==='dot'){ addDot(p); return; }
+  if(S.tool==='dot'){  addDot(p);  return; }
+  if(S.tool==='ring'){ addRing(p); return; }
+  if(S.tool==='offside'){ addOffside(p); return; }
+
   S.isDrawing=true; S.drawStart=p; S.penPts=[p];
 });
-cvs.addEventListener('mousemove',e=>{
-  const p=getP(e);
-  if(S.assignMode==='box'&&S.isDrawing){ S.assignBox.x2=p.x; S.assignBox.y2=p.y; redraw(); return; }
-  if(!S.isDrawing)return;
-  if(S.tool==='free'||S.tool==='erase'){ S.penPts.push(p); redraw({type:S.tool,points:[...S.penPts],color:S.drawColor,size:S.drawSize,opacity:S.drawOpacity}); }
-  else redraw({type:S.tool,start:S.drawStart,end:p,color:S.drawColor,size:S.drawSize,opacity:S.drawOpacity});
-});
-cvs.addEventListener('mouseup',e=>{
-  const p=getP(e);
-  if(S.assignMode==='box'&&S.isDrawing){ S.isDrawing=false; S.pendingPt={method:'box',x1:S.assignBox.x1,y1:S.assignBox.y1,x2:p.x,y2:p.y}; S.assignBox=null; openModal(); return; }
-  if(!S.isDrawing)return; S.isDrawing=false;
-  if(S.tool==='polygon')return;
-  const eid=S.selEvent?.id||null;
+
+cvs.addEventListener('mouseup', e => {
+  const p = getP(e);
+  if(S.assignMode==='box' && S.isDrawing){
+    S.isDrawing=false;
+    S.pendingPt={method:'box',x1:S.assignBox.x1,y1:S.assignBox.y1,x2:p.x,y2:p.y};
+    S.assignBox=null; openModal(); return;
+  }
+  if(!S.isDrawing) return;
+  S.isDrawing=false;
+  if(S.tool==='polygon') return;
+
+  const eid = S.selEvent?.id||null;
   let d;
-  if(S.tool==='free'||S.tool==='erase') d={type:S.tool,points:[...S.penPts],color:S.drawColor,size:S.drawSize,opacity:S.drawOpacity,eid};
-  else d={type:S.tool,start:S.drawStart,end:p,color:S.drawColor,size:S.drawSize,opacity:S.drawOpacity,eid};
+  if(S.tool==='free'||S.tool==='erase'){
+    d={type:S.tool,points:[...S.penPts],color:S.drawColor,size:S.drawSize,opacity:S.drawOpacity,eid};
+  } else {
+    // Build anchors for start/end
+    const anchors=[];
+    const startAnchor = makeAnchor(S.drawStart.x, S.drawStart.y, 'start');
+    const endAnchor   = makeAnchor(p.x, p.y, 'end');
+    if(startAnchor) anchors.push(startAnchor);
+    if(endAnchor)   anchors.push(endAnchor);
+
+    d={type:S.tool,start:{...S.drawStart},end:{...p},
+       color:S.drawColor,size:S.drawSize,opacity:S.drawOpacity,
+       eid, anchors:anchors.length?anchors:undefined};
+  }
   S.drawings.push(d); redraw(); scheduleSave();
 });
-cvs.addEventListener('contextmenu',e=>{ e.preventDefault(); if(S.tool==='polygon'&&S.draftPts.length>2) finishPoly(); });
 
-function finishPoly(){ S.drawings.push({type:'polygon',points:[...S.draftPts],color:S.drawColor,size:S.drawSize,opacity:S.drawOpacity,eid:S.selEvent?.id||null}); S.draftPts=[]; redraw(); scheduleSave(); }
-function addDot(p){ S.drawings.push({type:'dot',x:p.x,y:p.y,color:S.drawColor,size:S.drawSize,opacity:S.drawOpacity,eid:S.selEvent?.id||null}); redraw(); scheduleSave(); }
-function addText(p){ const t=prompt('Label:'); if(t?.trim()){ S.drawings.push({type:'text',x:p.x,y:p.y,text:t.trim(),color:S.drawColor,size:S.drawSize,opacity:S.drawOpacity,eid:S.selEvent?.id||null}); redraw(); scheduleSave(); } }
+cvs.addEventListener('contextmenu', e=>{
+  e.preventDefault();
+  if(S.tool==='polygon' && S.draftPts.length>2) finishPoly();
+});
+
+function finishPoly(){
+  // Build per-corner anchors
+  const anchors = (S._draftAnchors||[]);
+  // Re-derive anchors for each draftPt
+  const cornerAnchors = S.draftPts.map((p,i)=>{
+    const tr = nearestTracker(p.x, p.y);
+    if(!tr) return null;
+    const c = tCenter(tr);
+    return { trackerId:tr.id, role:`pt_${i}`, ox:p.x-c.x, oy:p.y-c.y };
+  }).filter(Boolean);
+  S.drawings.push({
+    type:'polygon', points:[...S.draftPts],
+    color:S.drawColor, size:S.drawSize, opacity:S.drawOpacity,
+    eid:S.selEvent?.id||null,
+    anchors: cornerAnchors.length ? cornerAnchors : undefined
+  });
+  S.draftPts=[]; S._draftAnchors=[]; redraw(); scheduleSave();
+}
+
+function addDot(p){
+  const anchor = makeAnchor(p.x,p.y,'center');
+  S.drawings.push({
+    type:'dot', x:p.x, y:p.y,
+    color:S.drawColor,size:S.drawSize,opacity:S.drawOpacity,
+    eid:S.selEvent?.id||null,
+    anchors: anchor?[anchor]:undefined
+  });
+  redraw(); scheduleSave();
+}
+
+function addRing(p){
+  // Ring anchors to nearest tracker automatically
+  const tr = nearestTracker(p.x, p.y);
+  const anchor = tr ? {trackerId:tr.id, role:'start', ox:0, oy:0} : null;
+  const cx = tr ? tCenter(tr).x : p.x;
+  const cy = tr ? tCenter(tr).y : p.y;
+  S.drawings.push({
+    type:'ring',
+    start:{x:cx,y:cy}, end:{x:cx+30,y:cy},
+    color:S.drawColor,size:S.drawSize,opacity:S.drawOpacity,
+    eid:S.selEvent?.id||null,
+    anchors: anchor?[anchor]:undefined
+  });
+  redraw(); scheduleSave();
+  if(tr) notify('Ring anchored to #'+tr.jersey);
+}
+
+function addOffside(p){
+  const label = prompt('Line label (optional):','Offside line') ?? 'Offside line';
+  S.drawings.push({
+    type:'offside', start:{x:0,y:p.y}, end:{x:1280,y:p.y},
+    label:label.trim()||'Offside line',
+    color:S.drawColor, size:S.drawSize, opacity:S.drawOpacity,
+    eid:S.selEvent?.id||null
+  });
+  redraw(); scheduleSave();
+}
+function addText(p){
+  const t=prompt('Label:');
+  if(!t?.trim()) return;
+  const anchor = makeAnchor(p.x,p.y,'center');
+  S.drawings.push({
+    type:'text', x:p.x, y:p.y, text:t.trim(),
+    color:S.drawColor,size:S.drawSize,opacity:S.drawOpacity,
+    eid:S.selEvent?.id||null,
+    anchors: anchor?[anchor]:undefined
+  });
+  redraw(); scheduleSave();
+}
 function undoDraw(){ S.drawings.pop(); S.draftPts=[]; redraw(); scheduleSave(); }
 function clearDraw(){ if(confirm('Clear all drawings?')){ S.drawings=[]; S.draftPts=[]; redraw(); scheduleSave(); } }
 
 // ── RENDER ────────────────────────────────────────────────────────
 function hex2rgba(h,a){ if(!h||h.startsWith('rgb'))return h; const r=parseInt(h.slice(1,3),16),g=parseInt(h.slice(3,5),16),b=parseInt(h.slice(5,7),16); return `rgba(${r},${g},${b},${a})`; }
 
-function drawShape(ctx,d){
-  if(!d)return;
-  const a=d.opacity??1; ctx.save(); ctx.globalAlpha=a;
-  ctx.strokeStyle=d.color||'#FFEA00'; ctx.fillStyle=d.color||'#FFEA00';
-  ctx.lineCap='round'; ctx.lineJoin='round';
-  const lw=Math.max(2,((d.size||3)*1.5));
-  switch(d.type){
-    case 'arrow': case 'dash':{
-      ctx.lineWidth=lw; if(d.type==='dash') ctx.setLineDash([8,5]);
-      const ang=Math.atan2(d.end.y-d.start.y,d.end.x-d.start.x),hl=Math.max(12,(d.size||3)*5);
-      ctx.beginPath(); ctx.moveTo(d.start.x,d.start.y); ctx.lineTo(d.end.x-hl*Math.cos(ang)*.4,d.end.y-hl*Math.sin(ang)*.4); ctx.stroke();
-      ctx.setLineDash([]); ctx.beginPath(); ctx.moveTo(d.end.x,d.end.y);
-      ctx.lineTo(d.end.x-hl*Math.cos(ang-Math.PI/6),d.end.y-hl*Math.sin(ang-Math.PI/6));
-      ctx.lineTo(d.end.x-hl*Math.cos(ang+Math.PI/6),d.end.y-hl*Math.sin(ang+Math.PI/6));
-      ctx.closePath(); ctx.fill(); break;
+// ══════════════════════════════════════════════════════════════════
+// PHASE 3 — ANCHORED DRAWING SYSTEM
+// Every drawing has optional `anchors` array.
+// Each anchor: { trackerId, role, ox, oy }
+// role = 'start' | 'end' | 'point_N' | 'center'
+// ox/oy = offset from tracker CENTER (set at draw time, preserved on move)
+// ══════════════════════════════════════════════════════════════════
+
+// ── Tracker center helper ─────────────────────────────────────────
+function tCenter(tr){
+  if(!tr||!tr.box) return null;
+  return { x: tr.box.x + tr.box.w/2, y: tr.box.y + tr.box.h/2 };
+}
+
+// ── Snap radius — px in canvas space (1280×720) ───────────────────
+const SNAP_R = 45;
+
+// ── Resolve anchors onto a drawing ───────────────────────────────
+// Mutates d.start / d.end / d.points[i] to match current tracker positions
+function resolveAnchors(d){
+  if(!d.anchors || !d.anchors.length) return;
+  d.anchors.forEach(a => {
+    const tr = S.trackers.find(t => t.id === a.trackerId);
+    if(!tr || !tr.box) return;
+    const cx = tr.box.x + tr.box.w/2;
+    const cy = tr.box.y + tr.box.h/2;
+    const px = cx + (a.ox||0);
+    const py = cy + (a.oy||0);
+    if(a.role === 'start')  { d.start = {x:px, y:py}; }
+    if(a.role === 'end')    { d.end   = {x:px, y:py}; }
+    if(a.role === 'center') { d.x = px; d.y = py; }
+    if(a.role && a.role.startsWith('pt_')){
+      const idx = parseInt(a.role.slice(3));
+      if(d.points && d.points[idx]) { d.points[idx] = {x:px, y:py}; }
     }
-    case 'curve':{
-      const dx=d.end.x-d.start.x,dy=d.end.y-d.start.y,dist=Math.sqrt(dx*dx+dy*dy);
-      const cpX=(d.start.x+d.end.x)/2,cpY=Math.min(d.start.y,d.end.y)-dist*.3;
-      ctx.lineWidth=lw; ctx.beginPath(); ctx.moveTo(d.start.x,d.start.y); ctx.quadraticCurveTo(cpX,cpY,d.end.x,d.end.y); ctx.stroke();
-      const ang=Math.atan2(d.end.y-cpY,d.end.x-cpX),hl=Math.max(12,(d.size||3)*5);
-      ctx.beginPath(); ctx.moveTo(d.end.x,d.end.y);
-      ctx.lineTo(d.end.x-hl*Math.cos(ang-Math.PI/6),d.end.y-hl*Math.sin(ang-Math.PI/6));
-      ctx.lineTo(d.end.x-hl*Math.cos(ang+Math.PI/6),d.end.y-hl*Math.sin(ang+Math.PI/6));
-      ctx.closePath(); ctx.fill(); break;
-    }
-    case 'zone':{ const x=Math.min(d.start.x,d.end.x),y=Math.min(d.start.y,d.end.y),w=Math.abs(d.end.x-d.start.x),h=Math.abs(d.end.y-d.start.y); ctx.lineWidth=2; ctx.setLineDash([6,4]); ctx.fillStyle=hex2rgba(d.color,.18); ctx.fillRect(x,y,w,h); ctx.strokeRect(x,y,w,h); ctx.setLineDash([]); break; }
-    case 'circle':{ const r=Math.sqrt(Math.pow(d.end.x-d.start.x,2)+Math.pow(d.end.y-d.start.y,2)); ctx.lineWidth=2; ctx.setLineDash([6,4]); ctx.beginPath(); ctx.arc(d.start.x,d.start.y,r,0,Math.PI*2); ctx.fillStyle=hex2rgba(d.color,.18); ctx.fill(); ctx.stroke(); ctx.setLineDash([]); break; }
-    case 'polygon':{ const pts=d.points||[]; if(pts.length<2)break; ctx.lineWidth=2; ctx.setLineDash([5,4]); ctx.beginPath(); ctx.moveTo(pts[0].x,pts[0].y); pts.forEach(p=>ctx.lineTo(p.x,p.y)); ctx.closePath(); ctx.fillStyle=hex2rgba(d.color,.18); ctx.fill(); ctx.stroke(); ctx.setLineDash([]); break; }
-    case 'line':{ ctx.lineWidth=lw; ctx.beginPath(); ctx.moveTo(d.start.x,d.start.y); ctx.lineTo(d.end.x,d.end.y); ctx.stroke(); break; }
-    case 'pass':{ ctx.lineWidth=Math.max(1.5,(d.size||3)); ctx.setLineDash([4,4]); ctx.beginPath(); ctx.moveTo(d.start.x,d.start.y); ctx.lineTo(d.end.x,d.end.y); ctx.stroke(); ctx.setLineDash([]); ctx.beginPath(); ctx.arc(d.start.x,d.start.y,4,0,Math.PI*2); ctx.fill(); break; }
-    case 'dot':{ const r=8+(d.size||3); ctx.beginPath(); ctx.arc(d.x,d.y,r,0,Math.PI*2); ctx.fillStyle=hex2rgba(d.color,.3); ctx.fill(); ctx.beginPath(); ctx.arc(d.x,d.y,r,0,Math.PI*2); ctx.lineWidth=2; ctx.stroke(); break; }
-    case 'text':{ const fs=Math.max(14,(d.size||3)*5); ctx.font=`700 ${fs}px 'DM Sans',sans-serif`; const tw=ctx.measureText(d.text||'').width; ctx.fillStyle='rgba(0,0,0,.75)'; ctx.fillRect(d.x-3,d.y-fs,tw+6,fs+5); ctx.fillStyle=d.color; ctx.fillText(d.text||'',d.x,d.y); break; }
-    case 'free':{ if(!d.points||d.points.length<2)break; ctx.lineWidth=d.size||3; ctx.beginPath(); ctx.moveTo(d.points[0].x,d.points[0].y); d.points.forEach(p=>ctx.lineTo(p.x,p.y)); ctx.stroke(); break; }
-    case 'erase':{ if(!d.points||d.points.length<2)break; ctx.globalCompositeOperation='destination-out'; ctx.lineWidth=(d.size||3)*8; ctx.beginPath(); ctx.moveTo(d.points[0].x,d.points[0].y); d.points.forEach(p=>ctx.lineTo(p.x,p.y)); ctx.stroke(); break; }
-    case 'spot':{ const r=Math.sqrt(Math.pow(d.end.x-d.start.x,2)+Math.pow(d.end.y-d.start.y,2)); ctx.fillStyle='rgba(0,0,0,.68)'; ctx.fillRect(0,0,1280,720); ctx.globalCompositeOperation='destination-out'; ctx.beginPath(); ctx.arc(d.start.x,d.start.y,r,0,Math.PI*2); ctx.fill(); break; }
+  });
+}
+
+// ── Find nearest tracker within snap radius ───────────────────────
+function nearestTracker(px, py){
+  let best = null, bestD = SNAP_R;
+  S.trackers.forEach(tr => {
+    const c = tCenter(tr); if(!c) return;
+    const d = Math.sqrt((px-c.x)**2 + (py-c.y)**2);
+    if(d < bestD){ bestD = d; best = tr; }
+  });
+  return best;
+}
+
+// ── Draw snap indicator (glowing ring when near tracker) ──────────
+function drawSnapIndicator(ctx, px, py){
+  const tr = nearestTracker(px, py);
+  if(!tr) return;
+  const c = tCenter(tr);
+  ctx.save();
+  ctx.strokeStyle = '#FFEA00';
+  ctx.lineWidth = 2;
+  ctx.globalAlpha = 0.8;
+  ctx.setLineDash([4,3]);
+  ctx.beginPath();
+  ctx.arc(c.x, c.y, SNAP_R * 0.8, 0, Math.PI*2);
+  ctx.stroke();
+  ctx.setLineDash([]);
+  ctx.restore();
+}
+
+// ── Build anchor for a point ──────────────────────────────────────
+function makeAnchor(px, py, role){
+  const tr = nearestTracker(px, py);
+  if(!tr) return null;
+  const c = tCenter(tr);
+  return { trackerId: tr.id, role, ox: px - c.x, oy: py - c.y };
+}
+
+// ── Distance label helpers ────────────────────────────────────────
+// Video-space pixel → approximate meters (broadcast wide-angle rough estimate)
+// Pitch ~105m wide shown across ~1000px of 1280px canvas = ~9.5px/m
+const PX_PER_M = 9.5;
+function px2m(dx, dy){ return Math.sqrt(dx*dx + dy*dy) / PX_PER_M; }
+
+function drawDistLabel(ctx, x1, y1, x2, y2, color){
+  const dist = px2m(x2-x1, y2-y1);
+  if(dist < 1) return;
+  const mx = (x1+x2)/2, my = (y1+y2)/2;
+  const label = dist.toFixed(1) + ' m';
+  ctx.save();
+  ctx.font = '700 11px DM Sans,sans-serif';
+  const tw = ctx.measureText(label).width;
+  // Dark pill background
+  ctx.fillStyle = 'rgba(10,20,40,0.88)';
+  const pw = tw+10, ph = 16;
+  ctx.beginPath();
+  ctx.roundRect(mx - pw/2, my - ph/2, pw, ph, 5);
+  ctx.fill();
+  // Colored border
+  ctx.strokeStyle = color||'#fff';
+  ctx.lineWidth = 1;
+  ctx.stroke();
+  // Text
+  ctx.fillStyle = '#fff';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(label, mx, my);
+  ctx.restore();
+}
+
+// ── Draw 3D ring (player halo) ────────────────────────────────────
+function drawRing(ctx, cx, cy, rx, col, a){
+  const ry = Math.max(1, rx * 0.38);
+  if(rx < 4 || ry < 2) return;
+  ctx.save(); ctx.globalAlpha = a; ctx.lineCap = 'round';
+  // Fill
+  ctx.beginPath(); ctx.ellipse(cx, cy, rx, ry, 0, 0, Math.PI*2);
+  ctx.fillStyle = hex2rgba(col, 0.2); ctx.fill();
+  // Outer ring
+  ctx.beginPath(); ctx.ellipse(cx, cy, rx, ry, 0, 0, Math.PI*2);
+  ctx.strokeStyle = col; ctx.lineWidth = Math.max(2, 2); ctx.stroke();
+  // Inner highlight
+  const irx = rx*0.82, iry = ry*0.82;
+  if(irx > 1 && iry > 1){
+    ctx.beginPath(); ctx.ellipse(cx, cy, irx, iry, 0, 0, Math.PI*2);
+    ctx.strokeStyle = 'rgba(255,255,255,0.45)'; ctx.lineWidth = 1; ctx.stroke();
   }
   ctx.restore();
 }
 
+// ── Main drawShape ────────────────────────────────────────────────
+function drawShape(ctx, d){
+  if(!d) return;
+  // Resolve live anchors before drawing
+  resolveAnchors(d);
+
+  const a = d.opacity ?? 1;
+  ctx.save(); ctx.globalAlpha = a;
+  ctx.strokeStyle = d.color||'#FFEA00'; ctx.fillStyle = d.color||'#FFEA00';
+  ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+  const lw = Math.max(2, (d.size||3)*1.5);
+
+  switch(d.type){
+    case 'arrow': case 'dash': {
+      if(!d.start||!d.end) break;
+      ctx.lineWidth = lw;
+      if(d.type==='dash') ctx.setLineDash([8,5]);
+      const ang = Math.atan2(d.end.y-d.start.y, d.end.x-d.start.x);
+      const hl  = Math.max(12, (d.size||3)*5);
+      ctx.beginPath(); ctx.moveTo(d.start.x, d.start.y);
+      ctx.lineTo(d.end.x - hl*Math.cos(ang)*0.4, d.end.y - hl*Math.sin(ang)*0.4); ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.beginPath(); ctx.moveTo(d.end.x, d.end.y);
+      ctx.lineTo(d.end.x - hl*Math.cos(ang-Math.PI/6), d.end.y - hl*Math.sin(ang-Math.PI/6));
+      ctx.lineTo(d.end.x - hl*Math.cos(ang+Math.PI/6), d.end.y - hl*Math.sin(ang+Math.PI/6));
+      ctx.closePath(); ctx.fill();
+      // Distance label if anchored at start
+      if(d.anchors?.length && d.showDist !== false)
+        drawDistLabel(ctx, d.start.x, d.start.y, d.end.x, d.end.y, d.color);
+      break;
+    }
+    case 'curve': {
+      if(!d.start||!d.end) break;
+      const dx=d.end.x-d.start.x, dy=d.end.y-d.start.y;
+      const dist=Math.sqrt(dx*dx+dy*dy);
+      const cpX=(d.start.x+d.end.x)/2, cpY=Math.min(d.start.y,d.end.y)-dist*0.3;
+      ctx.lineWidth = lw;
+      ctx.beginPath(); ctx.moveTo(d.start.x,d.start.y);
+      ctx.quadraticCurveTo(cpX,cpY,d.end.x,d.end.y); ctx.stroke();
+      const ang = Math.atan2(d.end.y-cpY, d.end.x-cpX);
+      const hl  = Math.max(12, (d.size||3)*5);
+      ctx.beginPath(); ctx.moveTo(d.end.x,d.end.y);
+      ctx.lineTo(d.end.x-hl*Math.cos(ang-Math.PI/6), d.end.y-hl*Math.sin(ang-Math.PI/6));
+      ctx.lineTo(d.end.x-hl*Math.cos(ang+Math.PI/6), d.end.y-hl*Math.sin(ang+Math.PI/6));
+      ctx.closePath(); ctx.fill();
+      if(d.anchors?.length && d.showDist !== false)
+        drawDistLabel(ctx, d.start.x, d.start.y, d.end.x, d.end.y, d.color);
+      break;
+    }
+    case 'zone': {
+      if(!d.start||!d.end) break;
+      const x=Math.min(d.start.x,d.end.x), y=Math.min(d.start.y,d.end.y);
+      const w=Math.abs(d.end.x-d.start.x), h=Math.abs(d.end.y-d.start.y);
+      ctx.lineWidth=2; ctx.setLineDash([6,4]);
+      ctx.fillStyle=hex2rgba(d.color,.18); ctx.fillRect(x,y,w,h); ctx.strokeRect(x,y,w,h);
+      ctx.setLineDash([]); break;
+    }
+    case 'circle': {
+      if(!d.start||!d.end) break;
+      const r=Math.sqrt((d.end.x-d.start.x)**2+(d.end.y-d.start.y)**2);
+      ctx.lineWidth=2; ctx.setLineDash([6,4]);
+      ctx.beginPath(); ctx.arc(d.start.x,d.start.y,r,0,Math.PI*2);
+      ctx.fillStyle=hex2rgba(d.color,.18); ctx.fill(); ctx.stroke();
+      ctx.setLineDash([]); break;
+    }
+    case 'polygon': {
+      const pts = d.points||[]; if(pts.length<2) break;
+      // Fill polygon
+      ctx.beginPath(); ctx.moveTo(pts[0].x,pts[0].y);
+      pts.forEach(p=>ctx.lineTo(p.x,p.y)); ctx.closePath();
+      ctx.fillStyle = hex2rgba(d.color, 0.22); ctx.fill();
+      // Border
+      ctx.lineWidth=2.5; ctx.strokeStyle=d.color;
+      ctx.beginPath(); ctx.moveTo(pts[0].x,pts[0].y);
+      pts.forEach(p=>ctx.lineTo(p.x,p.y)); ctx.closePath(); ctx.stroke();
+      // Corner anchor dots
+      if(d.anchors?.length){
+        pts.forEach((p,i)=>{
+          const anc = d.anchors.find(a=>a.role===`pt_${i}`);
+          if(!anc) return;
+          ctx.beginPath(); ctx.arc(p.x,p.y,6,0,Math.PI*2);
+          ctx.fillStyle=d.color; ctx.fill();
+          ctx.strokeStyle='rgba(255,255,255,0.6)'; ctx.lineWidth=1.5; ctx.stroke();
+        });
+        // Draw distance labels between consecutive anchored corners
+        if(d.showDist !== false){
+          for(let i=0;i<pts.length;i++){
+            const p1=pts[i], p2=pts[(i+1)%pts.length];
+            drawDistLabel(ctx, p1.x, p1.y, p2.x, p2.y, d.color);
+          }
+        }
+      }
+      break;
+    }
+    case 'line': {
+      if(!d.start||!d.end) break;
+      ctx.lineWidth=lw; ctx.beginPath();
+      ctx.moveTo(d.start.x,d.start.y); ctx.lineTo(d.end.x,d.end.y); ctx.stroke();
+      if(d.anchors?.length && d.showDist !== false)
+        drawDistLabel(ctx, d.start.x, d.start.y, d.end.x, d.end.y, d.color);
+      break;
+    }
+    case 'pass': {
+      if(!d.start||!d.end) break;
+      ctx.lineWidth=Math.max(1.5,d.size||3); ctx.setLineDash([4,4]);
+      ctx.beginPath(); ctx.moveTo(d.start.x,d.start.y); ctx.lineTo(d.end.x,d.end.y); ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.beginPath(); ctx.arc(d.start.x,d.start.y,4,0,Math.PI*2); ctx.fill();
+      if(d.anchors?.length && d.showDist !== false)
+        drawDistLabel(ctx, d.start.x, d.start.y, d.end.x, d.end.y, d.color);
+      break;
+    }
+    case 'dot': {
+      const r=8+(d.size||3);
+      ctx.beginPath(); ctx.arc(d.x,d.y,r,0,Math.PI*2);
+      ctx.fillStyle=hex2rgba(d.color,.3); ctx.fill();
+      ctx.beginPath(); ctx.arc(d.x,d.y,r,0,Math.PI*2);
+      ctx.lineWidth=2; ctx.stroke(); break;
+    }
+    case 'ring': {
+      // 3D ring / player halo
+      const rx = Math.abs((d.end?.x||d.x+30) - (d.start?.x||d.x));
+      drawRing(ctx, d.start?.x||d.x, d.start?.y||d.y, Math.max(18,rx), d.color, a);
+      break;
+    }
+    case 'text': {
+      const fs=Math.max(14,(d.size||3)*5);
+      ctx.font=`700 ${fs}px 'DM Sans',sans-serif`;
+      const tw=ctx.measureText(d.text||'').width;
+      ctx.fillStyle='rgba(0,0,0,.78)';
+      ctx.beginPath(); ctx.roundRect(d.x-4, d.y-fs-2, tw+8, fs+7, 4); ctx.fill();
+      ctx.fillStyle=d.color; ctx.fillText(d.text||'',d.x,d.y); break;
+    }
+    case 'free': {
+      if(!d.points||d.points.length<2) break;
+      ctx.lineWidth=d.size||3; ctx.beginPath();
+      ctx.moveTo(d.points[0].x,d.points[0].y);
+      d.points.forEach(p=>ctx.lineTo(p.x,p.y)); ctx.stroke(); break;
+    }
+    case 'erase': {
+      if(!d.points||d.points.length<2) break;
+      ctx.globalCompositeOperation='destination-out';
+      ctx.lineWidth=(d.size||3)*8; ctx.beginPath();
+      ctx.moveTo(d.points[0].x,d.points[0].y);
+      d.points.forEach(p=>ctx.lineTo(p.x,p.y)); ctx.stroke(); break;
+    }
+    case 'spot': {
+      if(!d.start||!d.end) break;
+      const r=Math.sqrt((d.end.x-d.start.x)**2+(d.end.y-d.start.y)**2);
+      ctx.fillStyle='rgba(0,0,0,.68)'; ctx.fillRect(0,0,1280,720);
+      ctx.globalCompositeOperation='destination-out';
+      ctx.beginPath(); ctx.arc(d.start.x,d.start.y,r,0,Math.PI*2); ctx.fill(); break;
+    }
+    case 'offside': {
+      // Tactical offside / pressing line — horizontal snap
+      if(!d.start||!d.end) break;
+      const y = d.start.y; // locked horizontal
+      ctx.lineWidth = 3; ctx.strokeStyle = d.color;
+      ctx.setLineDash([8,5]);
+      ctx.beginPath(); ctx.moveTo(0,y); ctx.lineTo(1280,y); ctx.stroke();
+      ctx.setLineDash([]);
+      // Label
+      ctx.font = '700 11px DM Sans,sans-serif';
+      const lbl = d.label || 'Offside line';
+      ctx.fillStyle='rgba(0,0,0,.75)';
+      ctx.fillRect(8, y-14, ctx.measureText(lbl).width+8, 16);
+      ctx.fillStyle=d.color; ctx.fillText(lbl,12,y-2);
+      break;
+    }
+  }
+  ctx.restore();
+}
+
+// ── redraw ────────────────────────────────────────────────────────
 function redraw(extra){
-  const c=$('tm-canvas'),ctx=c.getContext('2d');
+  const c=$('tm-canvas'), ctx=c.getContext('2d');
   ctx.clearRect(0,0,c.width,c.height);
   const t=$('tm-video').currentTime||0;
   const activeId=S.events.find(ev=>t>=ev.time&&t<=ev.endTime)?.id||null;
-  S.drawings.forEach(d=>{ if(!d.eid||d.eid===activeId||(S.selEvent&&d.eid===S.selEvent.id)) drawShape(ctx,d); });
-  // Draft polygon
-  if(S.draftPts.length>0){ ctx.save(); ctx.strokeStyle=S.drawColor; ctx.lineWidth=2; ctx.setLineDash([5,3]); ctx.globalAlpha=.8; ctx.beginPath(); ctx.moveTo(S.draftPts[0].x,S.draftPts[0].y); S.draftPts.forEach(p=>ctx.lineTo(p.x,p.y)); ctx.stroke(); ctx.setLineDash([]); ctx.restore(); }
+
+  S.drawings.forEach(d=>{
+    if(!d.eid||d.eid===activeId||(S.selEvent&&d.eid===S.selEvent.id))
+      drawShape(ctx,d);
+  });
+
+  // Draft polygon preview with snap indicators
+  if(S.draftPts.length>0){
+    ctx.save(); ctx.strokeStyle=S.drawColor; ctx.lineWidth=2;
+    ctx.setLineDash([5,3]); ctx.globalAlpha=.8;
+    ctx.beginPath(); ctx.moveTo(S.draftPts[0].x,S.draftPts[0].y);
+    S.draftPts.forEach(p=>ctx.lineTo(p.x,p.y)); ctx.stroke();
+    ctx.setLineDash([]); ctx.restore();
+    // Draft corner dots
+    S.draftPts.forEach(p=>{
+      ctx.save(); ctx.beginPath(); ctx.arc(p.x,p.y,5,0,Math.PI*2);
+      ctx.fillStyle=S.drawColor; ctx.globalAlpha=.9; ctx.fill(); ctx.restore();
+    });
+  }
+
   // Assign box preview
-  if(S.assignBox){ const b=S.assignBox; ctx.save(); ctx.strokeStyle='#E8590C'; ctx.lineWidth=2; ctx.setLineDash([4,3]); ctx.strokeRect(b.x1,b.y1,b.x2-b.x1,b.y2-b.y1); ctx.setLineDash([]); ctx.restore(); }
+  if(S.assignBox){
+    const b=S.assignBox; ctx.save(); ctx.strokeStyle='#E8590C';
+    ctx.lineWidth=2; ctx.setLineDash([4,3]);
+    ctx.strokeRect(b.x1,b.y1,b.x2-b.x1,b.y2-b.y1); ctx.setLineDash([]); ctx.restore();
+  }
+
+  // Snap ring — show when current tool is draw mode and mouse is near a tracker
+  if(S._mouseP && DRAW_TOOLS.includes(S.tool)){
+    drawSnapIndicator(ctx, S._mouseP.x, S._mouseP.y);
+  }
+
   if(extra) drawShape(ctx,extra);
   updateTrackerSVG();
   drawMap();
@@ -1096,32 +1508,74 @@ function tColor(t){ return S.teamColors[t.team]||'#58a6ff'; }
 function updateTrackerSVG(){
   const svg=$('tm-trackers-svg'); if(!svg)return;
   svg.innerHTML='';
+
+  // ── Distance labels between ALL tracked players ───────────────
+  // Draw lines between same-team players that are near each other (< 300px)
+  if(S.showDistLines && S.trackers.length >= 2){
+    for(let i=0;i<S.trackers.length;i++){
+      for(let j=i+1;j<S.trackers.length;j++){
+        const a=S.trackers[i], b=S.trackers[j];
+        if(!a.box||!b.box) continue;
+        const cx1=a.box.x+a.box.w/2, cy1=a.box.y+a.box.h/2;
+        const cx2=b.box.x+b.box.w/2, cy2=b.box.y+b.box.h/2;
+        const dist=Math.sqrt((cx2-cx1)**2+(cy2-cy1)**2);
+        if(dist>320) continue; // only nearby players
+        const m=px2m(cx2-cx1,cy2-cy1);
+        // Dashed connection line
+        const ln=ns('line'); attr(ln,{x1:cx1,y1:cy1,x2:cx2,y2:cy2,
+          stroke:'rgba(255,255,255,0.25)','stroke-width':1,'stroke-dasharray':'4 4'});
+        svg.appendChild(ln);
+        // Distance pill
+        const mx=(cx1+cx2)/2, my=(cy1+cy2)/2;
+        const label=m.toFixed(1)+' m', lw=label.length*5.5+10;
+        const bg=ns('rect'); attr(bg,{x:mx-lw/2,y:my-9,width:lw,height:14,rx:4,
+          fill:'rgba(10,15,30,0.85)','stroke':'rgba(255,255,255,0.25)','stroke-width':0.5});
+        svg.appendChild(bg);
+        const lt=ns('text'); attr(lt,{x:mx,y:my+2,'text-anchor':'middle',
+          'font-size':'9','font-weight':'700','font-family':'DM Sans,sans-serif',fill:'#fff'});
+        lt.textContent=label; svg.appendChild(lt);
+      }
+    }
+  }
+
+  // ── Tracker bounding boxes + labels ──────────────────────────
   S.trackers.forEach(tr=>{
     if(!tr.box)return;
     const b=tr.box, col=tColor(tr), lost=tr.lost;
     const strokeCol=lost?'#E31837':col;
-    // Bounding box rect
-    const rect=ns('rect'); attr(rect,{x:b.x,y:b.y,width:b.w,height:b.h,fill:'none',stroke:strokeCol,'stroke-width':lost?2.5:2}); if(lost) rect.setAttribute('stroke-dasharray','4 3'); svg.appendChild(rect);
+    // Bounding box
+    const rect=ns('rect'); attr(rect,{x:b.x,y:b.y,width:b.w,height:b.h,
+      fill:'none',stroke:strokeCol,'stroke-width':lost?2.5:2});
+    if(lost) rect.setAttribute('stroke-dasharray','4 3');
+    svg.appendChild(rect);
     // Corner brackets
-    const cL=10, cW=2.5;
-    [ `M ${b.x} ${b.y+cL} L ${b.x} ${b.y} L ${b.x+cL} ${b.y}`,
-      `M ${b.x+b.w-cL} ${b.y} L ${b.x+b.w} ${b.y} L ${b.x+b.w} ${b.y+cL}`,
-      `M ${b.x} ${b.y+b.h-cL} L ${b.x} ${b.y+b.h} L ${b.x+cL} ${b.y+b.h}`,
-      `M ${b.x+b.w-cL} ${b.y+b.h} L ${b.x+b.w} ${b.y+b.h} L ${b.x+b.w} ${b.y+b.h-cL}`,
-    ].forEach(d=>{ const p=ns('path'); attr(p,{d,fill:'none',stroke:strokeCol,'stroke-width':cW,'stroke-linecap':'round'}); svg.appendChild(p); });
-    // Jersey label background pill
-    const lx=b.x+b.w/2, ly=b.y-7, ltxt='#'+tr.jersey+' '+tr.team, lw=ltxt.length*6.5+10;
-    const pill=ns('rect'); attr(pill,{x:lx-lw/2,y:ly-12,width:lw,height:14,rx:3,fill:lost?'#E31837':col,opacity:'0.92'}); svg.appendChild(pill);
-    const lbl=ns('text'); attr(lbl,{x:lx,y:ly-1,'text-anchor':'middle','font-size':'10','font-weight':'700','font-family':'DM Sans,sans-serif',fill:'#fff'}); lbl.textContent=ltxt; svg.appendChild(lbl);
+    const cL=10,cW=2.5;
+    [`M ${b.x} ${b.y+cL} L ${b.x} ${b.y} L ${b.x+cL} ${b.y}`,
+     `M ${b.x+b.w-cL} ${b.y} L ${b.x+b.w} ${b.y} L ${b.x+b.w} ${b.y+cL}`,
+     `M ${b.x} ${b.y+b.h-cL} L ${b.x} ${b.y+b.h} L ${b.x+cL} ${b.y+b.h}`,
+     `M ${b.x+b.w-cL} ${b.y+b.h} L ${b.x+b.w} ${b.y+b.h} L ${b.x+b.w} ${b.y+b.h-cL}`,
+    ].forEach(d=>{ const p=ns('path'); attr(p,{d,fill:'none',stroke:strokeCol,
+      'stroke-width':cW,'stroke-linecap':'round'}); svg.appendChild(p); });
+    // Jersey pill
+    const lx=b.x+b.w/2, ly=b.y-7;
+    const ltxt='#'+tr.jersey+' '+tr.team, lw2=ltxt.length*6.5+10;
+    const pill=ns('rect'); attr(pill,{x:lx-lw2/2,y:ly-12,width:lw2,height:14,rx:3,
+      fill:lost?'#E31837':col,opacity:'0.92'}); svg.appendChild(pill);
+    const lbl=ns('text'); attr(lbl,{x:lx,y:ly-1,'text-anchor':'middle',
+      'font-size':'10','font-weight':'700','font-family':'DM Sans,sans-serif',fill:'#fff'});
+    lbl.textContent=ltxt; svg.appendChild(lbl);
     // Movement trail
     if(tr.trail&&tr.trail.length>1){
       for(let i=1;i<tr.trail.length;i++){
         const p1=tr.trail[i-1],p2=tr.trail[i];
-        const ln=ns('line'); attr(ln,{x1:p1.cx,y1:p1.cy,x2:p2.cx,y2:p2.cy,stroke:col,'stroke-width':1.5,opacity:((i/tr.trail.length)*.55).toFixed(2)}); svg.appendChild(ln);
+        const ln=ns('line'); attr(ln,{x1:p1.cx,y1:p1.cy,x2:p2.cx,y2:p2.cy,
+          stroke:col,'stroke-width':1.5,opacity:((i/tr.trail.length)*0.55).toFixed(2)});
+        svg.appendChild(ln);
       }
     }
   });
 }
+
 function ns(tag){ return document.createElementNS('http://www.w3.org/2000/svg',tag); }
 function attr(el,obj){ Object.entries(obj).forEach(([k,v])=>el.setAttribute(k,v)); }
 
@@ -1456,6 +1910,13 @@ function switchTab(name){
 }
 
 // ── CSV EXPORT ────────────────────────────────────────────────────
+function toggleDistLines(){
+  S.showDistLines = !S.showDistLines;
+  const btn=$('tm-dist-btn');
+  if(btn){ btn.classList.toggle('lit', S.showDistLines); }
+  redraw(); scheduleSave();
+  notify(S.showDistLines ? 'Distance lines ON' : 'Distance lines OFF');
+}
 function exportCSV(){
   if(!Object.keys(S.trackData).length){notify('No tracking data yet','#E8590C');return;}
   const rows=['frame,time_s,tracker_id,jersey,team,x,y,w,h'];
@@ -1478,6 +1939,7 @@ function openPresentation(){
 function tmSave(){
   try{
     localStorage.setItem(S.saveKey,JSON.stringify({
+      showDistLines:S.showDistLines,
       sport:S.sport, teamColors:S.teamColors,
       trackers:S.trackers.map(t=>({...t,trail:[]})),
       trackData:S.trackData, drawings:S.drawings,
@@ -1491,6 +1953,7 @@ function restoreSession(){
     const raw=localStorage.getItem(S.saveKey); if(!raw)return;
     const d=JSON.parse(raw);
     if(d.sport){S.sport=d.sport;setSport(d.sport);}
+    if(d.showDistLines!==undefined){S.showDistLines=d.showDistLines; const b=$('tm-dist-btn');if(b)b.classList.toggle('lit',S.showDistLines);}
     if(d.teamColors) S.teamColors=d.teamColors;
     if(d.trackers){ S.trackers=d.trackers; renderTrackerList(); updateTeamCts(); }
     if(d.trackData) S.trackData=d.trackData;
