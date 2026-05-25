@@ -416,6 +416,11 @@ window.openProject = async function(id) {
 window.openApp = function(name) {
   if (S.cut.playing) stopCutPlay();
   if (S.ae.playing) stopAEPlay();
+  // TotalMatch opens as its own full page
+  if(name === 'totalmatch'){
+    window.location.href = '/totalmatch.html';
+    return;
+  }
   S.app = name;
   showPage('page-app');
   $('tl-app-name').textContent = { canvas: 'Canvas', cut: 'Footage' }[name] || name;
