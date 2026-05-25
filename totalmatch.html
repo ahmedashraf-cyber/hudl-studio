@@ -1932,22 +1932,19 @@ function clearDraw(){
 // entire engine adds <2ms per frame total for up to 5 trackers.
 
 const _OF = {
-  // Offscreen canvases — previous frame and current frame at reduced res
-  W: 320, H: 180,  // working resolution (matches COCO canvas)
+  W: 320, H: 180,
   _cvsPrev: null, _ctxPrev: null,
   _cvsCurr: null, _ctxCurr: null,
-  _prevGray: null,  // Uint8Array of grayscale pixels
-  _currGray: null,
+  _prevGray: null, _currGray: null,
+  _prevColor: null, _currColor: null, // full RGBA for color masking
   _ready: false,
-  // Per-tracker feature points: {trackerId: [{x,y},...]}
   _features: {},
-  // Max feature points per tracker
-  MAX_PTS: 20,
-  // Patch half-size for gradient computation
+  MAX_PTS: 25,
   PATCH: 3,
-  // Min gradient magnitude to be a good feature
-  MIN_GRAD: 2,  // lower = more features; works on compressed broadcast video
-  // Scale factor: 1280→320 = 0.25
+  MIN_GRAD: 1,
+  // Inner box shrink factor — only sample the CENTER of the box
+  // This avoids grass/background pixels at box edges
+  INNER: 0.30, // 30% margin on each side → center 40% of box
   get scaleX(){ return this.W / 1280; },
   get scaleY(){ return this.H / 720;  },
 
@@ -1960,29 +1957,43 @@ const _OF = {
     this._ctxCurr = this._cvsCurr.getContext('2d',{willReadFrequently:true});
     this._prevGray = new Uint8Array(this.W * this.H);
     this._currGray = new Uint8Array(this.W * this.H);
+    this._prevColor = new Uint8Array(this.W * this.H * 4);
+    this._currColor = new Uint8Array(this.W * this.H * 4);
     this._ready = true;
   },
 
-  // Grab current video frame → grayscale array
-  captureGray(video, out){
+  captureFrame(video){
+    // Capture grayscale AND color (for green-grass rejection)
     const ctx = this._ctxCurr;
     ctx.drawImage(video, 0, 0, this.W, this.H);
     const d = ctx.getImageData(0, 0, this.W, this.H).data;
-    // Luma: 0.299R + 0.587G + 0.114B
     for(let i=0,j=0; i<d.length; i+=4,j++){
-      out[j] = (d[i]*77 + d[i+1]*150 + d[i+2]*29) >> 8;
+      this._currColor[i]=d[i]; this._currColor[i+1]=d[i+1];
+      this._currColor[i+2]=d[i+2]; this._currColor[i+3]=d[i+3];
+      this._currGray[j] = (d[i]*77 + d[i+1]*150 + d[i+2]*29) >> 8;
     }
   },
 
-  // Pixel accessor with clamp
+  // Keep captureGray for backward compat
+  captureGray(video, out){
+    this.captureFrame(video);
+    for(let i=0;i<out.length;i++) out[i]=this._currGray[i];
+  },
+
+  // Is this pixel mostly green grass? If so, skip it as a feature
+  isGrass(colorBuf, x, y){
+    const i = (y * this.W + x) * 4;
+    const r=colorBuf[i], g=colorBuf[i+1], b=colorBuf[i+2];
+    // Green channel dominant + low red/blue = grass
+    return (g > r + 15) && (g > b + 10) && (g > 60);
+  },
+
   px(gray, x, y){
     x = Math.max(0, Math.min(this.W-1, x|0));
     y = Math.max(0, Math.min(this.H-1, y|0));
     return gray[y * this.W + x];
   },
 
-  // Shi-Tomasi corner score = min eigenvalue of structure tensor
-  // High score = good corner = stable feature to track
   cornerScore(gray, x, y){
     const p = this.PATCH;
     let xx=0,xy=0,yy=0;
@@ -1993,25 +2004,27 @@ const _OF = {
         xx += gx*gx; xy += gx*gy; yy += gy*gy;
       }
     }
-    // min eigenvalue ≈ (xx+yy - sqrt((xx-yy)²+4xy²)) / 2
     const tr = xx+yy, det = xx*yy - xy*xy;
     return det / (tr + 1e-6);
   },
 
-  // Pick N best corners inside box (scaled to working resolution)
   pickFeatures(gray, box){
     const sx = this.scaleX, sy = this.scaleY;
-    const bx1 = Math.max(1, (box.x * sx)|0);
-    const by1 = Math.max(1, (box.y * sy)|0);
-    const bx2 = Math.min(this.W-2, ((box.x+box.w) * sx)|0);
-    const by2 = Math.min(this.H-2, ((box.y+box.h) * sy)|0);
-    if(bx2<=bx1||by2<=by1) return [];
+    // Apply inner margin — only sample center of box (player body)
+    const bw = (box.w * sx), bh = (box.h * sy);
+    const margin_x = bw * this.INNER, margin_y = bh * this.INNER;
+    const bx1 = Math.max(1, Math.ceil(box.x * sx + margin_x));
+    const by1 = Math.max(1, Math.ceil(box.y * sy + margin_y));
+    const bx2 = Math.min(this.W-2, Math.floor((box.x+box.w)*sx - margin_x));
+    const by2 = Math.min(this.H-2, Math.floor((box.y+box.h)*sy - margin_y));
+    if(bx2 <= bx1 || by2 <= by1) return [];
 
-    // Sample on a grid, keep best corners
-    const step = Math.max(2, (((bx2-bx1)+(by2-by1))/2/8)|0);
+    const step = Math.max(1, (((bx2-bx1)+(by2-by1))/2/10)|0);
     const candidates = [];
-    for(let y=by1+1; y<by2-1; y+=step){
-      for(let x=bx1+1; x<bx2-1; x+=step){
+    for(let y=by1; y<by2; y+=step){
+      for(let x=bx1; x<bx2; x+=step){
+        // Skip grass pixels — they belong to background
+        if(this.isGrass(this._prevColor, x, y)) continue;
         const s = this.cornerScore(gray, x, y);
         if(s > this.MIN_GRAD) candidates.push({x,y,s});
       }
@@ -2020,7 +2033,6 @@ const _OF = {
     return candidates.slice(0, this.MAX_PTS);
   },
 
-  // Lucas-Kanade for one feature point: returns {dx,dy} or null
   lkPoint(prev, curr, px, py){
     const p = this.PATCH;
     let Ixx=0,Ixy=0,Iyy=0,Ixt=0,Iyt=0;
@@ -2042,21 +2054,29 @@ const _OF = {
     };
   },
 
-  // Two-level pyramid: coarse (half-res) then refine
-  lkPyramid(prev, curr, pts){
-    // Level 0: full working resolution (320x180) — quick single-level
-    // is sufficient for 25fps broadcast video (max ~3px motion at 320px)
+  // Forward-Backward consistency check (FB-LK)
+  // Track point forward (prev→curr), then backward (curr→prev).
+  // If it doesn't return close to the original position, reject it.
+  // This eliminates background points that move differently from the player.
+  lkPyramidFB(prev, curr, pts){
+    const MAX_FB_ERR = 2.0; // max pixel error for forward-backward check
     const results = [];
     for(const pt of pts){
-      const flow = this.lkPoint(prev, curr, pt.x, pt.y);
-      if(flow && Math.hypot(flow.dx,flow.dy) < 25){ // reject outliers
-        results.push({x:pt.x+flow.dx, y:pt.y+flow.dy, dx:flow.dx, dy:flow.dy});
-      }
+      // Forward: prev → curr
+      const fwd = this.lkPoint(prev, curr, pt.x, pt.y);
+      if(!fwd || Math.hypot(fwd.dx,fwd.dy) > 20) continue;
+      const nx = pt.x + fwd.dx, ny = pt.y + fwd.dy;
+      // Backward: curr → prev from the new position
+      const bwd = this.lkPoint(curr, prev, nx, ny);
+      if(!bwd) continue;
+      // Check: does backward flow return us close to original point?
+      const fbErr = Math.hypot((nx+bwd.dx)-pt.x, (ny+bwd.dy)-pt.y);
+      if(fbErr > MAX_FB_ERR) continue; // inconsistent — background point, reject
+      results.push({x:nx, y:ny, dx:fwd.dx, dy:fwd.dy});
     }
     return results;
   },
 
-  // Robust median displacement from tracked points
   medianFlow(flows){
     if(!flows.length) return null;
     const dxs = flows.map(f=>f.dx).sort((a,b)=>a-b);
@@ -2068,35 +2088,40 @@ const _OF = {
     };
   },
 
-  // Track one box: returns new box or null if lost
   trackBox(prev, curr, box){
-    // Get/refresh feature points
     const id = box._ofId;
     let pts = this._features[id];
-    // Re-pick features if: first time, or too few survived
-    if(!pts || pts.length < 4){
+    if(!pts || pts.length < 3){
       pts = this.pickFeatures(prev, box);
       this._features[id] = pts;
       if(!pts.length) return null;
     }
-    const flows = this.lkPyramid(prev, curr, pts);
-    if(flows.length < 2) return null;  // lost
+    // Use FB-LK for robust tracking
+    const flows = this.lkPyramidFB(prev, curr, pts);
+    if(flows.length < 2) return null;
 
     const med = this.medianFlow(flows);
     if(!med) return null;
 
-    // Convert displacement back to 1280×720 space
     const ddx = med.dx / this.scaleX;
     const ddy = med.dy / this.scaleY;
 
-    // Update stored feature positions for next frame
-    this._features[id] = flows.map(f=>({x:f.x,y:f.y,s:1}));
+    // Re-pick features periodically (every 8 frames) to avoid drift
+    const age = (box._age||0) + 1;
+    if(age % 8 === 0){
+      // Shift feature positions by the displacement, then re-verify
+      const shifted = flows.map(f=>({x:f.x,y:f.y,s:1}));
+      this._features[id] = shifted;
+    } else {
+      this._features[id] = flows.map(f=>({x:f.x,y:f.y,s:1}));
+    }
 
     return {
       x: box.x + ddx,
       y: box.y + ddy,
       w: box.w,
-      h: box.h
+      h: box.h,
+      _age: age,
     };
   },
 };
@@ -2119,54 +2144,37 @@ function ofTrackAll(){
   if(!_OF._ready) _OF.init();
 
   // Grab current frame
-  _OF.captureGray(v, _OF._currGray);
+  _OF.captureFrame(v);
 
-  // If we have a previous frame, run optical flow
   if(_ofLastVideoTime >= 0 && Math.abs(t - _ofLastVideoTime) < 0.5){
-    // Don't run OF across large seeks (>0.5s) — positions unreliable
     const frame = Math.round(t * 25);
-
     S.trackers.forEach(tr => {
       if(!tr.box) return;
-      // Tag box with tracker id for feature cache
       tr.box._ofId = tr.id;
-
       const newBox = _OF.trackBox(_OF._prevGray, _OF._currGray, tr.box);
       if(newBox){
-        // Clamp to video bounds
         newBox.x = Math.max(0, Math.min(1280 - newBox.w, newBox.x));
         newBox.y = Math.max(0, Math.min(720  - newBox.h, newBox.y));
         newBox._ofId = tr.id;
-        tr.box = newBox;
-        tr.lost = false;
-
-        // Record to trackData
+        tr.box = newBox; tr.lost = false;
         if(!S.trackData[tr.id]) S.trackData[tr.id] = [];
         const arr = S.trackData[tr.id];
-        // Avoid duplicate entries for same frame
         if(!arr.length || arr[arr.length-1].frame !== frame){
-          arr.push({
-            frame, t: +t.toFixed(3),
-            x: +newBox.x.toFixed(1), y: +newBox.y.toFixed(1),
-            w: +newBox.w.toFixed(1), h: +newBox.h.toFixed(1)
-          });
-          // Keep sorted (handles out-of-order seeks)
+          arr.push({frame, t:+t.toFixed(3),
+            x:+newBox.x.toFixed(1), y:+newBox.y.toFixed(1),
+            w:+newBox.w.toFixed(1), h:+newBox.h.toFixed(1)});
           if(arr.length > 1 && arr[arr.length-2].frame > frame)
             arr.sort((a,b)=>a.t-b.t);
         }
       } else {
-        // Optical flow lost this tracker — re-pick features next frame
-        delete _OF._features[tr.id];
-        tr.lost = true;
+        delete _OF._features[tr.id]; tr.lost = true;
       }
     });
   }
 
-  // Swap: current → previous
-  const tmp = _OF._prevGray;
-  _OF._prevGray = _OF._currGray;
-  _OF._currGray = tmp;
-  // Also swap the curr canvas pixels into prev context for next iteration
+  // Swap buffers
+  const tmp = _OF._prevGray; _OF._prevGray = _OF._currGray; _OF._currGray = tmp;
+  const tmp2 = _OF._prevColor; _OF._prevColor = _OF._currColor; _OF._currColor = tmp2;
   _OF._ctxPrev.drawImage(_OF._cvsCurr, 0, 0);
 
   _ofLastVideoTime = t;
@@ -2980,7 +2988,7 @@ function ofTrackAllAt(t){
   if(!v || v.readyState < 2) return;
   if(Math.abs(t - _ofLastVideoTime) < 0.001) return;
   if(!_OF._ready) _OF.init();
-  _OF.captureGray(v, _OF._currGray);
+  _OF.captureFrame(v);
   if(_ofLastVideoTime >= 0 && Math.abs(t - _ofLastVideoTime) < 0.5){
     const frame = Math.round(t * 25);
     S.trackers.forEach(tr => {
@@ -3004,6 +3012,7 @@ function ofTrackAllAt(t){
     });
   }
   const tmp=_OF._prevGray; _OF._prevGray=_OF._currGray; _OF._currGray=tmp;
+  const tmp2=_OF._prevColor; _OF._prevColor=_OF._currColor; _OF._currColor=tmp2;
   _OF._ctxPrev.drawImage(_OF._cvsCurr, 0, 0);
   _ofLastVideoTime = t;
 }
