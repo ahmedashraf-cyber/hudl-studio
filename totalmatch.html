@@ -112,7 +112,9 @@ html,body{width:100%;height:100%;overflow:hidden;font-family:'DM Sans',sans-seri
 #tm-video{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;display:block;}
 #tm-canvas{position:absolute;inset:0;width:100%;height:100%;}
 #tm-canvas.draw{pointer-events:all;cursor:crosshair;}
-#tm-trackers-svg{position:absolute;inset:0;width:100%;height:100%;pointer-events:none;z-index:15;}
+#tm-trackers-svg{position:absolute;inset:0;width:100%;height:100%;pointer-events:all;z-index:15;}
+#tm-trackers-svg[data-drawing="true"]{pointer-events:none;}
+#tm-trackers-svg rect[data-trid],#tm-trackers-svg path[data-trid]{cursor:move;}
 #tm-heatmap-canvas{position:absolute;inset:0;width:100%;height:100%;pointer-events:none;opacity:.45;z-index:14;}
 
 /* Empty state — Footage style */
@@ -1012,6 +1014,9 @@ function setTool(name){
   document.querySelectorAll('.tm-tool').forEach(b=>b.classList.remove('on'));
   const btn=$('tool-'+name); if(btn) btn.classList.add('on');
   const isDraw=DRAW_TOOLS.includes(name);
+  // When drawing, disable SVG so canvas gets all pointer events
+  const svg=$('tm-trackers-svg');
+  if(svg) svg.style.pointerEvents = isDraw ? 'none' : 'all';
   const cvs=$('tm-canvas');
   if(isDraw||TRACK_TOOLS.includes(name)){ cvs.classList.add('draw'); }
   else { cvs.classList.remove('draw'); }
@@ -1078,20 +1083,21 @@ function updateTrackerBoxesFromData(){
   const t=($('tm-video')||{}).currentTime||0;
   S.trackers.forEach(tr=>{
     const box=getBoxAtTime(tr.id,t);
-    if(box){
-      // Smooth blend: if AI is also running, let it dominate; else use data
-      if(!S.aiEnabled||!tr.box){
-        tr.box=box;
-        tr.lost=false;
-      } else {
-        // Gentle blend toward data position (prevents jumpy AI vs data conflict)
-        const sm=0.25;
-        tr.box.x=tr.box.x*(1-sm)+box.x*sm;
-        tr.box.y=tr.box.y*(1-sm)+box.y*sm;
-        tr.box.w=tr.box.w*(1-sm)+box.w*sm;
-        tr.box.h=tr.box.h*(1-sm)+box.h*sm;
-      }
+    if(!box) return;
+    if(!tr.box){
+      // No box at all — initialize from data
+      tr.box={...box}; tr.lost=false;
+    } else if(tr.lost){
+      // Tracker is lost — use recorded data to keep box moving
+      // This is the critical path: lost tracker still follows its recorded path
+      tr.box.x=box.x; tr.box.y=box.y;
+      tr.box.w=box.w; tr.box.h=box.h;
+      // Only un-lost if this is a manually-recorded (non-lost) frame
+      const arr=S.trackData[tr.id]||[];
+      const near=arr.find(f=>Math.abs(f.t-t)<0.08&&!f.lost);
+      if(near) tr.lost=false;
     }
+    // If AI is tracking fine (not lost), don't touch the box — AI owns it
   });
 }
 
@@ -1803,12 +1809,37 @@ function stopDrawLoop(){
 // ── TRACKER SVG OVERLAY ───────────────────────────────────────────
 function tColor(t){ return S.teamColors[t.team]||'#58a6ff'; }
 
+// ── Tracker drag state ───────────────────────────────────────────
+let _tDrag = null; // {tr, startSvgX, startSvgY, startBox}
+
+function svgToCanvas(svgEl, clientX, clientY){
+  // Convert client coords → SVG viewBox coords (0-1280 x 0-720)
+  const rect = svgEl.getBoundingClientRect();
+  const scaleX = 1280 / rect.width;
+  const scaleY = 720  / rect.height;
+  return { x:(clientX-rect.left)*scaleX, y:(clientY-rect.top)*scaleY };
+}
+
+function recordTrackerBox(tr){
+  // Save current tr.box into trackData at current video time
+  if(!tr.box) return;
+  const t = +($('tm-video').currentTime||0).toFixed(3);
+  const frame = Math.round(t*25);
+  if(!S.trackData[tr.id]) S.trackData[tr.id]=[];
+  // Remove any existing entry for this exact time
+  const arr = S.trackData[tr.id];
+  const idx = arr.findIndex(f=>Math.abs(f.t-t)<0.02);
+  const entry = {frame,t,x:+tr.box.x.toFixed(1),y:+tr.box.y.toFixed(1),w:+tr.box.w.toFixed(1),h:+tr.box.h.toFixed(1)};
+  if(idx>=0) arr[idx]=entry; else arr.push(entry);
+  // Keep sorted by time
+  arr.sort((a,b)=>a.t-b.t);
+}
+
 function updateTrackerSVG(){
   const svg=$('tm-trackers-svg'); if(!svg)return;
   svg.innerHTML='';
 
   // ── Distance labels between ALL tracked players ───────────────
-  // Draw lines between same-team players that are near each other (< 300px)
   if(S.showDistLines && S.trackers.length >= 2){
     for(let i=0;i<S.trackers.length;i++){
       for(let j=i+1;j<S.trackers.length;j++){
@@ -1817,13 +1848,11 @@ function updateTrackerSVG(){
         const cx1=a.box.x+a.box.w/2, cy1=a.box.y+a.box.h/2;
         const cx2=b.box.x+b.box.w/2, cy2=b.box.y+b.box.h/2;
         const dist=Math.sqrt((cx2-cx1)**2+(cy2-cy1)**2);
-        if(dist>320) continue; // only nearby players
+        if(dist>320) continue;
         const m=px2m(cx2-cx1,cy2-cy1);
-        // Dashed connection line
         const ln=ns('line'); attr(ln,{x1:cx1,y1:cy1,x2:cx2,y2:cy2,
           stroke:'rgba(255,255,255,0.25)','stroke-width':1,'stroke-dasharray':'4 4'});
         svg.appendChild(ln);
-        // Distance pill
         const mx=(cx1+cx2)/2, my=(cy1+cy2)/2;
         const label=m.toFixed(1)+' m', lw=label.length*5.5+10;
         const bg=ns('rect'); attr(bg,{x:mx-lw/2,y:my-9,width:lw,height:14,rx:4,
@@ -1836,16 +1865,26 @@ function updateTrackerSVG(){
     }
   }
 
-  // ── Tracker bounding boxes + labels ──────────────────────────
+  // ── Tracker bounding boxes (draggable) ─────────────────────────
   S.trackers.forEach(tr=>{
     if(!tr.box)return;
     const b=tr.box, col=tColor(tr), lost=tr.lost;
-    const strokeCol=lost?'#E31837':col;
+    // Lost = orange dashed; active = team color solid
+    const strokeCol = lost ? '#FF9500' : col;
+
+    // Invisible larger hit area for easy drag start
+    const hit=ns('rect'); attr(hit,{x:b.x-8,y:b.y-8,width:b.w+16,height:b.h+16,
+      fill:'transparent','stroke':'none','cursor':'move','data-trid':tr.id});
+    hit.style.cursor = 'move';
+    svg.appendChild(hit);
+
     // Bounding box
     const rect=ns('rect'); attr(rect,{x:b.x,y:b.y,width:b.w,height:b.h,
-      fill:'none',stroke:strokeCol,'stroke-width':lost?2.5:2});
+      fill:'rgba(0,0,0,0.01)',stroke:strokeCol,'stroke-width':lost?2.5:2,
+      'cursor':'move','data-trid':tr.id});
     if(lost) rect.setAttribute('stroke-dasharray','4 3');
     svg.appendChild(rect);
+
     // Corner brackets
     const cL=10,cW=2.5;
     [`M ${b.x} ${b.y+cL} L ${b.x} ${b.y} L ${b.x+cL} ${b.y}`,
@@ -1854,14 +1893,16 @@ function updateTrackerSVG(){
      `M ${b.x+b.w-cL} ${b.y+b.h} L ${b.x+b.w} ${b.y+b.h} L ${b.x+b.w} ${b.y+b.h-cL}`,
     ].forEach(d=>{ const p=ns('path'); attr(p,{d,fill:'none',stroke:strokeCol,
       'stroke-width':cW,'stroke-linecap':'round'}); svg.appendChild(p); });
+
     // Jersey pill
     const lx=b.x+b.w/2, ly=b.y-7;
     const ltxt='#'+tr.jersey+' '+tr.team, lw2=ltxt.length*6.5+10;
     const pill=ns('rect'); attr(pill,{x:lx-lw2/2,y:ly-12,width:lw2,height:14,rx:3,
-      fill:lost?'#E31837':col,opacity:'0.92'}); svg.appendChild(pill);
+      fill:lost?'#FF9500':col,opacity:'0.92'}); svg.appendChild(pill);
     const lbl=ns('text'); attr(lbl,{x:lx,y:ly-1,'text-anchor':'middle',
       'font-size':'10','font-weight':'700','font-family':'DM Sans,sans-serif',fill:'#fff'});
-    lbl.textContent=ltxt; svg.appendChild(lbl);
+    lbl.textContent=ltxt+(lost?' ✎':''); svg.appendChild(lbl);
+
     // Movement trail
     if(tr.trail&&tr.trail.length>1){
       for(let i=1;i<tr.trail.length;i++){
@@ -1872,6 +1913,75 @@ function updateTrackerSVG(){
       }
     }
   });
+
+  // ── Drag event listeners ────────────────────────────────────────
+  // Only attach when NOT in a draw tool (draw tools own the canvas)
+  if(!DRAW_TOOLS.includes(S.tool)){
+    svg.addEventListener('pointerdown', _svgDragStart, {once:false});
+  }
+}
+
+function _svgDragStart(e){
+  // Find which tracker was clicked
+  const tid = e.target.getAttribute('data-trid');
+  if(!tid) return;
+  const tr = S.trackers.find(t=>t.id===tid);
+  if(!tr||!tr.box) return;
+  e.preventDefault(); e.stopPropagation();
+
+  const svg = $('tm-trackers-svg');
+  const pt = svgToCanvas(svg, e.clientX, e.clientY);
+  _tDrag = { tr, startPt:pt, startBox:{...tr.box} };
+
+  // Pause video while dragging for precision
+  const wasPlaying = S.playing;
+  if(wasPlaying){ $('tm-video').pause(); S.playing=false; $('tm-play-btn').textContent='▶'; stopDrawLoop(); }
+  _tDrag.wasPlaying = wasPlaying;
+
+  const onMove = ev=>{
+    if(!_tDrag) return;
+    const p = svgToCanvas(svg, ev.clientX, ev.clientY);
+    const dx = p.x - _tDrag.startPt.x;
+    const dy = p.y - _tDrag.startPt.y;
+    _tDrag.tr.box.x = _tDrag.startBox.x + dx;
+    _tDrag.tr.box.y = _tDrag.startBox.y + dy;
+    _tDrag.tr.lost = false; // dragging = manually confirmed position
+    // Update anchors offsets live
+    recordTrackerBox(_tDrag.tr);
+    updateTrackerBoxesFromData(); // sync interpolation cache
+    redraw();
+    updateTrackerSVG();
+  };
+  const onUp = ()=>{
+    if(_tDrag){
+      recordTrackerBox(_tDrag.tr);
+      _tDrag.tr.lost = false;
+      // Re-anchor all drawings that were pinned to this tracker
+      S.drawings.forEach(d=>{
+        if(!d.anchors) return;
+        d.anchors.forEach(a=>{
+          if(a.trackerId===_tDrag.tr.id){
+            const c = tCenter(_tDrag.tr);
+            if(!c) return;
+            // Recalculate offsets based on where the shape point currently is
+            // (anchors store offset from tracker center — they stay valid)
+          }
+        });
+      });
+      if(_tDrag.wasPlaying){
+        $('tm-video').play(); S.playing=true; $('tm-play-btn').textContent='⏸';
+        startDrawLoop();
+      } else {
+        redraw(); updateTrackerSVG();
+      }
+      _tDrag=null;
+      scheduleSave();
+    }
+    window.removeEventListener('pointermove',onMove);
+    window.removeEventListener('pointerup',onUp);
+  };
+  window.addEventListener('pointermove',onMove);
+  window.addEventListener('pointerup',onUp);
 }
 
 function ns(tag){ return document.createElementNS('http://www.w3.org/2000/svg',tag); }
@@ -1945,12 +2055,17 @@ async function syncAI(){
     }));
     // Update each tracker
     S.trackers.forEach(tr=>updateTrackerFromDetections(tr,scaled,t));
-    // Record tracking data for this frame
+    // Record tracking data for this frame — even lost trackers record last known pos
     const frame=Math.round(t*(25)); // assuming 25fps
     S.trackers.forEach(tr=>{
-      if(!tr.lost&&tr.box){
+      if(tr.box){
         if(!S.trackData[tr.id]) S.trackData[tr.id]=[];
-        S.trackData[tr.id].push({frame,t:+t.toFixed(3),x:+tr.box.x.toFixed(1),y:+tr.box.y.toFixed(1),w:+tr.box.w.toFixed(1),h:+tr.box.h.toFixed(1)});
+        // Only record if no entry exists within 0.05s (avoid duplicates during fast sync)
+        const arr=S.trackData[tr.id];
+        const tRounded=+t.toFixed(3);
+        if(!arr.length||Math.abs(arr[arr.length-1].t-tRounded)>0.04){
+          arr.push({frame,t:tRounded,x:+tr.box.x.toFixed(1),y:+tr.box.y.toFixed(1),w:+tr.box.w.toFixed(1),h:+tr.box.h.toFixed(1),lost:tr.lost?1:0});
+        }
       }
     });
     renderTrackerList(); updateTeamCts(); updateTrackerSVG(); drawMap();
@@ -1959,30 +2074,54 @@ async function syncAI(){
 }
 
 function updateTrackerFromDetections(tr, detections, t){
-  if(!tr.box||!detections.length){ tr.lost=true; return; }
+  if(!tr.box){ tr.lost=true; return; }
+
   // Find detection with best IoU overlap with tracker's current box
-  let bestIoU=0.15, bestDet=null; // threshold — if no detection overlaps enough, tracker is lost
+  // Use a relaxed threshold when tracker is already lost (wider search)
+  const threshold = tr.lost ? 0.05 : 0.12;
+  let bestIoU=threshold, bestDet=null;
+
+  // Also try center-distance match as fallback (works when overlap is low but center is close)
+  const trCx=tr.box.x+tr.box.w/2, trCy=tr.box.y+tr.box.h/2;
+  let bestDist = tr.lost ? 200 : 120; // px in 1280x720 space
+  let bestByDist=null;
+
   detections.forEach(det=>{
     const iou=calcIoU(tr.box,det);
     if(iou>bestIoU){ bestIoU=iou; bestDet=det; }
+    const dCx=det.x+det.w/2, dCy=det.y+det.h/2;
+    const d=Math.hypot(trCx-dCx, trCy-dCy);
+    if(d<bestDist){ bestDist=d; bestByDist=det; }
   });
-  if(bestDet){
+
+  const winner = bestDet || bestByDist;
+
+  if(winner){
     // Smooth update — 70% new detection, 30% old position (prevents jitter)
-    const smooth=0.7;
+    const smooth = tr.lost ? 0.9 : 0.7; // snap faster when re-acquiring
     const prevCx=tr.box.x+tr.box.w/2, prevCy=tr.box.y+tr.box.h/2;
-    const newCx=bestDet.x+bestDet.w/2, newCy=bestDet.y+bestDet.h/2;
+    const newCx=winner.x+winner.w/2, newCy=winner.y+winner.h/2;
     tr.box.x=(prevCx*(1-smooth)+newCx*smooth)-tr.box.w/2;
     tr.box.y=(prevCy*(1-smooth)+newCy*smooth)-tr.box.h/2;
-    tr.box.w=tr.box.w*(1-smooth)+bestDet.w*smooth;
-    tr.box.h=tr.box.h*(1-smooth)+bestDet.h*smooth;
+    tr.box.w=tr.box.w*(1-smooth)+winner.w*smooth;
+    tr.box.h=tr.box.h*(1-smooth)+winner.h*smooth;
     tr.lost=false;
     // Update trail (center bottom of box = feet position)
     const cx=tr.box.x+tr.box.w/2, cy=tr.box.y+tr.box.h;
     if(!tr.trail) tr.trail=[];
     tr.trail.push({cx,cy,t});
-    if(tr.trail.length>45) tr.trail.shift(); // keep ~1.5s of trail at 30fps
+    if(tr.trail.length>45) tr.trail.shift();
   } else {
+    // Even when lost — keep recording last known box into trackData
+    // so interpolation has data to work from and shapes don't freeze
     tr.lost=true;
+    // Gently drift toward where trackData says the player should be
+    // (handles camera pans — trackData may have manual corrections ahead)
+    const ahead=getBoxAtTime(tr.id, t+0.5);
+    if(ahead){
+      tr.box.x+=(ahead.x-tr.box.x)*0.05;
+      tr.box.y+=(ahead.y-tr.box.y)*0.05;
+    }
   }
 }
 
