@@ -1685,12 +1685,92 @@ cvs.addEventListener('contextmenu',e=>{
 });
 
 // ── Drawing helper functions ──────────────────────────────────────
+// ════════════════════════════════════════════════════════════════
+// #2 — GRAHAM SCAN CONVEX HULL
+// ════════════════════════════════════════════════════════════════
+// Problem: when a user clicks 4 points in random order (e.g. two
+// defenders on the left, then two on the right), connecting them
+// in click order creates a self-intersecting "bowtie" shape.
+//
+// Solution: Graham Scan sorts the points into the correct convex
+// perimeter order so the polygon is always a clean, non-crossing
+// shape — exactly like real tactical shapes in professional tools.
+//
+// Algorithm:
+//   1. Find the bottom-most point (lowest Y) — the "pivot"
+//   2. Sort all other points by polar angle relative to pivot
+//   3. Walk the sorted points, only keeping "left turns"
+//      (right turns mean the point is inside — discard it)
+//   4. Result: smallest convex polygon containing all input points
+//
+// Time complexity: O(n log n) — fast enough for any tactical polygon
+// Works for 3 to N points.
+
+function convexHull(pts){
+  if(pts.length < 3) return [...pts];
+
+  // Step 1: Find pivot — lowest Y (highest on screen), leftmost if tie
+  let pivot = pts.reduce((best, p) =>
+    p.y > best.y || (p.y === best.y && p.x < best.x) ? p : best
+  );
+
+  // Step 2: Sort by polar angle from pivot, distance as tiebreak
+  const angle = p => Math.atan2(p.y - pivot.y, p.x - pivot.x);
+  const dist2  = p => (p.x-pivot.x)**2 + (p.y-pivot.y)**2;
+
+  const sorted = pts
+    .filter(p => p !== pivot)
+    .sort((a, b) => {
+      const da = angle(a), db = angle(b);
+      if(Math.abs(da - db) > 1e-10) return da - db;
+      return dist2(a) - dist2(b);
+    });
+
+  // Step 3: Graham scan — keep only left turns
+  const hull = [pivot];
+  for(const p of sorted){
+    // Pop points that make a right turn or are collinear
+    while(hull.length >= 2){
+      const a = hull[hull.length - 2];
+      const b = hull[hull.length - 1];
+      // Cross product of (b-a) × (p-a)
+      // Positive = left turn (keep), zero/negative = right turn (pop)
+      const cross = (b.x - a.x) * (p.y - a.y) - (b.y - a.y) * (p.x - a.x);
+      if(cross <= 0) hull.pop();
+      else break;
+    }
+    hull.push(p);
+  }
+
+  return hull;
+}
+
+// ── End Convex Hull ───────────────────────────────────────────────
+
 function finishPoly(){
-  const anchors=(S._draftAnchors||[]).slice();
-  S.drawings.push({type:'polygon',points:[...S.draftPts],
-    color:S.drawColor,size:S.drawSize,opacity:S.drawOpacity,
-    eid:S.selEvent?.id||null,anchors:anchors.length?anchors:undefined});
-  S.draftPts=[];S._draftAnchors=[];redraw();scheduleSave();
+  const rawPts = [...S.draftPts];
+  const rawAnchors = (S._draftAnchors||[]).slice();
+
+  // Apply convex hull to eliminate self-intersections
+  const hullPts = convexHull(rawPts);
+
+  // Re-map anchors to hull point order
+  // Each hull point maps back to its original index → preserves tracker binding
+  const hullAnchors = hullPts.map((hp, newIdx) => {
+    const origIdx = rawPts.findIndex(p => Math.abs(p.x-hp.x)<0.5 && Math.abs(p.y-hp.y)<0.5);
+    if(origIdx < 0) return null;
+    const anc = rawAnchors.find(a => a.role === `pt_${origIdx}`);
+    return anc ? {...anc, role: `pt_${newIdx}`} : null;
+  }).filter(Boolean);
+
+  S.drawings.push({type:'polygon', points:hullPts,
+    color:S.drawColor, size:S.drawSize, opacity:S.drawOpacity,
+    eid:S.selEvent?.id||null,
+    anchors:hullAnchors.length ? hullAnchors : undefined});
+  S.draftPts=[]; S._draftAnchors=[]; redraw(); scheduleSave();
+
+  if(hullPts.length < rawPts.length)
+    notify(`Hull: removed ${rawPts.length-hullPts.length} interior point(s) — clean polygon`, '#30D158');
 }
 
 function addDot(p){
@@ -1732,19 +1812,27 @@ function addText(p){
 // ── "Draw Space" — auto-polygon between ALL active trackers ───────
 function drawSpaceBetweenPlayers(){
   if(S.trackers.length<2){notify('Need at least 2 trackers','#E8590C');return;}
-  const pts=S.trackers.map(tr=>tCenter(tr)).filter(Boolean);
-  const cx=pts.reduce((s,p)=>s+p.x,0)/pts.length;
-  const cy=pts.reduce((s,p)=>s+p.y,0)/pts.length;
-  const sorted=[...pts].sort((a,b)=>Math.atan2(a.y-cy,a.x-cx)-Math.atan2(b.y-cy,b.x-cx));
-  const anchors=sorted.map((pt,i)=>{
-    const tr=S.trackers.find(t=>{const c=tCenter(t);return c&&Math.abs(c.x-pt.x)<2&&Math.abs(c.y-pt.y)<2;});
-    return tr?{trackerId:tr.id,role:`pt_${i}`,ox:0,oy:0}:null;
+  const rawCenters = S.trackers.map(tr=>tCenter(tr)).filter(Boolean);
+  if(rawCenters.length < 2){ notify('Need at least 2 trackers','#E8590C'); return; }
+
+  // Apply convex hull — guarantees clean non-crossing tactical shape
+  const hullPts = convexHull(rawCenters);
+
+  // Build anchors for hull points (each hull pt matches a tracker center)
+  const anchors = hullPts.map((hp, i) => {
+    const tr = S.trackers.find(t => {
+      const c = tCenter(t);
+      return c && Math.abs(c.x - hp.x) < 2 && Math.abs(c.y - hp.y) < 2;
+    });
+    return tr ? {trackerId:tr.id, role:`pt_${i}`, ox:0, oy:0} : null;
   }).filter(Boolean);
-  S.drawings.push({type:'polygon',points:sorted.map(p=>({...p})),
-    color:S.drawColor,size:S.drawSize,opacity:0.65,
-    eid:S.selEvent?.id||null,anchors:anchors.length?anchors:undefined});
-  redraw();scheduleSave();
-  notify('Space polygon created — moves with all '+sorted.length+' players','#30D158');
+
+  S.drawings.push({type:'polygon', points:hullPts.map(p=>({...p})),
+    color:S.drawColor, size:S.drawSize, opacity:0.65,
+    eid:S.selEvent?.id||null,
+    anchors:anchors.length ? anchors : undefined});
+  redraw(); scheduleSave();
+  notify('Convex hull polygon — '+hullPts.length+' players, moves with trackers','#30D158');
 }
 
 // ── Distance label helpers ────────────────────────────────────────
