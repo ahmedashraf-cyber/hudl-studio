@@ -1927,7 +1927,7 @@ const _OF = {
   // Patch half-size for gradient computation
   PATCH: 3,
   // Min gradient magnitude to be a good feature
-  MIN_GRAD: 8,
+  MIN_GRAD: 2,  // lower = more features; works on compressed broadcast video
   // Scale factor: 1280→320 = 0.25
   get scaleX(){ return this.W / 1280; },
   get scaleY(){ return this.H / 720;  },
