@@ -396,6 +396,13 @@ html,body{width:100%;height:100%;overflow:hidden;font-family:'DM Sans',sans-seri
   color:rgba(255,255,255,.5);transition:all .12s;
 }
 .tac-form-btn:hover{background:rgba(232,89,12,.12);border-color:rgba(232,89,12,.3);color:#E8590C;}
+.tac-nudge-btn{
+  width:22px;height:22px;font-size:11px;border-radius:4px;cursor:pointer;
+  border:0.5px solid rgba(255,255,255,.12);background:rgba(255,255,255,.06);
+  color:rgba(255,255,255,.6);transition:all .1s;display:flex;align-items:center;justify-content:center;
+  padding:0;
+}
+.tac-nudge-btn:hover{background:rgba(232,89,12,.15);border-color:rgba(232,89,12,.35);color:#E8590C;}
 .tac-frame-dot{
   width:18px;height:8px;border-radius:3px;cursor:pointer;flex-shrink:0;
   background:rgba(255,255,255,.12);border:1px solid transparent;transition:all .12s;
@@ -940,10 +947,7 @@ html,body{width:100%;height:100%;overflow:hidden;font-family:'DM Sans',sans-seri
         <!-- ─ Action buttons ─ -->
         <div style="display:flex;flex-wrap:wrap;gap:4px;padding:5px 8px;border-top:0.5px solid rgba(255,255,255,0.06);flex-shrink:0;background:#0a0c10;">
           <button class="tm-add-btn" onclick="tacFormationPanel()" style="font-size:9px;padding:3px 7px;">⚽ Formation</button>
-          <button class="tm-add-btn" onclick="tacCompressH()" title="Compress formation horizontally" style="font-size:9px;padding:3px 7px;">↔ Narrow</button>
-          <button class="tm-add-btn" onclick="tacExpandH()" title="Expand formation horizontally" style="font-size:9px;padding:3px 7px;">↔ Wide</button>
-          <button class="tm-add-btn" onclick="tacCompressV()" title="Compress formation vertically" style="font-size:9px;padding:3px 7px;">↕ Compact</button>
-          <button class="tm-add-btn" onclick="tacExpandV()" title="Expand formation vertically" style="font-size:9px;padding:3px 7px;">↕ Spread</button>
+          <button class="tm-add-btn" onclick="tacAdjustPanel()" style="font-size:9px;padding:3px 7px;" title="Formation position adjustment">⊹ Adjust</button>
           <button class="tm-add-btn" onclick="tacVoronoi()" style="font-size:9px;padding:3px 7px;">⬡ Voronoi</button>
           <button class="tm-add-btn" id="tac-delaunay-btn" onclick="tacDelaunay()" style="font-size:9px;padding:3px 7px;" title="Delaunay passing lanes">△ Passing</button>
           <button class="tm-add-btn" id="tac-zones-btn" onclick="tacToggleZones()" style="font-size:9px;padding:3px 7px;" title="Show/hide horizontal thirds (def / mid / att)">▤ Thirds</button>
@@ -974,6 +978,52 @@ html,body{width:100%;height:100%;overflow:hidden;font-family:'DM Sans',sans-seri
             <button class="tm-add-btn" onclick="$('tac-form-panel').style.display='none'" style="font-size:9px;padding:2px 6px;margin-left:auto;">Close</button>
           </div>
         </div>
+        <!-- ─ Formation adjust panel ─ -->
+        <div id="tac-adjust-panel" style="display:none;padding:8px 10px;border-top:0.5px solid rgba(255,255,255,0.06);background:#0a0c10;flex-shrink:0;">
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:7px;">
+            <span style="font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.6px;color:rgba(255,255,255,.3);">Formation adjustment</span>
+            <div style="display:flex;gap:4px;">
+              <button id="tac-adj-team-home" onclick="tacAdjTeam('home')" style="font-size:9px;padding:2px 7px;border-radius:4px;cursor:pointer;border:0.5px solid rgba(255,255,255,.15);background:rgba(227,24,55,.2);color:#E31837;font-weight:700;">Home</button>
+              <button id="tac-adj-team-away" onclick="tacAdjTeam('away')" style="font-size:9px;padding:2px 7px;border-radius:4px;cursor:pointer;border:0.5px solid rgba(255,255,255,.1);background:rgba(255,255,255,.04);color:rgba(255,255,255,.4);font-weight:700;">Away</button>
+            </div>
+          </div>
+          <!-- Width slider -->
+          <div style="margin-bottom:6px;">
+            <div style="display:flex;justify-content:space-between;margin-bottom:2px;">
+              <span style="font-size:9px;color:rgba(255,255,255,.35);">Width</span>
+              <span id="tac-adj-w-val" style="font-size:9px;color:rgba(255,255,255,.35);">100%</span>
+            </div>
+            <input type="range" id="tac-adj-width" min="40" max="160" value="100" step="2"
+              oninput="tacAdjWidth(+this.value)"
+              style="width:100%;accent-color:#E8590C;">
+          </div>
+          <!-- Depth slider -->
+          <div style="margin-bottom:8px;">
+            <div style="display:flex;justify-content:space-between;margin-bottom:2px;">
+              <span style="font-size:9px;color:rgba(255,255,255,.35);">Depth</span>
+              <span id="tac-adj-d-val" style="font-size:9px;color:rgba(255,255,255,.35);">100%</span>
+            </div>
+            <input type="range" id="tac-adj-depth" min="40" max="160" value="100" step="2"
+              oninput="tacAdjDepth(+this.value)"
+              style="width:100%;accent-color:#E8590C;">
+          </div>
+          <!-- Arrow nudge -->
+          <div style="display:flex;flex-direction:column;align-items:center;gap:2px;margin-bottom:7px;">
+            <button onclick="tacNudge(0,-1)" class="tac-nudge-btn" title="Push team up">▲</button>
+            <div style="display:flex;gap:6px;">
+              <button onclick="tacNudge(-1,0)" class="tac-nudge-btn" title="Push team left">◀</button>
+              <button onclick="tacNudge(0,0)" class="tac-nudge-btn" title="Center team" style="font-size:8px;">●</button>
+              <button onclick="tacNudge(1,0)" class="tac-nudge-btn" title="Push team right">▶</button>
+            </div>
+            <button onclick="tacNudge(0,1)" class="tac-nudge-btn" title="Push team down">▼</button>
+          </div>
+          <!-- Reset + Close -->
+          <div style="display:flex;gap:5px;">
+            <button onclick="tacAdjReset()" class="tm-add-btn" style="flex:1;font-size:9px;padding:3px 7px;">↺ Reset</button>
+            <button onclick="tacAdjClose()" class="tm-add-btn" style="flex:1;font-size:9px;padding:3px 7px;">Close</button>
+          </div>
+        </div>
+
         <!-- ─ Selected player editor ─ -->
         <div id="tac-player-editor" style="display:none;padding:6px 8px;border-top:0.5px solid rgba(255,255,255,0.06);background:#0a0c10;flex-shrink:0;">
           <div style="font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.6px;color:rgba(255,255,255,.3);margin-bottom:5px;">Edit player</div>
@@ -6171,26 +6221,163 @@ function tacToggleLanes(){
     _TAC.lanesOn ? '#30D158' : '#8b949e');
 }
 
-function _tacScaleFormation(sx, sy){
+// ── Formation Adjustment Engine ────────────────────────────────────
+// State for the adjustment panel
+const _ADJ = {
+  team: 'home',           // which team we're adjusting
+  // Baseline snapshots: stored when panel opens, so sliders are relative to that
+  baseline: null,         // [{id,x,y},...] snapshot of players at panel open
+};
+
+function tacAdjustPanel(){
+  const p = document.getElementById('tac-adjust-panel');
+  if(!p) return;
+  const isOpen = p.style.display !== 'none';
+  if(isOpen){ p.style.display='none'; return; }
+  // Open panel — snapshot current positions as baseline
+  _adjSnapshot();
+  p.style.display = 'block';
+  // Reset sliders to 100%
+  const ws = document.getElementById('tac-adj-width');
+  const ds = document.getElementById('tac-adj-depth');
+  if(ws) ws.value = 100;
+  if(ds) ds.value = 100;
+  document.getElementById('tac-adj-w-val').textContent = '100%';
+  document.getElementById('tac-adj-d-val').textContent = '100%';
+}
+
+function tacAdjClose(){
+  const p = document.getElementById('tac-adjust-panel');
+  if(p) p.style.display = 'none';
+}
+
+function tacAdjTeam(team){
+  _ADJ.team = team;
+  // Highlight active team button
+  document.getElementById('tac-adj-team-home').style.background =
+    team==='home' ? 'rgba(227,24,55,.2)' : 'rgba(255,255,255,.04)';
+  document.getElementById('tac-adj-team-home').style.color =
+    team==='home' ? '#E31837' : 'rgba(255,255,255,.4)';
+  document.getElementById('tac-adj-team-away').style.background =
+    team==='away' ? 'rgba(26,58,143,.35)' : 'rgba(255,255,255,.04)';
+  document.getElementById('tac-adj-team-away').style.color =
+    team==='away' ? '#58a6ff' : 'rgba(255,255,255,.4)';
+  // Snapshot for the newly selected team
+  _adjSnapshot();
+  // Reset sliders
+  const ws=document.getElementById('tac-adj-width');
+  const ds=document.getElementById('tac-adj-depth');
+  if(ws){ws.value=100;document.getElementById('tac-adj-w-val').textContent='100%';}
+  if(ds){ds.value=100;document.getElementById('tac-adj-d-val').textContent='100%';}
+}
+
+function _adjSnapshot(){
   if(!_TAC.frame) return;
-  // Scale all players around overall centroid
-  const players = _TAC.frame.players;
-  if(!players.length) return;
-  const cx = players.reduce((s,p)=>s+p.x,0)/players.length;
-  const cy = players.reduce((s,p)=>s+p.y,0)/players.length;
-  players.forEach(p=>{
-    p.x = cx + (p.x-cx)*sx;
-    p.y = cy + (p.y-cy)*sy;
-    // Clamp to pitch
-    p.x = Math.max(0.04, Math.min(0.96, p.x));
-    p.y = Math.max(0.04, Math.min(0.96, p.y));
-  });
+  _ADJ.baseline = _TAC.frame.players
+    .filter(p=>p.team===_ADJ.team)
+    .map(p=>({id:p.id, x:p.x, y:p.y}));
+}
+
+function _adjApplyScale(sx, sy){
+  if(!_TAC.frame || !_ADJ.baseline) return;
+  // Compute centroid from baseline
+  const bl = _ADJ.baseline;
+  if(!bl.length) return;
+  const cx = bl.reduce((s,p)=>s+p.x,0)/bl.length;
+  const cy = bl.reduce((s,p)=>s+p.y,0)/bl.length;
+  // Apply scale relative to baseline (not current position — avoids drift)
+  _TAC.frame.players
+    .filter(p=>p.team===_ADJ.team)
+    .forEach(p=>{
+      const b = bl.find(b=>b.id===p.id);
+      if(!b) return;
+      p.x = Math.max(0.04, Math.min(0.96, cx + (b.x-cx)*sx));
+      p.y = Math.max(0.04, Math.min(0.96, cy + (b.y-cy)*sy));
+    });
   _TAC._draw(); _TAC.save();
 }
-function tacCompressH(){ _tacScaleFormation(0.88, 1.0); notify('Formation narrowed','#58a6ff'); }
-function tacExpandH(){   _tacScaleFormation(1.12, 1.0); notify('Formation widened','#58a6ff'); }
-function tacCompressV(){ _tacScaleFormation(1.0, 0.88); notify('Formation compacted','#58a6ff'); }
-function tacExpandV(){   _tacScaleFormation(1.0, 1.12); notify('Formation spread','#58a6ff'); }
+
+function tacAdjWidth(val){
+  document.getElementById('tac-adj-w-val').textContent = val+'%';
+  const f = val/100;
+  // Width controls horizontal spread (x axis in horizontal layout)
+  _adjApplyScale(_TAC.vertical ? 1 : f, _TAC.vertical ? f : 1);
+}
+
+function tacAdjDepth(val){
+  document.getElementById('tac-adj-d-val').textContent = val+'%';
+  const f = val/100;
+  // Depth controls vertical spread (y axis in horizontal layout)
+  _adjApplyScale(_TAC.vertical ? f : 1, _TAC.vertical ? 1 : f);
+}
+
+function tacNudge(dx, dy){
+  if(!_TAC.frame) return;
+  if(dx===0 && dy===0){
+    // Center button — move team to center of their half
+    const players = _TAC.frame.players.filter(p=>p.team===_ADJ.team);
+    if(!players.length) return;
+    const cx = players.reduce((s,p)=>s+p.x,0)/players.length;
+    const cy = players.reduce((s,p)=>s+p.y,0)/players.length;
+    const tcx = _ADJ.team==='home' ? 0.25 : 0.75; // center of their half
+    const tcy = 0.5;
+    const ddx = tcx-cx, ddy = tcy-cy;
+    players.forEach(p=>{
+      p.x = Math.max(0.04,Math.min(0.96, p.x+ddx));
+      p.y = Math.max(0.04,Math.min(0.96, p.y+ddy));
+    });
+    _adjSnapshot(); // update baseline after centering
+    notify('Team centered to their half','#58a6ff');
+  } else {
+    const step = 0.04; // ~4% per nudge
+    _TAC.frame.players
+      .filter(p=>p.team===_ADJ.team)
+      .forEach(p=>{
+        p.x = Math.max(0.04,Math.min(0.96, p.x+dx*step));
+        p.y = Math.max(0.04,Math.min(0.96, p.y+dy*step));
+      });
+    _adjSnapshot(); // update baseline after nudge so sliders work correctly
+  }
+  _TAC._draw(); _TAC.save();
+}
+
+function tacAdjReset(){
+  if(!_TAC.frame) return;
+  // Restore baseline positions
+  if(!_ADJ.baseline) return;
+  _TAC.frame.players
+    .filter(p=>p.team===_ADJ.team)
+    .forEach(p=>{
+      const b = _ADJ.baseline.find(b=>b.id===p.id);
+      if(b){ p.x=b.x; p.y=b.y; }
+    });
+  // Reset sliders
+  const ws=document.getElementById('tac-adj-width');
+  const ds=document.getElementById('tac-adj-depth');
+  if(ws){ws.value=100;document.getElementById('tac-adj-w-val').textContent='100%';}
+  if(ds){ds.value=100;document.getElementById('tac-adj-d-val').textContent='100%';}
+  _TAC._draw(); _TAC.save();
+  notify('Formation reset','#8b949e');
+}
+
+// Keyboard nudge — arrow keys move selected team when adjust panel open
+document.addEventListener('keydown', e=>{
+  const panel = document.getElementById('tac-adjust-panel');
+  if(!panel || panel.style.display==='none') return;
+  // Don't intercept if typing in an input
+  if(e.target.tagName==='INPUT') return;
+  const dirs = {ArrowLeft:[-1,0],ArrowRight:[1,0],ArrowUp:[0,-1],ArrowDown:[0,1]};
+  if(dirs[e.key]){
+    e.preventDefault();
+    tacNudge(...dirs[e.key]);
+  }
+});
+
+// Keep old compress/expand as aliases (used nowhere now but safe to keep)
+function tacCompressH(){ tacAdjWidth(80); }
+function tacExpandH(){   tacAdjWidth(120); }
+function tacCompressV(){ tacAdjDepth(80); }
+function tacExpandV(){   tacAdjDepth(120); }
 
 // ── NAVIGATION ───────────────────────────────────────────────────
 function goBack(){ window.location.href='/'; }
