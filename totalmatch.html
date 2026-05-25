@@ -921,6 +921,9 @@ html,body{width:100%;height:100%;overflow:hidden;font-family:'DM Sans',sans-seri
           <button class="tac-tool" data-tool="home" onclick="tacSetTool('home')" title="Add home player">● Home</button>
           <button class="tac-tool" data-tool="away" onclick="tacSetTool('away')" title="Add away player">○ Away</button>
           <button class="tac-tool" data-tool="ball" onclick="tacSetTool('ball')" title="Add ball">⬤ Ball</button>
+          <button class="tac-tool" data-tool="cone" onclick="tacSetTool('cone')" title="Place training cone">▲ Cone</button>
+          <button class="tac-tool" data-tool="flag" onclick="tacSetTool('flag')" title="Place flag marker">⚑ Flag</button>
+          <button class="tac-tool" data-tool="disc" onclick="tacSetTool('disc')" title="Place position disc">◎ Disc</button>
           <button class="tac-tool" data-tool="arrow" onclick="tacSetTool('arrow')" title="Draw arrow">→ Arrow</button>
           <button class="tac-tool" data-tool="line" onclick="tacSetTool('line')" title="Draw line">— Line</button>
           <button class="tac-tool" data-tool="zone" onclick="tacSetTool('zone')" title="Draw zone">□ Zone</button>
@@ -4534,7 +4537,7 @@ const _TAC = {
   },
 
   _blankFrame(){
-    return { players:[], balls:[], drawings:[], voronoi:false };
+    return { players:[], balls:[], drawings:[], cones:[], voronoi:false };
   },
 
   // Deep clone a frame
@@ -4861,6 +4864,42 @@ const _TAC = {
       ctx.restore();
     }
 
+    // ── Interpolated cones ────────────────────────────────────
+    const fromCones=fromF.cones||[], toCones=toF.cones||[];
+    const maxC=Math.max(fromCones.length,toCones.length);
+    for(let i=0;i<maxC;i++){
+      const fc=fromCones[i], tc=toCones[i];
+      if(!fc&&!tc) continue;
+      const alpha=(fc&&tc)?1:(fc?1-t:t);
+      const cx2=this.px(this._lerp(fc?fc.x:tc.x, tc?tc.x:fc.x, t),W);
+      const cy2=this.py(this._lerp(fc?fc.y:tc.y, tc?tc.y:fc.y, t),H);
+      const c=fc||tc;
+      // Temporarily move the cone to interpolated position and draw
+      const origX=c.x, origY=c.y;
+      c.x=this.nx(cx2,W); c.y=this.ny(cy2,H);
+      ctx.save(); ctx.globalAlpha=alpha;
+      // Draw this one cone inline
+      if(c.type==='cone'){
+        const h=W*0.026,hw=h*0.7;
+        ctx.fillStyle=c.color||'#FF6B1F'; ctx.strokeStyle='rgba(0,0,0,0.4)'; ctx.lineWidth=1;
+        ctx.beginPath(); ctx.moveTo(cx2,cy2-h); ctx.lineTo(cx2-hw,cy2+h*0.5);
+        ctx.lineTo(cx2+hw,cy2+h*0.5); ctx.closePath(); ctx.fill(); ctx.stroke();
+      } else if(c.type==='flag'){
+        const ph=W*0.038;
+        ctx.strokeStyle='rgba(255,255,255,0.7)'; ctx.lineWidth=1.5;
+        ctx.beginPath(); ctx.moveTo(cx2,cy2); ctx.lineTo(cx2,cy2-ph); ctx.stroke();
+        ctx.fillStyle=c.color||'#FFEA00';
+        ctx.beginPath(); ctx.moveTo(cx2,cy2-ph); ctx.lineTo(cx2+W*0.022,cy2-ph+W*0.013);
+        ctx.lineTo(cx2,cy2-ph+W*0.026); ctx.closePath(); ctx.fill();
+      } else if(c.type==='disc'){
+        const r=W*0.02; const col=c.color||'#58a6ff';
+        ctx.fillStyle=col+'33'; ctx.strokeStyle=col; ctx.lineWidth=2;
+        ctx.beginPath(); ctx.arc(cx2,cy2,r,0,Math.PI*2); ctx.fill(); ctx.stroke();
+      }
+      ctx.restore();
+      c.x=origX; c.y=origY;
+    }
+
     // Drawings from the from-frame (fade out as we transition)
     if(fromF.drawings?.length){
       ctx.save(); ctx.globalAlpha = Math.max(0, 1-t*2);
@@ -4880,6 +4919,7 @@ const _TAC = {
     if(this.voronoiOn)  this._drawVoronoi(ctx,W,H);
     if(this.delaunayOn) this._drawDelaunay(ctx,W,H);
     this._drawDrawings(ctx,W,H);
+    this._drawCones(ctx,W,H);
     this._drawPlayers(ctx,W,H);
     this._drawBalls(ctx,W,H);
     if(this.distOn) this._drawDistances(ctx,W,H);
@@ -5135,6 +5175,85 @@ const _TAC = {
     });
   },
 
+  // ── CONES / MARKERS / FLAGS ────────────────────────────────────
+  _drawCones(ctx,W,H){
+    if(!this.frame||!this.frame.cones) return;
+    this.frame.cones.forEach(c=>{
+      const x=this.px(c.x,W), y=this.py(c.y,H);
+      const sel=(c.id===this.selId);
+      ctx.save();
+
+      if(sel){
+        // Selection ring
+        ctx.beginPath(); ctx.arc(x,y,14,0,Math.PI*2);
+        ctx.strokeStyle='#FFEA00'; ctx.lineWidth=2; ctx.stroke();
+      }
+
+      if(c.type==='cone'){
+        // Training cone — orange triangle
+        const h=W*0.026, hw=h*0.7;
+        ctx.fillStyle=c.color||'#FF6B1F';
+        ctx.strokeStyle='rgba(0,0,0,0.4)'; ctx.lineWidth=1;
+        ctx.beginPath();
+        ctx.moveTo(x,       y-h);     // apex
+        ctx.lineTo(x-hw,    y+h*0.5); // bottom-left
+        ctx.lineTo(x+hw,    y+h*0.5); // bottom-right
+        ctx.closePath();
+        ctx.fill(); ctx.stroke();
+        // Highlight strip
+        ctx.fillStyle='rgba(255,255,255,0.25)';
+        ctx.beginPath();
+        ctx.moveTo(x,       y-h);
+        ctx.lineTo(x-hw*0.4,y+h*0.1);
+        ctx.lineTo(x+hw*0.4,y+h*0.1);
+        ctx.closePath(); ctx.fill();
+      }
+      else if(c.type==='flag'){
+        // Flag — vertical pole with triangular flag
+        const ph=W*0.038; // pole height
+        const col=c.color||'#FFEA00';
+        // Pole
+        ctx.strokeStyle='rgba(255,255,255,0.7)'; ctx.lineWidth=1.5;
+        ctx.beginPath(); ctx.moveTo(x,y); ctx.lineTo(x,y-ph); ctx.stroke();
+        // Flag triangle
+        ctx.fillStyle=col;
+        ctx.beginPath();
+        ctx.moveTo(x,   y-ph);
+        ctx.lineTo(x+W*0.022, y-ph+W*0.013);
+        ctx.lineTo(x,   y-ph+W*0.026);
+        ctx.closePath(); ctx.fill();
+        ctx.strokeStyle='rgba(0,0,0,0.3)'; ctx.lineWidth=0.8; ctx.stroke();
+        // Base dot
+        ctx.fillStyle='rgba(255,255,255,0.6)';
+        ctx.beginPath(); ctx.arc(x,y,2.5,0,Math.PI*2); ctx.fill();
+      }
+      else if(c.type==='disc'){
+        // Position disc — flat ring with crosshair
+        const r=W*0.02;
+        const col=c.color||'#58a6ff';
+        ctx.fillStyle=col+'33';
+        ctx.strokeStyle=col; ctx.lineWidth=2;
+        ctx.beginPath(); ctx.arc(x,y,r,0,Math.PI*2); ctx.fill(); ctx.stroke();
+        // Inner crosshair
+        ctx.globalAlpha=0.5; ctx.lineWidth=1;
+        ctx.beginPath(); ctx.moveTo(x-r*0.5,y); ctx.lineTo(x+r*0.5,y); ctx.stroke();
+        ctx.beginPath(); ctx.moveTo(x,y-r*0.5); ctx.lineTo(x,y+r*0.5); ctx.stroke();
+      }
+
+      ctx.restore();
+    });
+  },
+
+  _hitCone(px2,py2,W,H){
+    if(!this.frame||!this.frame.cones) return null;
+    const r=W*0.03+8;
+    for(let i=this.frame.cones.length-1;i>=0;i--){
+      const c=this.frame.cones[i];
+      if(Math.hypot(px2-this.px(c.x,W),py2-this.py(c.y,H))<r) return c;
+    }
+    return null;
+  },
+
   // ── DRAWINGS (arrows, lines, zones) ───────────────────────────
   _drawDrawings(ctx,W,H){
     if(!this.frame) return;
@@ -5373,11 +5492,13 @@ const _TAC = {
     }
 
     if(this.tool==='select'){
-      const p=this._hitPlayer(x,y,W,H)||this._hitBall(x,y,W,H);
+      const p=this._hitPlayer(x,y,W,H)||this._hitBall(x,y,W,H)||this._hitCone(x,y,W,H);
       if(p){
         this.selId=p.id; this.dragId=p.id;
         this.dragOx=x-this.px(p.x,W); this.dragOy=y-this.py(p.y,H);
-        this._showPlayerEditor(p);
+        // Only show player editor for actual players
+        if(p.team) this._showPlayerEditor(p);
+        else this._showPlayerEditor(null);
       } else {
         this.selId=null; this.dragId=null;
         this._showPlayerEditor(null);
@@ -5387,6 +5508,7 @@ const _TAC = {
     if(this.tool==='erase'){
       const p=this._hitPlayer(x,y,W,H); if(p){ this._removeById(p.id); this._draw(); return; }
       const b=this._hitBall(x,y,W,H);  if(b){ this._removeById(b.id); this._draw(); return; }
+      const c=this._hitCone(x,y,W,H);  if(c){ this._removeById(c.id); this._draw(); return; }
       return;
     }
 
@@ -5429,6 +5551,15 @@ const _TAC = {
       this.frame.balls.push({id:this.uid(),x:nx,y:ny});
       this._draw(); this.save(); return;
     }
+    if(this.tool==='cone'||this.tool==='flag'||this.tool==='disc'){
+      if(!this.frame.cones) this.frame.cones=[];
+      const defaultColors={cone:'#FF6B1F',flag:'#FFEA00',disc:'#58a6ff'};
+      this.frame.cones.push({
+        id:this.uid(), type:this.tool, x:nx, y:ny,
+        color:defaultColors[this.tool],
+      });
+      this._draw(); this.save(); return;
+    }
     if(this.tool==='arrow'||this.tool==='line'||this.tool==='zone'){
       this.drawPts=[{x:nx,y:ny}];
       return;
@@ -5450,7 +5581,8 @@ const _TAC = {
     }
 
     if(this.dragId){
-      const obj=[...this.frame.players,...this.frame.balls].find(o=>o.id===this.dragId);
+      const cones=this.frame.cones||[];
+      const obj=[...this.frame.players,...this.frame.balls,...cones].find(o=>o.id===this.dragId);
       if(obj){
         obj.x=Math.max(0,Math.min(1,this.nx(x-this.dragOx,W)));
         obj.y=Math.max(0,Math.min(1,this.ny(y-this.dragOy,H)));
@@ -5506,6 +5638,7 @@ const _TAC = {
     if(!this.frame) return;
     this.frame.players=this.frame.players.filter(p=>p.id!==id);
     this.frame.balls=this.frame.balls.filter(b=>b.id!==id);
+    if(this.frame.cones) this.frame.cones=this.frame.cones.filter(c=>c.id!==id);
     if(this.selId===id) this.selId=null;
     this.save();
   },
