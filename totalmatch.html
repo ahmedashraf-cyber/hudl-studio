@@ -597,6 +597,10 @@ html,body{width:100%;height:100%;overflow:hidden;font-family:'DM Sans',sans-seri
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 12h18"/><path d="M7 8l-4 4 4 4"/><path d="M17 8l4 4-4 4"/></svg>
         <span>Offside</span>
       </button>
+      <button class="tm-tool" id="tool-zoom" onclick="setTool('zoom')" title="Zoom lens — drag to move magnifier">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.35-4.35"/><path d="M8 11h6M11 8v6"/></svg>
+        <span>Zoom</span>
+      </button>
       <div class="tm-divider"></div>
       <button class="tm-tool" id="tool-select" onclick="setTool('select')" title="Select">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M5 3l14 9-7 1.5-3 7z"/></svg>
@@ -640,6 +644,13 @@ html,body{width:100%;height:100%;overflow:hidden;font-family:'DM Sans',sans-seri
           <canvas id="tm-heatmap-canvas" width="1280" height="720"></canvas>
           <!-- Tracker SVG -->
           <svg id="tm-trackers-svg" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 720" preserveAspectRatio="none"></svg>
+          <!-- Connect shapes bar — shown when 2+ rings/circles drawn while paused -->
+          <div id="tm-connect-bar" class="gone" style="position:absolute;bottom:60px;left:50%;transform:translateX(-50%);z-index:30;display:flex;gap:6px;background:rgba(10,12,16,0.92);border:1px solid rgba(255,255,255,0.12);border-radius:8px;padding:6px 10px;backdrop-filter:blur(8px);">
+            <span style="font-size:11px;color:rgba(255,255,255,.5);align-self:center;white-space:nowrap;">Connect shapes:</span>
+            <button class="tm-btn" onclick="connectShapes('line')" style="font-size:10px;padding:4px 9px;height:auto;">── Line</button>
+            <button class="tm-btn" onclick="connectShapes('arrow')" style="font-size:10px;padding:4px 9px;height:auto;">→ Arrow</button>
+            <button class="tm-btn" onclick="connectShapes('none')" style="font-size:10px;padding:4px 9px;height:auto;color:rgba(255,255,255,.3);">✕ None</button>
+          </div>
           <!-- Draw props bar -->
           <div id="tm-draw-props" class="gone">
             <span class="dp-lbl">Color</span>
@@ -927,7 +938,7 @@ function setSave(msg,col){ const e=$('tm-save'); if(e){e.textContent=msg;e.style
 let _saveTimer;
 function scheduleSave(){ clearTimeout(_saveTimer); setSave('● Saving…','#d29922'); _saveTimer=setTimeout(tmSave,1600); }
 
-const DRAW_TOOLS=['arrow','curve','dash','zone','circle','polygon','line','pass','dot','text','free','spot','ring','offside','erase'];
+const DRAW_TOOLS=['arrow','curve','dash','zone','circle','polygon','line','pass','dot','text','free','spot','ring','offside','erase','zoom'];
 const TRACK_TOOLS=['track-click','track-box'];
 
 // ── VIDEO ─────────────────────────────────────────────────────────
@@ -1716,24 +1727,57 @@ function drawShape(ctx, d){
       if(!d.start||!d.end) break;
       const x=Math.min(d.start.x,d.end.x), y=Math.min(d.start.y,d.end.y);
       const w=Math.abs(d.end.x-d.start.x), h=Math.abs(d.end.y-d.start.y);
-      ctx.lineWidth=2; ctx.setLineDash([6,4]);
-      ctx.fillStyle=hex2rgba(d.color,.18); ctx.fillRect(x,y,w,h); ctx.strokeRect(x,y,w,h);
-      ctx.setLineDash([]); break;
+      if(w<2||h<2) break;
+      ctx.save();
+      ctx.beginPath(); ctx.rect(x,y,w,h); ctx.clip();
+      // Diagonal hatch fill
+      ctx.strokeStyle=hex2rgba(d.color,.35); ctx.lineWidth=1;
+      const step=10;
+      for(let i=-(h);i<w+h;i+=step){
+        ctx.beginPath(); ctx.moveTo(x+i,y); ctx.lineTo(x+i+h,y+h); ctx.stroke();
+      }
+      ctx.restore();
+      // Solid border
+      ctx.lineWidth=2.5; ctx.strokeStyle=d.color;
+      ctx.strokeRect(x,y,w,h); break;
     }
     case 'circle': {
       if(!d.start||!d.end) break;
       const r=Math.sqrt((d.end.x-d.start.x)**2+(d.end.y-d.start.y)**2);
-      ctx.lineWidth=2; ctx.setLineDash([6,4]);
-      ctx.beginPath(); ctx.arc(d.start.x,d.start.y,r,0,Math.PI*2);
-      ctx.fillStyle=hex2rgba(d.color,.18); ctx.fill(); ctx.stroke();
-      ctx.setLineDash([]); break;
+      if(r<2) break;
+      ctx.save();
+      ctx.beginPath(); ctx.arc(d.start.x,d.start.y,r,0,Math.PI*2); ctx.clip();
+      // Diagonal hatch fill
+      ctx.strokeStyle=hex2rgba(d.color,.35); ctx.lineWidth=1;
+      const step=10;
+      for(let i=-(r*2);i<r*2;i+=step){
+        ctx.beginPath();
+        ctx.moveTo(d.start.x-r+i, d.start.y-r);
+        ctx.lineTo(d.start.x-r+i+r*2, d.start.y+r); ctx.stroke();
+      }
+      ctx.restore();
+      // Solid border
+      ctx.lineWidth=2.5; ctx.strokeStyle=d.color;
+      ctx.beginPath(); ctx.arc(d.start.x,d.start.y,r,0,Math.PI*2); ctx.stroke();
+      break;
     }
     case 'polygon': {
       const pts = d.points||[]; if(pts.length<2) break;
-      // Fill polygon
+      ctx.save();
+      // Clip to polygon for hatch fill
       ctx.beginPath(); ctx.moveTo(pts[0].x,pts[0].y);
-      pts.forEach(p=>ctx.lineTo(p.x,p.y)); ctx.closePath();
-      ctx.fillStyle = hex2rgba(d.color, 0.22); ctx.fill();
+      pts.forEach(p=>ctx.lineTo(p.x,p.y)); ctx.closePath(); ctx.clip();
+      // Bounding box
+      const pxs=pts.map(p=>p.x), pys=pts.map(p=>p.y);
+      const pbx=Math.min(...pxs),pby=Math.min(...pys);
+      const pbw=Math.max(...pxs)-pbx, pbh=Math.max(...pys)-pby;
+      // Diagonal hatch fill
+      ctx.strokeStyle=hex2rgba(d.color,.35); ctx.lineWidth=1;
+      const step=10;
+      for(let i=-pbh;i<pbw+pbh;i+=step){
+        ctx.beginPath(); ctx.moveTo(pbx+i,pby); ctx.lineTo(pbx+i+pbh,pby+pbh); ctx.stroke();
+      }
+      ctx.restore();
       // Border
       ctx.lineWidth=2.5; ctx.strokeStyle=d.color;
       ctx.beginPath(); ctx.moveTo(pts[0].x,pts[0].y);
@@ -3215,6 +3259,183 @@ function _importTrackData(data){
 }
 
 // ── End Cloud AI Processing ───────────────────────────────────────
+
+// ════════════════════════════════════════════════════════════════
+// CONNECT SHAPES
+// ════════════════════════════════════════════════════════════════
+// When paused with 2+ ring/circle/dot drawings, show the connect bar.
+// connectShapes() draws a line or arrow between the centers of all
+// selected shape types, then hides the bar.
+
+function _getConnectableCenters(){
+  // Return center points of all rings, circles, and dots on screen
+  const t = ($('tm-video')||{}).currentTime||0;
+  const activeEid = S.events.find(ev=>t>=ev.time&&t<=ev.endTime)?.id||null;
+  return S.drawings
+    .filter(d => {
+      if(d.eid && d.eid !== activeEid && !(S.selEvent&&d.eid===S.selEvent.id)) return false;
+      return ['ring','circle','dot'].includes(d.type);
+    })
+    .map(d => {
+      if(d.type==='ring')  return {x:d.start?.x||d.x, y:d.start?.y||d.y};
+      if(d.type==='circle') return {x:d.start?.x, y:d.start?.y};
+      if(d.type==='dot')   return {x:d.x, y:d.y};
+      return null;
+    })
+    .filter(Boolean);
+}
+
+function checkConnectBar(){
+  // Show/hide connect bar based on whether paused + 2+ connectable shapes
+  const pts = _getConnectableCenters();
+  const bar = $('tm-connect-bar');
+  if(bar) bar.classList.toggle('gone', S.playing || pts.length < 2);
+}
+
+function connectShapes(type){
+  if(type === 'none'){ $('tm-connect-bar').classList.add('gone'); return; }
+  const pts = _getConnectableCenters();
+  if(pts.length < 2) return;
+  // Connect each consecutive pair with a line or arrow
+  for(let i=0; i<pts.length-1; i++){
+    S.drawings.push({
+      type,
+      color: S.drawColor,
+      size: S.drawSize,
+      opacity: S.drawOpacity,
+      start: {x:pts[i].x,   y:pts[i].y},
+      end:   {x:pts[i+1].x, y:pts[i+1].y},
+      eid: S.selEvent?.id||null,
+    });
+  }
+  $('tm-connect-bar').classList.add('gone');
+  redraw(); scheduleSave();
+  notify(type==='arrow'?'Shapes connected with arrows':'Shapes connected with lines','#30D158');
+}
+
+// Hook into togglePlay and redraw to show/hide the bar
+{
+  const _origTogglePlay = togglePlay;
+  window.togglePlay = function(){
+    _origTogglePlay();
+    setTimeout(checkConnectBar, 50);
+  };
+  const _origRedraw = redraw;
+  window.redraw = function(extra){
+    _origRedraw(extra);
+    checkConnectBar();
+  };
+}
+
+// ════════════════════════════════════════════════════════════════
+// ZOOM LENS
+// ════════════════════════════════════════════════════════════════
+// Zoom tool: click+drag a circular lens over any area of the video.
+// The lens shows a 2× magnified view of that region.
+// Implemented as a special drawing type 'zoom' — stored and redrawn
+// like any other shape, but reads live video pixels each redraw.
+
+// Override drawShape to handle 'zoom' type
+{
+  const _origDrawShape = drawShape;
+  window.drawShape = function(ctx, d){
+    if(d.type !== 'zoom'){ _origDrawShape(ctx, d); return; }
+    if(!d.start) return;
+    const cx = d.start.x, cy = d.start.y;
+    const r = Math.max(30, d.radius||80);
+    const zoom = d.zoom||2.5;
+    const v = document.getElementById('tm-video');
+    if(!v||v.readyState<2){ _origDrawShape(ctx, d); return; }
+
+    ctx.save();
+    // Circular clip
+    ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI*2); ctx.clip();
+
+    // Draw magnified region from video
+    // Source region: r/zoom radius around center (in video space)
+    const srcR = r / zoom;
+    // Map canvas coords to video pixel coords
+    const scaleX = v.videoWidth  / 1280;
+    const scaleY = v.videoHeight / 720;
+    const sx = (cx - srcR) * scaleX;
+    const sy = (cy - srcR) * scaleY;
+    const sw = srcR * 2 * scaleX;
+    const sh = srcR * 2 * scaleY;
+    ctx.drawImage(v, sx, sy, sw, sh, cx-r, cy-r, r*2, r*2);
+
+    ctx.restore();
+
+    // Lens border
+    ctx.save();
+    ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI*2);
+    ctx.strokeStyle = d.color||'#FFEA00';
+    ctx.lineWidth = 3;
+    ctx.globalAlpha = d.opacity||1;
+    ctx.stroke();
+    // Crosshair
+    ctx.strokeStyle = hex2rgba(d.color||'#FFEA00', 0.5);
+    ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(cx-r*0.2,cy); ctx.lineTo(cx+r*0.2,cy); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(cx,cy-r*0.2); ctx.lineTo(cx,cy+r*0.2); ctx.stroke();
+    // Zoom label
+    ctx.font='bold 10px DM Sans,sans-serif'; ctx.fillStyle=d.color||'#FFEA00';
+    ctx.textAlign='center'; ctx.globalAlpha=0.8;
+    ctx.fillText(zoom+'×', cx, cy+r+13);
+    ctx.restore();
+  };
+}
+
+// Zoom tool drawing: click sets center, drag sets radius
+{
+  const _origSetTool = setTool;
+  window.setTool = function(name){
+    _origSetTool(name);
+    if(name==='zoom'){
+      // Zoom uses the canvas mousedown/up to place a lens
+      document.getElementById('tm-canvas').style.cursor='crosshair';
+    }
+  };
+}
+
+// Handle zoom drawing in the canvas mousedown/mouseup flow
+// We hook into the existing drawing end logic
+{
+  const _origFinishShape = window.finishShape; // may not exist — we define the zoom path directly
+  // Zoom is drawn via mousedown → mousemove → mouseup on canvas
+  // We add it by checking in the existing canvas event path
+  const cvs = document.getElementById('tm-canvas');
+  let _zoomStart = null;
+
+  cvs.addEventListener('pointerdown', e=>{
+    if(S.tool!=='zoom') return;
+    const p = canvasP(e);
+    _zoomStart = p;
+  }, {passive:true});
+
+  cvs.addEventListener('pointermove', e=>{
+    if(S.tool!=='zoom'||!_zoomStart) return;
+    const p = canvasP(e);
+    const r = Math.max(20, Math.hypot(p.x-_zoomStart.x, p.y-_zoomStart.y));
+    // Live preview
+    redraw({type:'zoom',start:{x:_zoomStart.x,y:_zoomStart.y},
+      radius:r,zoom:2.5,color:S.drawColor,opacity:S.drawOpacity});
+  }, {passive:true});
+
+  cvs.addEventListener('pointerup', e=>{
+    if(S.tool!=='zoom'||!_zoomStart) return;
+    const p = canvasP(e);
+    const r = Math.max(40, Math.hypot(p.x-_zoomStart.x, p.y-_zoomStart.y));
+    S.drawings.push({type:'zoom',start:{x:_zoomStart.x,y:_zoomStart.y},
+      radius:r, zoom:2.5, color:S.drawColor, opacity:S.drawOpacity,
+      eid:S.selEvent?.id||null});
+    _zoomStart=null;
+    S.selDrawIdx=S.drawings.length-1;
+    redraw(); scheduleSave();
+    notify('Zoom lens added — drag to move it','#58a6ff');
+  }, {passive:true});
+}
+
+// ── End new features ─────────────────────────────────────────────
 
 // ── NAVIGATION ───────────────────────────────────────────────────
 function goBack(){ window.location.href='/'; }
