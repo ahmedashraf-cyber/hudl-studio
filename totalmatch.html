@@ -1428,7 +1428,7 @@ function isHit(d,p){
     case 'spot':
       return d.start&&d.end&&Math.abs(Math.hypot(p.x-d.start.x,p.y-d.start.y)-Math.hypot(d.end.x-d.start.x,d.end.y-d.start.y))<M;
     case 'offside':
-      return d.start&&Math.abs(p.y-d.start.y)<M;
+      return d.start&&Math.abs(p.x-d.start.x)<M;
     case 'zoom':
       // Hit the circle of the zoom lens
       return d.start&&Math.hypot(p.x-d.start.x,p.y-d.start.y)<(d.radius||80)+16;
@@ -1444,7 +1444,7 @@ function getCtrlPts(d){
   if(d.type==='polygon') return (d.points||[]).map((p,i)=>({...p,role:`pt_${i}`}));
   if(d.type==='dot'||d.type==='text') return [{x:d.x,y:d.y,role:'center'}];
   if(d.type==='zoom') return [{x:d.start.x,y:d.start.y,role:'center'}];
-  if(d.type==='offside') return [{x:640,y:d.start.y,role:'start'}]; // center drag handle
+  if(d.type==='offside') return [{x:d.start.x,y:360,role:'start'}]; // center drag handle
   return [];
 }
 
@@ -1461,7 +1461,7 @@ function restoreShape(d,sn){
 function applyPtDrag(d,role,dx,dy){
   if(d.anchors) d.anchors=d.anchors.filter(a=>a.role!==role);
   if(role==='start'&&d.start){
-    if(d.type==='offside'){ d.start.y+=dy; d.end.y+=dy; d.start.x=0; d.end.x=1280; }
+    if(d.type==='offside'){ d.start.x+=dx; d.end.x+=dx; d.start.y=0; d.end.y=720; }
     else { d.start.x+=dx; d.start.y+=dy; }
   }
   else if(role==='end'&&d.end){d.end.x+=dx;d.end.y+=dy;}
@@ -1527,9 +1527,9 @@ cvs.addEventListener('mousemove',e=>{
       restoreShape(d,S.dragStartShape);
       if(d.type==='polygon'&&d.points)d.points.forEach(pt=>{pt.x+=dx;pt.y+=dy;});
       else if(d.type==='offside'){
-        // Offside line: only move vertically, keep x spanning full width
-        d.start.y+=dy; d.end.y+=dy;
-        d.start.x=0; d.end.x=1280;
+        // Offside line: only move horizontally, keep y spanning full height
+        d.start.x+=dx; d.end.x+=dx;
+        d.start.y=0; d.end.y=720;
       }
       else{if(d.start){d.start.x+=dx;d.start.y+=dy;}if(d.end){d.end.x+=dx;d.end.y+=dy;}if('x' in d){d.x+=dx;d.y+=dy;}}
       d.anchors=undefined; redraw(); return;
@@ -1711,11 +1711,12 @@ function addRing(p){
 }
 
 function addOffside(p){
-  S.drawings.push({type:'offside',start:{x:0,y:p.y},end:{x:1280,y:p.y},
+  // Offside line = VERTICAL line at clicked X position (across pitch width)
+  S.drawings.push({type:'offside',start:{x:p.x,y:0},end:{x:p.x,y:720},
     label:'Offside',
     color:S.drawColor,size:S.drawSize,opacity:S.drawOpacity,eid:S.selEvent?.id||null});
   redraw();scheduleSave();
-  notify('Offside line placed — drag up/down to reposition','#FFEA00');
+  notify('Offside line placed — drag left/right to reposition','#FFEA00');
 }
 
 function addText(p){
@@ -2115,65 +2116,42 @@ function drawShape(ctx, d){
     }
     case 'offside': {
       if(!d.start||!d.end) break;
-      const y = d.start.y;
-      const col = d.color || '#FFEA00';
+      const x = d.start.x; // vertical line at this X
+      const col = d.color || '#58a6ff';
       const op = d.opacity ?? 1;
 
-      // ── Main line — solid bold ────────────────────────────────
-      ctx.lineWidth = 3.5;
+      // ── Glow behind line ──────────────────────────────────────
+      ctx.globalAlpha = op * 0.20;
+      ctx.lineWidth = 16;
       ctx.strokeStyle = col;
-      ctx.globalAlpha = op;
-      ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(1280, y); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, 720); ctx.stroke();
 
-      // ── Subtle glow behind line ───────────────────────────────
-      ctx.globalAlpha = op * 0.18;
-      ctx.lineWidth = 14;
+      // ── Main line — solid bold vertical ──────────────────────
+      ctx.globalAlpha = op;
+      ctx.lineWidth = 3;
       ctx.strokeStyle = col;
-      ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(1280, y); ctx.stroke();
-      ctx.globalAlpha = op;
+      ctx.setLineDash([]);
+      ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, 720); ctx.stroke();
 
-      // ── Flag markers every ~200px ─────────────────────────────
-      // Small vertical flag posts like real offside flags
-      const flagSpacing = 200;
-      const flagH = 18; // height of flag staff above line
-      ctx.lineWidth = 2;
-      ctx.strokeStyle = col;
-      for(let fx = flagSpacing/2; fx < 1280; fx += flagSpacing){
-        // Staff
-        ctx.beginPath(); ctx.moveTo(fx, y); ctx.lineTo(fx, y - flagH); ctx.stroke();
-        // Flag (small filled triangle)
-        ctx.beginPath();
-        ctx.moveTo(fx, y - flagH);
-        ctx.lineTo(fx + 10, y - flagH + 5);
-        ctx.lineTo(fx, y - flagH + 10);
-        ctx.closePath();
-        ctx.fillStyle = col;
-        ctx.globalAlpha = op;
-        ctx.fill();
-      }
-
-      // ── Label pill on the left ────────────────────────────────
-      ctx.globalAlpha = op;
+      // ── Label pill at top ─────────────────────────────────────
       const lbl = d.label || 'Offside';
       ctx.font = '700 11px DM Sans,sans-serif';
       ctx.textBaseline = 'middle';
       const tw = ctx.measureText(lbl).width;
       const pw = tw + 12, ph = 18;
-      // Dark pill
       ctx.fillStyle = 'rgba(8,12,20,0.88)';
       ctx.beginPath();
-      ctx.roundRect(8, y - ph/2, pw, ph, 4);
+      ctx.roundRect(x - pw/2, 8, pw, ph, 4);
       ctx.fill();
-      // Colored border
       ctx.strokeStyle = col; ctx.lineWidth = 1.5;
       ctx.beginPath();
-      ctx.roundRect(8, y - ph/2, pw, ph, 4);
+      ctx.roundRect(x - pw/2, 8, pw, ph, 4);
       ctx.stroke();
-      // Text
       ctx.fillStyle = col;
-      ctx.textAlign = 'left';
-      ctx.fillText(lbl, 14, y);
+      ctx.textAlign = 'center';
+      ctx.fillText(lbl, x, 8 + ph/2);
       ctx.textBaseline = 'alphabetic';
+      ctx.textAlign = 'left';
       break;
     }
   }
