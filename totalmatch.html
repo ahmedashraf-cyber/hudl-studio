@@ -958,7 +958,7 @@ function seekTo(t){
   if(!S.loaded)return;
   $('tm-video').currentTime=Math.max(0,Math.min(S.dur,t));
   updateTC(); checkIso();
-  if(!S.playing) redraw(); // only redraw manually when paused; RAF loop handles playing
+  if(!S.playing){ updateTrackerBoxesFromData(); redraw(); } // sync boxes from data on scrub too
 }
 function stepFrame(d){ seekTo(($('tm-video').currentTime||0)+d*(1/25)); }
 function updateTC(){
@@ -1044,12 +1044,68 @@ function tCenter(tr){
 }
 
 // Resolve all anchors on a drawing — mutates start/end/points to live tracker positions
+// ── Interpolate tracker box from recorded trackData at time t ────
+// Returns a synthetic box {x,y,w,h} or null if no data near t.
+function getBoxAtTime(trackerId, t){
+  const frames=S.trackData[trackerId];
+  if(!frames||!frames.length) return null;
+  // Binary-search for the nearest frame pair
+  let lo=0, hi=frames.length-1;
+  while(lo<hi){
+    const mid=(lo+hi)>>1;
+    if(frames[mid].t<t) lo=mid+1; else hi=mid;
+  }
+  const f1=frames[lo];
+  if(!f1) return null;
+  if(lo===0||Math.abs(f1.t-t)<0.001) return {x:f1.x,y:f1.y,w:f1.w,h:f1.h};
+  const f0=frames[lo-1];
+  // Linear interpolation between f0 and f1
+  const span=f1.t-f0.t;
+  if(span<=0) return {x:f1.x,y:f1.y,w:f1.w,h:f1.h};
+  const alpha=(t-f0.t)/span;
+  return {
+    x:f0.x+(f1.x-f0.x)*alpha,
+    y:f0.y+(f1.y-f0.y)*alpha,
+    w:f0.w+(f1.w-f0.w)*alpha,
+    h:f0.h+(f1.h-f0.h)*alpha
+  };
+}
+
+// ── Sync all tracker tr.box from recorded trackData at current time ─
+// Called every frame in the RAF loop so SVG overlay & resolveAnchors
+// always have the freshest position even when AI is disabled / slow.
+function updateTrackerBoxesFromData(){
+  const t=($('tm-video')||{}).currentTime||0;
+  S.trackers.forEach(tr=>{
+    const box=getBoxAtTime(tr.id,t);
+    if(box){
+      // Smooth blend: if AI is also running, let it dominate; else use data
+      if(!S.aiEnabled||!tr.box){
+        tr.box=box;
+        tr.lost=false;
+      } else {
+        // Gentle blend toward data position (prevents jumpy AI vs data conflict)
+        const sm=0.25;
+        tr.box.x=tr.box.x*(1-sm)+box.x*sm;
+        tr.box.y=tr.box.y*(1-sm)+box.y*sm;
+        tr.box.w=tr.box.w*(1-sm)+box.w*sm;
+        tr.box.h=tr.box.h*(1-sm)+box.h*sm;
+      }
+    }
+  });
+}
+
 function resolveAnchors(d){
   if(!d.anchors||!d.anchors.length) return;
+  const t=($('tm-video')||{}).currentTime||0;
   d.anchors.forEach(a=>{
     const tr=S.trackers.find(t=>t.id===a.trackerId);
-    if(!tr||!tr.box) return;
-    const cx=tr.box.x+tr.box.w/2, cy=tr.box.y+tr.box.h/2;
+    if(!tr) return;
+    // Prefer live tr.box (set by AI or updateTrackerBoxesFromData),
+    // fall back to direct trackData interpolation
+    const box=tr.box||getBoxAtTime(a.trackerId,t);
+    if(!box) return;
+    const cx=box.x+box.w/2, cy=box.y+box.h/2;
     const px=cx+(a.ox||0), py=cy+(a.oy||0);
     if(a.role==='start'&&d.start){d.start.x=px;d.start.y=py;}
     else if(a.role==='end'&&d.end){d.end.x=px;d.end.y=py;}
@@ -1732,6 +1788,9 @@ function startDrawLoop(){
   if(_rafId) return; // already running
   function loop(){
     if(!S.playing){ _rafId=null; return; } // stop when paused
+    // Sync tracker boxes from recorded trackData every frame so
+    // resolveAnchors() always has fresh positions.
+    updateTrackerBoxesFromData();
     redraw();
     _rafId = requestAnimationFrame(loop);
   }
