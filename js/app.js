@@ -81,7 +81,16 @@ async function autoSave() {
   try {
     await saveProjectState(S.currentProject.id, {
       cut: {
-        clips: S.cut.clips,
+        // Strip runtime-only properties that are too large for Firestore (1MB limit):
+        // _imgData = base64 frame-hold image (can be 100-500KB per clip)
+        // _img = Image element reference (not serializable)
+        clips: S.cut.clips.map(c => {
+          if(c._imgData || c._img) {
+            const {_imgData, _img, ...rest} = c;
+            return rest;
+          }
+          return c;
+        }),
         effects: S.cut.effects,
         videoTracks: S.cut.videoTracks,
         audioTracks: S.cut.audioTracks,
@@ -644,7 +653,10 @@ window.doSave = async function() {
   try {
     await saveProjectState(S.currentProject.id, {
       cut: {
-        clips: S.cut.clips,
+        clips: S.cut.clips.map(c => {
+          if(c._imgData || c._img) { const {_imgData, _img, ...rest} = c; return rest; }
+          return c;
+        }),
         effects: S.cut.effects,
         videoTracks: S.cut.videoTracks,
         audioTracks: S.cut.audioTracks,
