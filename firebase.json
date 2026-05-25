@@ -10,6 +10,10 @@
     ],
     "rewrites": [
       {
+        "source": "/totalmatch.html",
+        "destination": "/totalmatch.html"
+      },
+      {
         "source": "**",
         "destination": "/index.html"
       }
@@ -64,6 +68,19 @@
           {
             "key": "Cache-Control",
             "value": "no-cache, no-store, must-revalidate, max-age=0"
+          }
+        ]
+      },
+      {
+        "source": "/totalmatch.html",
+        "headers": [
+          {
+            "key": "Cache-Control",
+            "value": "no-cache, no-store, must-revalidate, max-age=0"
+          },
+          {
+            "key": "Pragma",
+            "value": "no-cache"
           }
         ]
       }
