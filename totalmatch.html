@@ -917,6 +917,7 @@ html,body{width:100%;height:100%;overflow:hidden;font-family:'DM Sans',sans-seri
         <!-- ─ Tools ─ -->
         <div id="tac-tools" style="display:flex;flex-wrap:wrap;gap:3px;padding:6px 8px;border-top:0.5px solid rgba(255,255,255,0.06);flex-shrink:0;background:#0a0c10;">
           <button class="tac-tool on" data-tool="select" onclick="tacSetTool('select')" title="Select">✦ Select</button>
+          <button class="tac-tool" data-tool="swap" onclick="tacSetTool('swap')" title="Swap two players — click player A then player B">⇄ Swap</button>
           <button class="tac-tool" data-tool="home" onclick="tacSetTool('home')" title="Add home player">● Home</button>
           <button class="tac-tool" data-tool="away" onclick="tacSetTool('away')" title="Add away player">○ Away</button>
           <button class="tac-tool" data-tool="ball" onclick="tacSetTool('ball')" title="Add ball">⬤ Ball</button>
@@ -928,6 +929,10 @@ html,body{width:100%;height:100%;overflow:hidden;font-family:'DM Sans',sans-seri
         <!-- ─ Action buttons ─ -->
         <div style="display:flex;flex-wrap:wrap;gap:4px;padding:5px 8px;border-top:0.5px solid rgba(255,255,255,0.06);flex-shrink:0;background:#0a0c10;">
           <button class="tm-add-btn" onclick="tacFormationPanel()" style="font-size:9px;padding:3px 7px;">⚽ Formation</button>
+          <button class="tm-add-btn" onclick="tacCompressH()" title="Compress formation horizontally" style="font-size:9px;padding:3px 7px;">↔ Narrow</button>
+          <button class="tm-add-btn" onclick="tacExpandH()" title="Expand formation horizontally" style="font-size:9px;padding:3px 7px;">↔ Wide</button>
+          <button class="tm-add-btn" onclick="tacCompressV()" title="Compress formation vertically" style="font-size:9px;padding:3px 7px;">↕ Compact</button>
+          <button class="tm-add-btn" onclick="tacExpandV()" title="Expand formation vertically" style="font-size:9px;padding:3px 7px;">↕ Spread</button>
           <button class="tm-add-btn" onclick="tacVoronoi()" style="font-size:9px;padding:3px 7px;">⬡ Voronoi</button>
           <button class="tm-add-btn" id="tac-curve-btn" onclick="tacToggleCurveMode()" style="font-size:9px;padding:3px 7px;" title="Toggle curve edit mode — drag control points to curve player paths">⌒ Curves</button>
           <button class="tm-add-btn" onclick="tacToggleOrientation()" style="font-size:9px;padding:3px 7px;" id="tac-orient-btn">↕ Vertical</button>
@@ -4585,6 +4590,10 @@ const _TAC = {
   _curveMode: false,   // when true: show all control points as draggable handles
   _curveDragKey: null, // key of control point being dragged
 
+  // ── Swap state ────────────────────────────────────────────────
+  // Swap tool: click player A → stored here, click player B → swap positions
+  _swapFirst: null,    // {id, playerRef} — first player selected for swap
+
   _curveKey(fromIdx, playerIdx){ return this.curScene+'_'+fromIdx+'_'+playerIdx; },
 
   // Quadratic Bézier at t: B(t) = (1-t)²P0 + 2(1-t)t·CP + t²P1
@@ -4961,10 +4970,17 @@ const _TAC = {
     this.frame.players.forEach(p=>{
       const x=this.px(p.x,W), y=this.py(p.y,H);
       const r=W*0.026, sel=(p.id===this.selId);
-      // Selection ring
-      if(sel){
+      // Selection ring — yellow for selected, orange pulse for swap-first
+      if(sel || (this.tool==='swap' && this._swapFirst?.id===p.id)){
         ctx.beginPath(); ctx.arc(x,y,r+5,0,Math.PI*2);
-        ctx.strokeStyle='#FFEA00'; ctx.lineWidth=2; ctx.stroke();
+        ctx.strokeStyle = (this.tool==='swap' && this._swapFirst?.id===p.id)
+          ? '#E8590C' : '#FFEA00';
+        ctx.lineWidth=2.5; ctx.stroke();
+        // Pulsing outer ring for swap first-pick
+        if(this.tool==='swap' && this._swapFirst?.id===p.id){
+          ctx.beginPath(); ctx.arc(x,y,r+9,0,Math.PI*2);
+          ctx.strokeStyle='rgba(232,89,12,0.35)'; ctx.lineWidth=1.5; ctx.stroke();
+        }
       }
       // Body
       ctx.beginPath(); ctx.arc(x,y,r,0,Math.PI*2);
@@ -5173,6 +5189,36 @@ const _TAC = {
       const p=this._hitPlayer(x,y,W,H); if(p){ this._removeById(p.id); this._draw(); return; }
       const b=this._hitBall(x,y,W,H);  if(b){ this._removeById(b.id); this._draw(); return; }
       return;
+    }
+
+    if(this.tool==='swap'){
+      const hit=this._hitPlayer(x,y,W,H);
+      if(!hit){ this._swapFirst=null; this._draw(); return; }
+
+      if(!this._swapFirst){
+        // First click — store player A, highlight it
+        this._swapFirst={id:hit.id};
+        this.selId=hit.id;
+        notify('Now click the second player to swap positions','#FFEA00');
+        this._draw(); return;
+      }
+
+      // Second click — perform the swap
+      const pA=this.frame.players.find(p=>p.id===this._swapFirst.id);
+      const pB=hit;
+
+      if(pA && pB && pA.id!==pB.id){
+        // Swap x,y positions only — names/numbers stay
+        const tmp={x:pA.x, y:pA.y};
+        pA.x=pB.x; pA.y=pB.y;
+        pB.x=tmp.x; pB.y=tmp.y;
+        notify('Players swapped!','#30D158');
+        this.save();
+      }
+
+      this._swapFirst=null;
+      this.selId=null;
+      this._draw(); return;
     }
     if(this.tool==='home'||this.tool==='away'){
       const team=this.tool;
@@ -5587,7 +5633,9 @@ function tacNextFrame(){ _TAC.nextFrame(); }
 function tacTogglePlay(){ _TAC.togglePlay(); }
 function tacSetTool(t){
   _TAC.tool=t; _TAC.drawPts=[];
+  _TAC._swapFirst=null; // clear pending swap when changing tools
   document.querySelectorAll('.tac-tool').forEach(b=>b.classList.toggle('on',b.dataset.tool===t));
+  if(t==='swap') notify('Click any player to select for swap, then click another to swap them','#FFEA00');
 }
 function tacFormationPanel(){
   const p=document.getElementById('tac-form-panel');
@@ -5603,6 +5651,31 @@ function tacClearScene(){ _TAC.clearScene(); }
 function tacUpdateSelected(){ _TAC.updateSelected(); }
 function tacDeleteSelected(){ _TAC.deleteSelected(); }
 function tacToggleCurveMode(){ _TAC.toggleCurveMode(); }
+
+// ── Formation compress/expand ────────────────────────────────────
+// These scale all players of both teams relative to their team centroid.
+// Horizontal scale changes x spread. Vertical scale changes y spread.
+// Step size: 5% per click — small enough to be precise.
+function _tacScaleFormation(sx, sy){
+  if(!_TAC.frame) return;
+  // Scale all players around overall centroid
+  const players = _TAC.frame.players;
+  if(!players.length) return;
+  const cx = players.reduce((s,p)=>s+p.x,0)/players.length;
+  const cy = players.reduce((s,p)=>s+p.y,0)/players.length;
+  players.forEach(p=>{
+    p.x = cx + (p.x-cx)*sx;
+    p.y = cy + (p.y-cy)*sy;
+    // Clamp to pitch
+    p.x = Math.max(0.04, Math.min(0.96, p.x));
+    p.y = Math.max(0.04, Math.min(0.96, p.y));
+  });
+  _TAC._draw(); _TAC.save();
+}
+function tacCompressH(){ _tacScaleFormation(0.88, 1.0); notify('Formation narrowed','#58a6ff'); }
+function tacExpandH(){   _tacScaleFormation(1.12, 1.0); notify('Formation widened','#58a6ff'); }
+function tacCompressV(){ _tacScaleFormation(1.0, 0.88); notify('Formation compacted','#58a6ff'); }
+function tacExpandV(){   _tacScaleFormation(1.0, 1.12); notify('Formation spread','#58a6ff'); }
 
 // ── NAVIGATION ───────────────────────────────────────────────────
 function goBack(){ window.location.href='/'; }
