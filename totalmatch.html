@@ -653,7 +653,8 @@ html,body{width:100%;height:100%;overflow:hidden;font-family:'DM Sans',sans-seri
           </div>
           <!-- Draw props bar -->
           <div id="tm-draw-props" class="gone">
-            <span class="dp-lbl">Color</span>
+            <div id="dp-edit-mode" style="display:none;font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:#E8590C;white-space:nowrap;margin-right:2px;">✎ Editing shape</div>
+            <span class="dp-lbl" id="dp-color-lbl">Color</span>
             <div class="dp-colors" id="dp-colors">
               <div class="dp-col on" style="background:#FFEA00" data-c="#FFEA00" onclick="setColor('#FFEA00',this)"></div>
               <div class="dp-col" style="background:#E8590C" data-c="#E8590C" onclick="setColor('#E8590C',this)"></div>
@@ -1134,24 +1135,100 @@ function setTool(name){
   const btn=$('tool-'+name); if(btn) btn.classList.add('on');
   const isDraw=DRAW_TOOLS.includes(name);
   const isSelect=(name==='select'||name==='erase');
-  // Canvas gets events for draw tools AND select/erase
-  // SVG (tracker boxes) yields to canvas when drawing or selecting shapes
   const svg=$('tm-trackers-svg');
   if(svg) svg.style.pointerEvents = (isDraw||isSelect) ? 'none' : 'all';
   const cvs=$('tm-canvas');
   if(isDraw||isSelect||TRACK_TOOLS.includes(name)){ cvs.classList.add('draw'); }
   else { cvs.classList.remove('draw'); }
-  $('tm-draw-props').classList.toggle('gone',!isDraw);
+  // Show props bar for draw tools; hide when switching away from select
+  if(isDraw) showPropsForDrawing();
+  else if(!isSelect) hideProps();
   redraw();
+}
+
+// ── PROPS BAR — drives both new-shape defaults AND selected-shape editing ──
+
+function showPropsForDrawing(){
+  // Drawing mode: show bar with current defaults, no edit-mode indicator
+  $('tm-draw-props').classList.remove('gone');
+  $('dp-edit-mode').style.display='none';
+  _syncSlidersToDraw();
+}
+
+function showPropsForShape(d){
+  // Edit mode: show bar pre-filled with the selected shape's values
+  $('tm-draw-props').classList.remove('gone');
+  $('dp-edit-mode').style.display='block';
+  // Sync color
+  const col=d.color||S.drawColor;
+  document.querySelectorAll('.dp-col').forEach(el=>{
+    el.classList.toggle('on', el.dataset.c===col);
+  });
+  const custom=$('dp-custom'); if(custom) custom.value=col;
+  // Sync size
+  const sz=$('dp-size'); if(sz){ sz.value=d.size||3; }
+  // Sync opacity
+  const op=$('dp-opacity'); if(op){ op.value=d.opacity??1; }
+}
+
+function hideProps(){
+  $('tm-draw-props').classList.add('gone');
+  $('dp-edit-mode').style.display='none';
+}
+
+function _syncSlidersToDraw(){
+  // Reset sliders to current draw defaults
+  document.querySelectorAll('.dp-col').forEach(el=>{
+    el.classList.toggle('on', el.dataset.c===S.drawColor);
+  });
+  const sz=$('dp-size'); if(sz) sz.value=S.drawSize;
+  const op=$('dp-opacity'); if(op) op.value=S.drawOpacity;
 }
 
 // ── DRAW COLOR ────────────────────────────────────────────────────
 function setColor(c,el){
-  S.drawColor=c;
   document.querySelectorAll('.dp-col').forEach(d=>d.classList.remove('on'));
-  if(el)el.classList.add('on');
+  if(el) el.classList.add('on');
+  const custom=$('dp-custom'); if(custom&&!el) custom.value=c;
+
+  // If a shape is selected in edit mode — apply to it
+  if(S.selDrawIdx>=0 && S.drawings[S.selDrawIdx] && $('dp-edit-mode').style.display!=='none'){
+    S.drawings[S.selDrawIdx].color=c;
+    redraw(); scheduleSave(); return;
+  }
+  // Otherwise update draw default
+  S.drawColor=c;
   scheduleSave();
 }
+
+// ── Wire up size + opacity sliders (were missing event listeners) ──
+document.addEventListener('DOMContentLoaded',()=>{}, false); // safety
+(function wireSliders(){
+  const szEl=$('dp-size');
+  const opEl=$('dp-opacity');
+  if(szEl){
+    szEl.addEventListener('input',()=>{
+      const v=+szEl.value;
+      if(S.selDrawIdx>=0&&S.drawings[S.selDrawIdx]&&$('dp-edit-mode').style.display!=='none'){
+        S.drawings[S.selDrawIdx].size=v;
+        redraw(); scheduleSave();
+      } else {
+        S.drawSize=v;
+      }
+    });
+  }
+  if(opEl){
+    opEl.addEventListener('input',()=>{
+      const v=+opEl.value;
+      if(S.selDrawIdx>=0&&S.drawings[S.selDrawIdx]&&$('dp-edit-mode').style.display!=='none'){
+        S.drawings[S.selDrawIdx].opacity=v;
+        redraw(); scheduleSave();
+      } else {
+        S.drawOpacity=v;
+      }
+    });
+  }
+})();
 
 // ── CANVAS COORDS ─────────────────────────────────────────────────
 function getP(e){
@@ -1494,7 +1571,10 @@ cvs.addEventListener('mousedown',e=>{
       S.dragStartMouse={...p};S.dragStartShape=snapShape(S.drawings[idx]);
       cvs.style.cursor='move';redraw();return;
     }
-    S.selDrawIdx=-1;S.dragState=null;redraw();return;
+    // Clicked empty space — deselect and hide edit props
+    S.selDrawIdx=-1;S.dragState=null;
+    if($('dp-edit-mode').style.display!=='none') hideProps();
+    redraw();return;
   }
 
   if(!DRAW_TOOLS.includes(S.tool))return;
@@ -1533,7 +1613,12 @@ cvs.addEventListener('mouseup',e=>{
       const cp=getCtrlPts({...d,...snap0})[S.dragPointIdx];
       if(cp){restoreShape(d,snap0);applyPtDrag(d,cp.role,p.x-S.dragStartMouse.x,p.y-S.dragStartMouse.y);}
     }
-    S.dragState=null;S.dragPointIdx=-1;cvs.style.cursor='default';redraw();scheduleSave();return;
+    S.dragState=null;S.dragPointIdx=-1;cvs.style.cursor='default';
+    // If a shape is still selected and props bar is in edit mode, keep it open
+    if(S.selDrawIdx>=0&&S.drawings[S.selDrawIdx]&&$('dp-edit-mode').style.display!=='none'){
+      showPropsForShape(S.drawings[S.selDrawIdx]);
+    }
+    redraw();scheduleSave();return;
   }
 
   if(S.assignMode==='box'&&S.isDrawing){
@@ -1567,7 +1652,20 @@ cvs.addEventListener('mouseup',e=>{
 
 cvs.addEventListener('contextmenu',e=>{
   e.preventDefault();
-  if(S.tool==='polygon'&&S.draftPts.length>2)finishPoly();
+  // Polygon: right-click finishes the polygon
+  if(S.tool==='polygon'&&S.draftPts.length>2){ finishPoly(); return; }
+
+  // ANY tool: right-click on a shape → select it and open props bar for editing
+  const p=getP(e);
+  const idx=hitTest(p);
+  if(idx>=0){
+    S.selDrawIdx=idx;
+    S.dragState=null;
+    setTool('select'); // switch to select so canvas gets events
+    showPropsForShape(S.drawings[idx]);
+    redraw();
+    notify('Right-click: editing shape — change color, size, opacity','#58a6ff');
+  }
 });
 
 // ── Drawing helper functions ──────────────────────────────────────
