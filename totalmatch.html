@@ -929,6 +929,7 @@ html,body{width:100%;height:100%;overflow:hidden;font-family:'DM Sans',sans-seri
         <div style="display:flex;flex-wrap:wrap;gap:4px;padding:5px 8px;border-top:0.5px solid rgba(255,255,255,0.06);flex-shrink:0;background:#0a0c10;">
           <button class="tm-add-btn" onclick="tacFormationPanel()" style="font-size:9px;padding:3px 7px;">⚽ Formation</button>
           <button class="tm-add-btn" onclick="tacVoronoi()" style="font-size:9px;padding:3px 7px;">⬡ Voronoi</button>
+          <button class="tm-add-btn" id="tac-curve-btn" onclick="tacToggleCurveMode()" style="font-size:9px;padding:3px 7px;" title="Toggle curve edit mode — drag control points to curve player paths">⌒ Curves</button>
           <button class="tm-add-btn" onclick="tacToggleOrientation()" style="font-size:9px;padding:3px 7px;" id="tac-orient-btn">↕ Vertical</button>
           <button class="tm-add-btn" onclick="tacExportPNG()" style="font-size:9px;padding:3px 7px;">↓ PNG</button>
           <button class="tm-add-btn" onclick="tacExportGIF()" style="font-size:9px;padding:3px 7px;">↓ GIF</button>
@@ -4476,6 +4477,7 @@ const _TAC = {
         this.scenes = d.scenes||[];
         this.homeColor = d.homeColor||'#E31837';
         this.awayColor = d.awayColor||'#1a3a8f';
+        if(d._curves) this._curves = d._curves;
         document.getElementById('tac-home-color').value = this.homeColor;
         document.getElementById('tac-away-color').value = this.awayColor;
       }
@@ -4491,6 +4493,7 @@ const _TAC = {
     try{ localStorage.setItem('tm_tac_v1', JSON.stringify({
       _uid: this._uid, scenes: this.scenes,
       homeColor: this.homeColor, awayColor: this.awayColor,
+      _curves: this._curves,
     })); }catch(e){}
   },
 
@@ -4574,6 +4577,21 @@ const _TAC = {
   _tweenTo_data: null,// target frame
   _tweenStart: 0,
   _tweenNextIdx: 0,
+
+  // ── Curve control points ──────────────────────────────────────
+  // Key: "sceneIdx_fromFrameIdx_playerArrayIdx"
+  // Value: {cpx, cpy} normalized 0-1 — the Bézier control point
+  _curves: {},
+  _curveMode: false,   // when true: show all control points as draggable handles
+  _curveDragKey: null, // key of control point being dragged
+
+  _curveKey(fromIdx, playerIdx){ return this.curScene+'_'+fromIdx+'_'+playerIdx; },
+
+  // Quadratic Bézier at t: B(t) = (1-t)²P0 + 2(1-t)t·CP + t²P1
+  _bezier(p0, cp, p1, t){
+    const mt=1-t;
+    return mt*mt*p0 + 2*mt*t*cp + t*t*p1;
+  },
 
   // Ease-in-out cubic: slow start, fast middle, slow end
   _ease(t){ return t<0.5 ? 4*t*t*t : 1-Math.pow(-2*t+2,3)/2; },
@@ -4660,37 +4678,86 @@ const _TAC = {
       if(!tp) return;
       const fx = this.px(fp.x, W), fy = this.py(fp.y, H);
       const tx2= this.px(tp.x, W), ty2= this.py(tp.y, H);
-      const cx2= this.px(this._lerp(fp.x, tp.x, t), W);
-      const cy2= this.py(this._lerp(fp.y, tp.y, t), H);
       const dist = Math.hypot(tx2-fx, ty2-fy);
       if(dist < 4) return; // no trail for stationary players
 
-      // Trail line from start → current position
-      ctx.save();
+      const key = this._curveKey(this.curFrame > 0 ? this.curFrame-1 : 0, i);
+      const cp  = this._curves[key];
+
+      // Current interpolated position — use Bézier if control point exists
+      let cx2, cy2;
+      if(cp){
+        cx2 = this.px(this._bezier(fp.x, cp.cpx, tp.x, t), W);
+        cy2 = this.py(this._bezier(fp.y, cp.cpy, tp.y, t), H);
+      } else {
+        cx2 = this.px(this._lerp(fp.x, tp.x, t), W);
+        cy2 = this.py(this._lerp(fp.y, tp.y, t), H);
+      }
+
       const col = fp.color || (fp.team==='home' ? this.homeColor : this.awayColor);
-      // Dashed motion trail
+      ctx.save();
+
+      // Full path preview (dashed arc from start → end via control point)
       ctx.strokeStyle = col;
-      ctx.lineWidth = 2;
-      ctx.globalAlpha = 0.35 * t; // fades in as player moves
-      ctx.setLineDash([4,5]);
-      ctx.beginPath(); ctx.moveTo(fx,fy); ctx.lineTo(cx2,cy2); ctx.stroke();
+      ctx.lineWidth = 1.8;
+      ctx.globalAlpha = 0.28;
+      ctx.setLineDash([4,6]);
+      ctx.beginPath();
+      if(cp){
+        const cpPx = this.px(cp.cpx, W), cpPy = this.py(cp.cpy, H);
+        ctx.moveTo(fx, fy);
+        ctx.quadraticCurveTo(cpPx, cpPy, tx2, ty2);
+      } else {
+        ctx.moveTo(fx, fy); ctx.lineTo(tx2, ty2);
+      }
+      ctx.stroke();
       ctx.setLineDash([]);
 
-      // Arrowhead at current position showing direction
-      if(t > 0.15){
-        const ang = Math.atan2(cy2-fy, cx2-fx);
-        const hl = 7;
-        ctx.globalAlpha = 0.55 * t;
+      // Animated trail: the portion of the path already traveled
+      ctx.globalAlpha = 0.50 * t;
+      ctx.lineWidth = 2.2;
+      ctx.beginPath();
+      if(cp){
+        // Draw partial Bézier up to current t using 20 segments
+        const cpPx=this.px(cp.cpx,W), cpPy=this.py(cp.cpy,H);
+        ctx.moveTo(fx, fy);
+        const steps = 20;
+        for(let s=1;s<=steps;s++){
+          const st=t*(s/steps);
+          const bx=this.px(this._bezier(fp.x,cp.cpx,tp.x,st),W);
+          const by=this.py(this._bezier(fp.y,cp.cpy,tp.y,st),H);
+          ctx.lineTo(bx, by);
+        }
+      } else {
+        ctx.moveTo(fx,fy); ctx.lineTo(cx2,cy2);
+      }
+      ctx.stroke();
+
+      // Direction arrowhead at current position
+      if(t > 0.1){
+        // Tangent direction at t on the Bézier curve
+        let tang_x, tang_y;
+        if(cp){
+          // Bézier tangent: B'(t) = 2(1-t)(CP-P0) + 2t(P1-CP)
+          const mt=1-t;
+          tang_x = 2*mt*(cp.cpx-fp.x) + 2*t*(tp.x-cp.cpx);
+          tang_y = 2*mt*(cp.cpy-fp.y) + 2*t*(tp.y-cp.cpy);
+        } else {
+          tang_x = tp.x-fp.x; tang_y = tp.y-fp.y;
+        }
+        const ang = Math.atan2(tang_y, tang_x);
+        const hl = 8;
+        ctx.globalAlpha = 0.75 * t;
         ctx.fillStyle = col;
         ctx.beginPath();
         ctx.moveTo(cx2, cy2);
-        ctx.lineTo(cx2 - hl*Math.cos(ang-Math.PI/6), cy2 - hl*Math.sin(ang-Math.PI/6));
-        ctx.lineTo(cx2 - hl*Math.cos(ang+Math.PI/6), cy2 - hl*Math.sin(ang+Math.PI/6));
+        ctx.lineTo(cx2-hl*Math.cos(ang-Math.PI/6), cy2-hl*Math.sin(ang-Math.PI/6));
+        ctx.lineTo(cx2-hl*Math.cos(ang+Math.PI/6), cy2-hl*Math.sin(ang+Math.PI/6));
         ctx.closePath(); ctx.fill();
       }
 
-      // Ghost of start position (fades out)
-      ctx.globalAlpha = (1-t) * 0.3;
+      // Ghost at start (fades out)
+      ctx.globalAlpha = (1-t) * 0.25;
       ctx.beginPath(); ctx.arc(fx, fy, W*0.026, 0, Math.PI*2);
       ctx.strokeStyle = col; ctx.lineWidth = 1.5; ctx.stroke();
       ctx.restore();
@@ -4711,8 +4778,15 @@ const _TAC = {
       const endX   = tp ? tp.x : fp.x;
       const endY   = tp ? tp.y : fp.y;
 
-      const ix = this.px(this._lerp(startX, endX, t), W);
-      const iy = this.py(this._lerp(startY, endY, t), H);
+      // Use Bézier if a curve control point exists for this player
+      const _ck = this._curveKey(this.curFrame > 0 ? this.curFrame-1 : 0, i);
+      const _cp = this._curves[_ck];
+      const ix = this.px(_cp
+        ? this._bezier(startX, _cp.cpx, endX, t)
+        : this._lerp(startX, endX, t), W);
+      const iy = this.py(_cp
+        ? this._bezier(startY, _cp.cpy, endY, t)
+        : this._lerp(startY, endY, t), H);
       const r  = W * 0.026;
       const p  = fp || tp;
 
@@ -4786,6 +4860,8 @@ const _TAC = {
     this._drawPlayers(ctx,W,H);
     this._drawBalls(ctx,W,H);
     if(this.distOn) this._drawDistances(ctx,W,H);
+    // Draw curve handles on top of everything in curve mode
+    if(this._curveMode) this._drawCurveHandles(ctx,W,H);
   },
 
   // Convert normalized [0-1] → pixel
@@ -5064,6 +5140,23 @@ const _TAC = {
     const W=this._canvas.width,H=this._canvas.height;
     const nx=this.nx(x,W),ny=this.ny(y,H);
 
+    // Curve mode: intercept clicks on control point handles first
+    if(this._curveMode){
+      const hit = this._hitCurveHandle(x,y,W,H);
+      if(hit){
+        this._curveDragKey = hit.key;
+        // Ensure control point exists in _curves
+        if(!this._curves[hit.key]){
+          const fromIdx=this.curFrame;
+          const toIdx=(fromIdx+1)%this.scene.frames.length;
+          const fp=this.scene.frames[fromIdx].players[parseInt(hit.key.split('_')[2])];
+          const tp=this.scene.frames[toIdx].players[parseInt(hit.key.split('_')[2])];
+          if(fp&&tp) this._curves[hit.key]={cpx:(fp.x+tp.x)/2,cpy:(fp.y+tp.y)/2};
+        }
+        return;
+      }
+    }
+
     if(this.tool==='select'){
       const p=this._hitPlayer(x,y,W,H)||this._hitBall(x,y,W,H);
       if(p){
@@ -5102,6 +5195,15 @@ const _TAC = {
     const {x,y}=this._canvasP(e);
     const W=this._canvas.width,H=this._canvas.height;
 
+    // Curve handle drag
+    if(this._curveDragKey){
+      this._curves[this._curveDragKey] = {
+        cpx: Math.max(0,Math.min(1,this.nx(x,W))),
+        cpy: Math.max(0,Math.min(1,this.ny(y,H))),
+      };
+      this._draw(); return;
+    }
+
     if(this.dragId){
       const obj=[...this.frame.players,...this.frame.balls].find(o=>o.id===this.dragId);
       if(obj){
@@ -5126,6 +5228,9 @@ const _TAC = {
     const {x,y}=this._canvasP(e);
     const W=this._canvas.width,H=this._canvas.height;
     const nx=this.nx(x,W),ny=this.ny(y,H);
+
+    // Release curve handle drag
+    if(this._curveDragKey){ this._curveDragKey=null; this.save(); return; }
 
     if(this.dragId){ this.dragId=null; this.save(); return; }
 
@@ -5359,6 +5464,122 @@ const _TAC = {
   },
 };
 
+  // ── CURVE MODE ─────────────────────────────────────────────────
+  // In curve mode:
+  //   - All existing player paths are shown with their control points
+  //   - Control points appear as small yellow diamond handles
+  //   - Dragging a control point bends that player's path
+  //   - Click empty pitch to exit drag; click curve btn to toggle mode
+
+  toggleCurveMode(){
+    this._curveMode = !this._curveMode;
+    this._curveDragKey = null;
+    const btn = document.getElementById('tac-curve-btn');
+    if(btn){
+      btn.style.background    = this._curveMode ? 'rgba(255,234,0,0.15)' : '';
+      btn.style.borderColor   = this._curveMode ? 'rgba(255,234,0,0.5)'  : '';
+      btn.style.color         = this._curveMode ? '#FFEA00'               : '';
+    }
+    this._draw();
+    notify(this._curveMode
+      ? 'Curve mode ON — drag the ◆ handles to bend player paths'
+      : 'Curve mode OFF', this._curveMode ? '#FFEA00' : '#8b949e');
+  },
+
+  // Draw all control point handles in curve mode (called at end of _draw)
+  _drawCurveHandles(ctx, W, H){
+    if(!this._curveMode || !this.scene || this.scene.frames.length < 2) return;
+    const fromIdx = this.curFrame;
+    const toIdx   = (fromIdx + 1) % this.scene.frames.length;
+    if(fromIdx === toIdx) return;
+    const fromPlayers = this.scene.frames[fromIdx].players || [];
+    const toPlayers   = this.scene.frames[toIdx].players   || [];
+
+    fromPlayers.forEach((fp, i) => {
+      const tp = toPlayers[i];
+      if(!tp) return;
+      const fx=this.px(fp.x,W), fy=this.py(fp.y,H);
+      const tx2=this.px(tp.x,W), ty2=this.py(tp.y,H);
+      const dist = Math.hypot(tx2-fx, ty2-fy);
+      if(dist < 8) return; // no handle for stationary players
+
+      const key = this._curveKey(fromIdx, i);
+      let cp = this._curves[key];
+
+      // If no control point set, default to midpoint
+      if(!cp){
+        cp = { cpx: (fp.x+tp.x)/2, cpy: (fp.y+tp.y)/2 };
+      }
+
+      const cpx = this.px(cp.cpx, W), cpy = this.py(cp.cpy, H);
+      const col = fp.color || (fp.team==='home' ? this.homeColor : this.awayColor);
+
+      ctx.save();
+
+      // Draw full curved path preview
+      ctx.strokeStyle = col;
+      ctx.lineWidth = 1.5;
+      ctx.globalAlpha = 0.45;
+      ctx.setLineDash([5,5]);
+      ctx.beginPath();
+      ctx.moveTo(fx, fy);
+      ctx.quadraticCurveTo(cpx, cpy, tx2, ty2);
+      ctx.stroke();
+      ctx.setLineDash([]);
+
+      // Thin guide lines from endpoints to control point
+      ctx.globalAlpha = 0.2;
+      ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(fx, fy); ctx.lineTo(cpx, cpy); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(tx2, ty2); ctx.lineTo(cpx, cpy); ctx.stroke();
+
+      // Control point diamond handle
+      const hSize = 7;
+      ctx.globalAlpha = 0.9;
+      ctx.fillStyle = '#FFEA00';
+      ctx.strokeStyle = 'rgba(0,0,0,0.6)';
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.moveTo(cpx,       cpy-hSize);
+      ctx.lineTo(cpx+hSize, cpy);
+      ctx.lineTo(cpx,       cpy+hSize);
+      ctx.lineTo(cpx-hSize, cpy);
+      ctx.closePath();
+      ctx.fill();
+      ctx.stroke();
+
+      ctx.restore();
+    });
+  },
+
+  // Hit test a control point handle — returns {key, cp} or null
+  _hitCurveHandle(px2, py2, W, H){
+    if(!this._curveMode || !this.scene || this.scene.frames.length < 2) return null;
+    const fromIdx = this.curFrame;
+    const toIdx   = (fromIdx+1) % this.scene.frames.length;
+    if(fromIdx===toIdx) return null;
+    const fromPlayers = this.scene.frames[fromIdx].players||[];
+    const toPlayers   = this.scene.frames[toIdx].players||[];
+    const hitR = 14;
+
+    for(let i=0;i<fromPlayers.length;i++){
+      const fp=fromPlayers[i], tp=toPlayers[i];
+      if(!fp||!tp) continue;
+      const key = this._curveKey(fromIdx, i);
+      let cp = this._curves[key] || {
+        cpx:(fp.x+tp.x)/2, cpy:(fp.y+tp.y)/2
+      };
+      const cpPx=this.px(cp.cpx,W), cpPy=this.py(cp.cpy,H);
+      if(Math.hypot(px2-cpPx, py2-cpPy) < hitR){
+        return {key, cp:{...cp}};
+      }
+    }
+    return null;
+  },
+
+// ── End Tactical Board Engine ─────────────────────────────────────
+};
+
 // ── Public wrappers (called from HTML onclick) ─────────────────────
 function tacAddScene(){ _TAC._newScene(); _TAC._renderScenes(); _TAC._renderFrameDots(); _TAC._draw(); _TAC.save(); }
 function tacAddFrame(){ _TAC.addFrame(); }
@@ -5382,11 +5603,7 @@ function tacExportGIF(){ _TAC.exportGIF(); }
 function tacClearScene(){ _TAC.clearScene(); }
 function tacUpdateSelected(){ _TAC.updateSelected(); }
 function tacDeleteSelected(){ _TAC.deleteSelected(); }
-
-// ── Init when tab is first opened ─────────────────────────────────
-// switchTab already handles _TAC.init() directly above
-
-// ── End Tactical Board Engine ─────────────────────────────────────
+function tacToggleCurveMode(){ _TAC.toggleCurveMode(); }
 
 // ── NAVIGATION ───────────────────────────────────────────────────
 function goBack(){ window.location.href='/'; }
