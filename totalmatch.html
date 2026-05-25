@@ -934,6 +934,8 @@ html,body{width:100%;height:100%;overflow:hidden;font-family:'DM Sans',sans-seri
           <button class="tm-add-btn" onclick="tacCompressV()" title="Compress formation vertically" style="font-size:9px;padding:3px 7px;">↕ Compact</button>
           <button class="tm-add-btn" onclick="tacExpandV()" title="Expand formation vertically" style="font-size:9px;padding:3px 7px;">↕ Spread</button>
           <button class="tm-add-btn" onclick="tacVoronoi()" style="font-size:9px;padding:3px 7px;">⬡ Voronoi</button>
+          <button class="tm-add-btn" id="tac-zones-btn" onclick="tacToggleZones()" style="font-size:9px;padding:3px 7px;" title="Show/hide horizontal thirds (def / mid / att)">▤ Thirds</button>
+          <button class="tm-add-btn" id="tac-lanes-btn" onclick="tacToggleLanes()" style="font-size:9px;padding:3px 7px;" title="Show/hide vertical channels (5 lanes)">⬝ Lanes</button>
           <button class="tm-add-btn" id="tac-curve-btn" onclick="tacToggleCurveMode()" style="font-size:9px;padding:3px 7px;" title="Toggle curve edit mode — drag control points to curve player paths">⌒ Curves</button>
           <button class="tm-add-btn" onclick="tacToggleOrientation()" style="font-size:9px;padding:3px 7px;" id="tac-orient-btn">↕ Vertical</button>
           <button class="tm-add-btn" onclick="tacExportPNG()" style="font-size:9px;padding:3px 7px;">↓ PNG</button>
@@ -4482,7 +4484,9 @@ const _TAC = {
         this.scenes = d.scenes||[];
         this.homeColor = d.homeColor||'#E31837';
         this.awayColor = d.awayColor||'#1a3a8f';
-        if(d._curves) this._curves = d._curves;
+        if(d._curves)  this._curves  = d._curves;
+        if(d.zonesOn)  this.zonesOn  = d.zonesOn;
+        if(d.lanesOn)  this.lanesOn  = d.lanesOn;
         document.getElementById('tac-home-color').value = this.homeColor;
         document.getElementById('tac-away-color').value = this.awayColor;
       }
@@ -4499,6 +4503,7 @@ const _TAC = {
       _uid: this._uid, scenes: this.scenes,
       homeColor: this.homeColor, awayColor: this.awayColor,
       _curves: this._curves,
+      zonesOn: this.zonesOn, lanesOn: this.lanesOn,
     })); }catch(e){}
   },
 
@@ -4591,8 +4596,13 @@ const _TAC = {
   _curveDragKey: null, // key of control point being dragged
 
   // ── Swap state ────────────────────────────────────────────────
-  // Swap tool: click player A → stored here, click player B → swap positions
-  _swapFirst: null,    // {id, playerRef} — first player selected for swap
+  _swapFirst: null,
+
+  // ── Field zones & lanes overlay ───────────────────────────────
+  zonesOn: false,   // horizontal thirds (def / mid / att)
+  lanesOn: false,   // vertical channels (5 lanes across pitch)
+  zoneOpacity: 0.13,
+  laneOpacity: 0.10,
 
   _curveKey(fromIdx, playerIdx){ return this.curScene+'_'+fromIdx+'_'+playerIdx; },
 
@@ -4889,6 +4899,111 @@ const _TAC = {
         ctx.fillRect(0, i*H/stripes, W, H/stripes);
       } else {
         ctx.fillRect(i*W/stripes, 0, W/stripes, H);
+      }
+    }
+
+    // ── Zones overlay (horizontal thirds) ────────────────────────
+    if(this.zonesOn){
+      const pd=0.04;
+      const ZL=pd*W, ZR=(1-pd)*W, ZT=pd*H, ZB=(1-pd)*H;
+      const fw=ZR-ZL, fh=ZB-ZT;
+      // 3 thirds: defensive (left/bottom), midfield, attacking (right/top)
+      const thirds=[
+        {color:'#E31837', label:'DEF'},
+        {color:'#d29922', label:'MID'},
+        {color:'#30D158', label:'ATT'},
+      ];
+      thirds.forEach((z,i)=>{
+        ctx.save();
+        ctx.globalAlpha=this.zoneOpacity;
+        ctx.fillStyle=z.color;
+        if(!this.vertical){
+          ctx.fillRect(ZL+i*(fw/3), ZT, fw/3, fh);
+        } else {
+          // Bottom=DEF, Mid=MID, Top=ATT in vertical layout
+          ctx.fillRect(ZL, ZB-((i+1)*fh/3), fw, fh/3);
+        }
+        ctx.restore();
+        // Zone border line
+        ctx.save();
+        ctx.globalAlpha=this.zoneOpacity*2.5;
+        ctx.strokeStyle=z.color;
+        ctx.lineWidth=1;
+        ctx.setLineDash([6,4]);
+        if(!this.vertical){
+          if(i>0){
+            ctx.beginPath();
+            ctx.moveTo(ZL+i*(fw/3), ZT);
+            ctx.lineTo(ZL+i*(fw/3), ZB);
+            ctx.stroke();
+          }
+        } else {
+          if(i>0){
+            ctx.beginPath();
+            ctx.moveTo(ZL, ZB-i*(fh/3));
+            ctx.lineTo(ZR, ZB-i*(fh/3));
+            ctx.stroke();
+          }
+        }
+        ctx.setLineDash([]);
+        ctx.restore();
+        // Zone label
+        ctx.save();
+        ctx.globalAlpha=this.zoneOpacity*3.5;
+        ctx.fillStyle=z.color;
+        ctx.font='700 9px DM Sans,sans-serif';
+        ctx.textAlign='center'; ctx.textBaseline='top';
+        if(!this.vertical){
+          ctx.fillText(z.label, ZL+(i+0.5)*(fw/3), ZT+4);
+        } else {
+          ctx.fillText(z.label, ZL+fw/2, ZB-(i+1)*(fh/3)+4);
+        }
+        ctx.restore();
+      });
+    }
+
+    // ── Lanes overlay (5 vertical channels) ───────────────────────
+    if(this.lanesOn){
+      const pd=0.04;
+      const ZL=pd*W, ZR=(1-pd)*W, ZT=pd*H, ZB=(1-pd)*H;
+      const fw=ZR-ZL, fh=ZB-ZT;
+      const N=5;
+      // Lane names: Left Wide, Left Half, Central, Right Half, Right Wide
+      const laneNames=['LW','LH','C','RH','RW'];
+      const laneColor='rgba(88,166,255,0.12)';
+      for(let i=0;i<N;i++){
+        ctx.save();
+        ctx.globalAlpha=this.laneOpacity*(i%2===0?1.3:0.7);
+        ctx.fillStyle='#58a6ff';
+        if(!this.vertical){
+          ctx.fillRect(ZL+i*(fw/N), ZT, fw/N, fh);
+        } else {
+          ctx.fillRect(ZL+i*(fw/N), ZT, fw/N, fh);
+        }
+        ctx.restore();
+        // Divider
+        if(i>0){
+          ctx.save();
+          ctx.globalAlpha=0.18;
+          ctx.strokeStyle='#58a6ff';
+          ctx.lineWidth=1;
+          ctx.setLineDash([3,5]);
+          if(!this.vertical){
+            ctx.beginPath(); ctx.moveTo(ZL+i*(fw/N),ZT); ctx.lineTo(ZL+i*(fw/N),ZB); ctx.stroke();
+          } else {
+            ctx.beginPath(); ctx.moveTo(ZL+i*(fw/N),ZT); ctx.lineTo(ZL+i*(fw/N),ZB); ctx.stroke();
+          }
+          ctx.setLineDash([]);
+          ctx.restore();
+        }
+        // Lane label
+        ctx.save();
+        ctx.globalAlpha=0.4;
+        ctx.fillStyle='#58a6ff';
+        ctx.font='700 8px DM Sans,sans-serif';
+        ctx.textAlign='center'; ctx.textBaseline='bottom';
+        ctx.fillText(laneNames[i], ZL+(i+0.5)*(fw/N), ZB-4);
+        ctx.restore();
       }
     }
 
@@ -5656,6 +5771,33 @@ function tacToggleCurveMode(){ _TAC.toggleCurveMode(); }
 // These scale all players of both teams relative to their team centroid.
 // Horizontal scale changes x spread. Vertical scale changes y spread.
 // Step size: 5% per click — small enough to be precise.
+// ── Field zones / lanes toggles ─────────────────────────────────
+function tacToggleZones(){
+  _TAC.zonesOn = !_TAC.zonesOn;
+  const btn=document.getElementById('tac-zones-btn');
+  if(btn){
+    btn.style.background  = _TAC.zonesOn ? 'rgba(227,24,55,0.15)' : '';
+    btn.style.borderColor = _TAC.zonesOn ? 'rgba(227,24,55,0.4)'  : '';
+    btn.style.color       = _TAC.zonesOn ? '#E31837'               : '';
+  }
+  _TAC._draw();
+  notify(_TAC.zonesOn ? 'Thirds overlay ON (DEF / MID / ATT)' : 'Thirds overlay OFF',
+    _TAC.zonesOn ? '#30D158' : '#8b949e');
+}
+
+function tacToggleLanes(){
+  _TAC.lanesOn = !_TAC.lanesOn;
+  const btn=document.getElementById('tac-lanes-btn');
+  if(btn){
+    btn.style.background  = _TAC.lanesOn ? 'rgba(88,166,255,0.15)' : '';
+    btn.style.borderColor = _TAC.lanesOn ? 'rgba(88,166,255,0.4)'  : '';
+    btn.style.color       = _TAC.lanesOn ? '#58a6ff'               : '';
+  }
+  _TAC._draw();
+  notify(_TAC.lanesOn ? 'Lanes overlay ON (LW / LH / C / RH / RW)' : 'Lanes overlay OFF',
+    _TAC.lanesOn ? '#30D158' : '#8b949e');
+}
+
 function _tacScaleFormation(sx, sy){
   if(!_TAC.frame) return;
   // Scale all players around overall centroid
