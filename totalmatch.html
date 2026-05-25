@@ -736,8 +736,15 @@ html,body{width:100%;height:100%;overflow:hidden;font-family:'DM Sans',sans-seri
           <span id="tm-map-sport" style="font-size:9px;color:rgba(255,255,255,.2);margin-left:5px;">Football</span>
           <span class="chevron">▲</span>
         </div>
-        <div id="tm-map-body">
+        <div id="tm-map-body" style="flex-direction:column;gap:6px;">
           <canvas id="tm-map-cvs" width="500" height="162"></canvas>
+          <div style="display:flex;align-items:center;gap:8px;padding:0 4px;">
+            <button class="tm-add-btn" id="tm-calib-btn" onclick="startCalibration()"
+              style="font-size:10px;padding:4px 10px;color:#58a6ff;border-color:rgba(88,166,255,0.35);background:rgba(88,166,255,0.07);">
+              ◈ Calibrate Perspective
+            </button>
+            <span id="tm-calib-status" style="font-size:10px;color:rgba(255,255,255,.3);">Not calibrated — rings use flat estimate</span>
+          </div>
         </div>
       </div>
     </div>
@@ -1743,10 +1750,19 @@ function drawSpaceBetweenPlayers(){
 // Video-space pixel → approximate meters (broadcast wide-angle rough estimate)
 // Pitch ~105m wide shown across ~1000px of 1280px canvas = ~9.5px/m
 const PX_PER_M = 9.5;
-function px2m(dx, dy){ return Math.sqrt(dx*dx + dy*dy) / PX_PER_M; }
+// px2m: accurate when calibrated, flat estimate fallback
+// Called with absolute pixel coords (x1,y1,x2,y2) or delta (dx,dy,0,0)
+function px2m(dx, dy, x1, y1, x2, y2){
+  // If called with full coords and homography available, use calibrated
+  if(x1!==undefined && y1!==undefined && x2!==undefined && y2!==undefined){
+    return px2mCalibrated(x1,y1,x2,y2);
+  }
+  // Delta-only call: use flat estimate
+  return Math.sqrt(dx*dx+dy*dy)/PX_PER_M;
+}
 
 function drawDistLabel(ctx, x1, y1, x2, y2, color){
-  const dist = px2m(x2-x1, y2-y1);
+  const dist = px2m(x2-x1, y2-y1, x1, y1, x2, y2);
   if(dist < 1) return;
   const mx = (x1+x2)/2, my = (y1+y2)/2;
   const label = dist.toFixed(1) + ' m';
@@ -1773,20 +1789,42 @@ function drawDistLabel(ctx, x1, y1, x2, y2, color){
 
 // ── Draw 3D ring (player halo) ────────────────────────────────────
 function drawRing(ctx, cx, cy, rx, col, a){
-  const ry = Math.max(1, rx * 0.38);
-  if(rx < 4 || ry < 2) return;
+  // Try perspective-correct ellipse from homography first
+  // rx here is the ring "radius" in pixels — convert to meters for projection
+  const radiusM = rx / PX_PER_M;
+  const proj = projectCircleToEllipse(cx, cy, radiusM);
+
+  let erx, ery, eangle;
+  if(proj && proj.rx > 3 && proj.ry > 1){
+    // Use projected ellipse
+    erx   = Math.max(proj.rx, 4);
+    ery   = Math.max(proj.ry, 2);
+    eangle= proj.angle;
+    // Draw at the projected center (may differ slightly from cx,cy due to lens)
+    cx = proj.cx; cy = proj.cy;
+  } else {
+    // Fallback: flat estimate with fixed aspect ratio
+    erx = Math.max(rx, 4);
+    ery = Math.max(rx * 0.35, 2);
+    eangle = 0;
+  }
+
+  if(erx < 4) return;
   ctx.save(); ctx.globalAlpha = a; ctx.lineCap = 'round';
+
   // Fill
-  ctx.beginPath(); ctx.ellipse(cx, cy, rx, ry, 0, 0, Math.PI*2);
-  ctx.fillStyle = hex2rgba(col, 0.2); ctx.fill();
-  // Outer ring
-  ctx.beginPath(); ctx.ellipse(cx, cy, rx, ry, 0, 0, Math.PI*2);
-  ctx.strokeStyle = col; ctx.lineWidth = Math.max(2, 2); ctx.stroke();
-  // Inner highlight
-  const irx = rx*0.82, iry = ry*0.82;
-  if(irx > 1 && iry > 1){
-    ctx.beginPath(); ctx.ellipse(cx, cy, irx, iry, 0, 0, Math.PI*2);
-    ctx.strokeStyle = 'rgba(255,255,255,0.45)'; ctx.lineWidth = 1; ctx.stroke();
+  ctx.beginPath(); ctx.ellipse(cx, cy, erx, ery, eangle, 0, Math.PI*2);
+  ctx.fillStyle = hex2rgba(col, 0.18); ctx.fill();
+
+  // Outer ring — solid
+  ctx.beginPath(); ctx.ellipse(cx, cy, erx, ery, eangle, 0, Math.PI*2);
+  ctx.strokeStyle = col; ctx.lineWidth = 2.5; ctx.stroke();
+
+  // Inner highlight ring
+  const irx = erx*0.80, iry = ery*0.80;
+  if(irx > 2 && iry > 1){
+    ctx.beginPath(); ctx.ellipse(cx, cy, irx, iry, eangle, 0, Math.PI*2);
+    ctx.strokeStyle = 'rgba(255,255,255,0.40)'; ctx.lineWidth = 1; ctx.stroke();
   }
   ctx.restore();
 }
@@ -3712,6 +3750,266 @@ function connectShapes(type){
 }
 
 // ── End new features ─────────────────────────────────────────────
+
+// ════════════════════════════════════════════════════════════════
+// HOMOGRAPHY ENGINE — Perspective-Correct Rings & Distances
+// ════════════════════════════════════════════════════════════════
+//
+// HOW IT WORKS:
+//   The camera sees the pitch at an angle. A circle on the pitch
+//   (like a ring under a player's feet) appears as a tilted ellipse
+//   in the video — wider when the player is near camera, narrower
+//   and more tilted when far away.
+//
+//   A Homography matrix H maps pitch coordinates (meters) → video
+//   pixels. Its inverse H_inv maps pixels → meters.
+//
+//   To draw a perspective-correct ring:
+//     1. Project the player's foot (pixels) → pitch coords (meters)
+//     2. Place a circle of radius R meters around those coords
+//     3. Sample points around that circle and project each one
+//        back through H → video pixels
+//     4. Draw the resulting ellipse on the canvas
+//
+//   FIFA standard pitch: 105m × 68m
+//   Canvas: 1280 × 720 pixels
+//
+//   4 calibration points map known pitch corners → video pixels.
+//   Gaussian elimination solves the 8-equation linear system for H.
+
+// ── State ─────────────────────────────────────────────────────────
+const _HG = {
+  // FIFA pitch corners in meters [TL, TR, BL, BR]
+  // User maps these to pixel coords by clicking on video
+  PITCH_PTS_M: [
+    [0,    0 ],   // top-left corner
+    [105,  0 ],   // top-right corner
+    [0,    68],   // bottom-left corner
+    [105,  68],   // bottom-right corner
+  ],
+  // Calibration pixel points (set by user clicks)
+  pixelPts: null,   // [[x,y], [x,y], [x,y], [x,y]]
+  H: null,          // 3x3 homography matrix (pitch_m → pixel)
+  H_inv: null,      // 3x3 inverse (pixel → pitch_m)
+  calibrating: false,
+  clickCount: 0,
+  _clicks: [],
+  // Calibration instructions per click
+  LABELS: [
+    'Click the TOP-LEFT corner of the pitch',
+    'Click the TOP-RIGHT corner of the pitch',
+    'Click the BOTTOM-LEFT corner of the pitch',
+    'Click the BOTTOM-RIGHT corner of the pitch',
+  ],
+};
+
+// ── Gaussian elimination — solves Ax=b, returns x ────────────────
+function _gaussianElim(A, b){
+  const n = b.length;
+  // Augmented matrix
+  const M = A.map((row,i) => [...row, b[i]]);
+  for(let col=0; col<n; col++){
+    // Find pivot
+    let maxRow=col;
+    for(let row=col+1;row<n;row++) if(Math.abs(M[row][col])>Math.abs(M[maxRow][col])) maxRow=row;
+    [M[col],M[maxRow]]=[M[maxRow],M[col]];
+    if(Math.abs(M[col][col])<1e-12) return null; // singular
+    for(let row=0;row<n;row++){
+      if(row===col) continue;
+      const f=M[row][col]/M[col][col];
+      for(let c=col;c<=n;c++) M[row][c]-=f*M[col][c];
+    }
+  }
+  return M.map((row,i)=>row[n]/row[i]);
+}
+
+// ── Compute 3×3 homography from 4 point correspondences ──────────
+// src: [[x,y],...] in pitch meters
+// dst: [[x,y],...] in video pixels
+function computeHomography(src, dst){
+  // Build 8×8 system (h8=1 normalization)
+  const A=[], b=[];
+  for(let i=0;i<4;i++){
+    const [sx,sy]=src[i], [dx,dy]=dst[i];
+    A.push([sx,sy,1, 0, 0,0, -dx*sx,-dx*sy]);  b.push(dx);
+    A.push([0, 0, 0, sx,sy,1, -dy*sx,-dy*sy]);  b.push(dy);
+  }
+  const h=_gaussianElim(A,b);
+  if(!h) return null;
+  return [
+    [h[0],h[1],h[2]],
+    [h[3],h[4],h[5]],
+    [h[6],h[7],1   ],
+  ];
+}
+
+// ── Invert a 3×3 matrix ───────────────────────────────────────────
+function invert3x3(m){
+  const [[a,b,c],[d,e,f],[g,h,k]]=m;
+  const det=a*(e*k-f*h)-b*(d*k-f*g)+c*(d*h-e*g);
+  if(Math.abs(det)<1e-12) return null;
+  return [
+    [(e*k-f*h)/det, (c*h-b*k)/det, (b*f-c*e)/det],
+    [(f*g-d*k)/det, (a*k-c*g)/det, (c*d-a*f)/det],
+    [(d*h-e*g)/det, (b*g-a*h)/det, (a*e-b*d)/det],
+  ];
+}
+
+// ── Apply 3×3 homography to a 2D point ───────────────────────────
+function applyH(H, x, y){
+  const w = H[2][0]*x + H[2][1]*y + H[2][2];
+  return [
+    (H[0][0]*x + H[0][1]*y + H[0][2]) / w,
+    (H[1][0]*x + H[1][1]*y + H[1][2]) / w,
+  ];
+}
+
+// ── Project a meter-radius circle through H → screen ellipse ─────
+// Returns {cx, cy, rx, ry, angle} for ctx.ellipse()
+function projectCircleToEllipse(footPixX, footPixY, radiusM){
+  if(!_HG.H_inv) return null;
+  // Convert foot pixel → pitch meters
+  const [mx, my] = applyH(_HG.H_inv, footPixX, footPixY);
+  // Sample 12 points around the circle in pitch space
+  const N = 12;
+  const screenPts = [];
+  for(let i=0;i<N;i++){
+    const ang = (i/N)*Math.PI*2;
+    const [sx,sy] = applyH(_HG.H, mx+Math.cos(ang)*radiusM, my+Math.sin(ang)*radiusM);
+    screenPts.push([sx,sy]);
+  }
+  // Fit ellipse: find center, then semi-axes via SVD approximation
+  const cx = screenPts.reduce((s,p)=>s+p[0],0)/N;
+  const cy = screenPts.reduce((s,p)=>s+p[1],0)/N;
+  // Covariance matrix
+  let sxx=0,sxy=0,syy=0;
+  screenPts.forEach(([sx,sy])=>{
+    const dx=sx-cx, dy=sy-cy;
+    sxx+=dx*dx; sxy+=dx*dy; syy+=dy*dy;
+  });
+  sxx/=N; sxy/=N; syy/=N;
+  // Eigenvalues
+  const tr=sxx+syy, det=sxx*syy-sxy*sxy;
+  const disc=Math.sqrt(Math.max(0,(tr/2)**2-det));
+  const l1=tr/2+disc, l2=tr/2-disc;
+  const angle = Math.atan2(2*sxy, sxx-syy)/2;
+  return {
+    cx, cy,
+    rx: Math.sqrt(Math.max(1,l1))*Math.sqrt(2),
+    ry: Math.sqrt(Math.max(0.5,l2))*Math.sqrt(2),
+    angle,
+  };
+}
+
+// ── Accurate pixel→meter distance using homography ────────────────
+function px2mCalibrated(x1,y1,x2,y2){
+  if(!_HG.H_inv){
+    // Fallback: flat estimate
+    return Math.sqrt((x2-x1)**2+(y2-y1)**2) / PX_PER_M;
+  }
+  const [mx1,my1]=applyH(_HG.H_inv,x1,y1);
+  const [mx2,my2]=applyH(_HG.H_inv,x2,y2);
+  return Math.sqrt((mx2-mx1)**2+(my2-my1)**2);
+}
+
+// ── Calibration UI flow ───────────────────────────────────────────
+function startCalibration(){
+  if(!S.loaded){ notify('Load a video first','#E8590C'); return; }
+  _HG.calibrating=true; _HG.clickCount=0; _HG._clicks=[];
+  // Show crosshair cursor on canvas, switch to a neutral tool
+  setTool('select');
+  // Override canvas click to capture calibration points
+  _HG._prevTool = S.tool;
+  document.getElementById('tm-canvas').style.cursor='crosshair';
+  $('tm-calib-status').textContent='Step 1/4: '+_HG.LABELS[0];
+  $('tm-calib-status').style.color='#58a6ff';
+  $('tm-calib-btn').textContent='✕ Cancel';
+  $('tm-calib-btn').onclick=cancelCalibration;
+  notify('Calibration: '+_HG.LABELS[0],'#58a6ff');
+}
+
+function cancelCalibration(){
+  _HG.calibrating=false; _HG.clickCount=0; _HG._clicks=[];
+  document.getElementById('tm-canvas').style.cursor='';
+  $('tm-calib-btn').textContent='◈ Calibrate Perspective';
+  $('tm-calib-btn').onclick=startCalibration;
+  const ok=!!_HG.H;
+  $('tm-calib-status').textContent=ok?'✓ Calibrated — perspective-correct rings active':'Not calibrated';
+  $('tm-calib-status').style.color=ok?'#30D158':'rgba(255,255,255,.3)';
+}
+
+function _calibrationClick(px, py){
+  if(!_HG.calibrating) return false;
+  _HG._clicks.push([px,py]);
+  _HG.clickCount++;
+  // Draw a crosshair marker on canvas to show the click
+  redraw();
+  _drawCalibMarkers();
+  if(_HG.clickCount < 4){
+    $('tm-calib-status').textContent=`Step ${_HG.clickCount+1}/4: `+_HG.LABELS[_HG.clickCount];
+    notify('Step '+(_HG.clickCount)+'/4 done. '+_HG.LABELS[_HG.clickCount],'#58a6ff');
+    return true;
+  }
+  // All 4 points collected — compute H
+  const H = computeHomography(_HG.PITCH_PTS_M, _HG._clicks);
+  if(!H){ notify('Calibration failed — try again with clearer corners','#E31837'); cancelCalibration(); return true; }
+  _HG.H = H;
+  _HG.H_inv = invert3x3(H);
+  _HG.pixelPts = [..._HG._clicks];
+  // Save to localStorage
+  try{ localStorage.setItem('tm_homography', JSON.stringify({H:_HG.H, H_inv:_HG.H_inv, pixelPts:_HG.pixelPts})); }catch(e){}
+  cancelCalibration();
+  $('tm-calib-status').textContent='✓ Calibrated — perspective-correct rings active';
+  $('tm-calib-status').style.color='#30D158';
+  notify('Calibration complete! Rings are now perspective-correct.','#30D158');
+  redraw();
+  return true;
+}
+
+function _drawCalibMarkers(){
+  const cvs=document.getElementById('tm-canvas');
+  const ctx=cvs.getContext('2d');
+  const labels=['TL','TR','BL','BR'];
+  const colors=['#58a6ff','#30D158','#FFEA00','#E8590C'];
+  _HG._clicks.forEach(([x,y],i)=>{
+    ctx.save();
+    ctx.strokeStyle=colors[i]; ctx.lineWidth=2;
+    ctx.beginPath(); ctx.moveTo(x-12,y); ctx.lineTo(x+12,y); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(x,y-12); ctx.lineTo(x,y+12); ctx.stroke();
+    ctx.beginPath(); ctx.arc(x,y,6,0,Math.PI*2); ctx.stroke();
+    ctx.fillStyle=colors[i]; ctx.font='bold 11px DM Sans,sans-serif';
+    ctx.fillText(labels[i],x+9,y-9);
+    ctx.restore();
+  });
+}
+
+// Restore saved calibration on page load
+(function loadSavedCalibration(){
+  try{
+    const raw=localStorage.getItem('tm_homography');
+    if(!raw) return;
+    const d=JSON.parse(raw);
+    if(d.H&&d.H_inv&&d.pixelPts){
+      _HG.H=d.H; _HG.H_inv=d.H_inv; _HG.pixelPts=d.pixelPts;
+      setTimeout(()=>{
+        if($('tm-calib-status')){
+          $('tm-calib-status').textContent='✓ Calibrated (restored)';
+          $('tm-calib-status').style.color='#30D158';
+        }
+      },500);
+    }
+  }catch(e){}
+})();
+
+// Hook calibration clicks into canvas mousedown BEFORE other handlers
+document.getElementById('tm-canvas').addEventListener('mousedown', e=>{
+  if(!_HG.calibrating) return;
+  e.stopImmediatePropagation();
+  const p=getP(e);
+  _calibrationClick(p.x,p.y);
+}, true); // capture phase — fires before other listeners
+
+// ── End Homography Engine ─────────────────────────────────────────
 
 // ── NAVIGATION ───────────────────────────────────────────────────
 function goBack(){ window.location.href='/'; }
