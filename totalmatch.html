@@ -940,8 +940,14 @@ function startCamera(){
 // ── PLAYBACK ──────────────────────────────────────────────────────
 function togglePlay(){
   if(!S.loaded)return; const v=$('tm-video');
-  if(v.paused){ v.play(); S.playing=true; $('tm-play-btn').textContent='⏸'; }
-  else { v.pause(); S.playing=false; $('tm-play-btn').textContent='▶'; }
+  if(v.paused){
+    v.play(); S.playing=true; $('tm-play-btn').textContent='⏸';
+    startDrawLoop(); // start RAF loop so drawings follow trackers
+  } else {
+    v.pause(); S.playing=false; $('tm-play-btn').textContent='▶';
+    stopDrawLoop();  // stop RAF loop when paused
+    redraw();        // one final redraw at paused position
+  }
 }
 function toggleMute(){ S.muted=!S.muted; $('tm-video').muted=S.muted; $('tm-mute-btn').textContent=S.muted?'🔇':'🔊'; }
 function setSpeed(s){
@@ -951,7 +957,8 @@ function setSpeed(s){
 function seekTo(t){
   if(!S.loaded)return;
   $('tm-video').currentTime=Math.max(0,Math.min(S.dur,t));
-  updateTC(); checkIso(); redraw();
+  updateTC(); checkIso();
+  if(!S.playing) redraw(); // only redraw manually when paused; RAF loop handles playing
 }
 function stepFrame(d){ seekTo(($('tm-video').currentTime||0)+d*(1/25)); }
 function updateTC(){
@@ -997,7 +1004,7 @@ document.addEventListener('keydown',e=>{
 
 // ── VIDEO EVENTS ──────────────────────────────────────────────────
 $('tm-video').addEventListener('timeupdate',()=>{ updateTC(); checkIso(); syncAI(); });
-$('tm-video').addEventListener('ended',()=>{ S.playing=false; $('tm-play-btn').textContent='▶'; });
+$('tm-video').addEventListener('ended',()=>{ S.playing=false; $('tm-play-btn').textContent='▶'; stopDrawLoop(); redraw(); });
 
 // ── TOOLS ─────────────────────────────────────────────────────────
 function setTool(name){
@@ -1688,18 +1695,50 @@ function redraw(extra){
     ctx.strokeRect(b.x1,b.y1,b.x2-b.x1,b.y2-b.y1); ctx.setLineDash([]); ctx.restore();
   }
 
-  // Snap ring — show when current tool is draw mode and mouse is near a tracker
-  if(S._mouseP && DRAW_TOOLS.includes(S.tool)){
-    drawSnapIndicator(ctx, S._mouseP.x, S._mouseP.y);
-  }
-
-  // Snap indicator — yellow ring near tracker when drawing
-  if(S._mouseP && (DRAW_TOOLS||[]).includes(S.tool)) drawSnapIndicator(ctx, S._mouseP.x, S._mouseP.y);
+  // Snap indicator — yellow ring near tracker when cursor is within snap radius
+  if(S._mouseP && DRAW_TOOLS.includes(S.tool)) drawSnapIndicator(ctx, S._mouseP.x, S._mouseP.y);
   // Draw selection handles for selected drawing
   if(S.selDrawIdx>=0 && S.drawings[S.selDrawIdx]) drawHandles(ctx, S.drawings[S.selDrawIdx]);
   if(extra) drawShape(ctx,extra);
   updateTrackerSVG();
   drawMap();
+}
+
+// ── UNDO / CLEAR ─────────────────────────────────────────────────
+function undoDraw(){
+  if(S.draftPts&&S.draftPts.length>0){
+    // Cancel current polygon draft first
+    S.draftPts=[]; S._draftAnchors=[];
+  } else if(S.drawings.length>0){
+    S.drawings.pop();
+    S.selDrawIdx=Math.min(S.selDrawIdx, S.drawings.length-1);
+  }
+  redraw(); scheduleSave();
+  notify('Undo','#d29922');
+}
+function clearDraw(){
+  if(!confirm('Clear all drawings?')) return;
+  S.drawings=[]; S.draftPts=[]; S._draftAnchors=[]; S.selDrawIdx=-1;
+  redraw(); scheduleSave();
+  notify('All drawings cleared');
+}
+
+// ── ANIMATION LOOP — makes drawings follow trackers during playback ─
+// requestAnimationFrame loop runs while video is playing.
+// It calls redraw() every frame so resolveAnchors() updates all
+// anchored drawings to the current tracker positions in real time.
+let _rafId = null;
+function startDrawLoop(){
+  if(_rafId) return; // already running
+  function loop(){
+    if(!S.playing){ _rafId=null; return; } // stop when paused
+    redraw();
+    _rafId = requestAnimationFrame(loop);
+  }
+  _rafId = requestAnimationFrame(loop);
+}
+function stopDrawLoop(){
+  if(_rafId){ cancelAnimationFrame(_rafId); _rafId=null; }
 }
 
 // ── TRACKER SVG OVERLAY ───────────────────────────────────────────
