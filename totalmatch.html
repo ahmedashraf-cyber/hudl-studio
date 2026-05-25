@@ -356,6 +356,33 @@ html,body{width:100%;height:100%;overflow:hidden;font-family:'DM Sans',sans-seri
   flex-shrink:0;
 }
 
+/* ── TACTICAL BOARD ─────────────────────────────────── */
+#tb-tactical{ background:#0d1117; }
+.tac-tool{
+  font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.04em;
+  padding:3px 7px;border-radius:4px;cursor:pointer;border:0.5px solid rgba(255,255,255,.1);
+  background:rgba(255,255,255,.04);color:rgba(255,255,255,.45);transition:all .12s;
+}
+.tac-tool.on{background:rgba(232,89,12,.15);border-color:rgba(232,89,12,.4);color:#E8590C;}
+.tac-tool:hover:not(.on){background:rgba(255,255,255,.08);color:rgba(255,255,255,.7);}
+.tac-form-btn{
+  font-size:9px;font-weight:700;padding:3px 7px;border-radius:4px;cursor:pointer;
+  border:0.5px solid rgba(255,255,255,.12);background:rgba(255,255,255,.05);
+  color:rgba(255,255,255,.5);transition:all .12s;
+}
+.tac-form-btn:hover{background:rgba(232,89,12,.12);border-color:rgba(232,89,12,.3);color:#E8590C;}
+.tac-frame-dot{
+  width:18px;height:8px;border-radius:3px;cursor:pointer;flex-shrink:0;
+  background:rgba(255,255,255,.12);border:1px solid transparent;transition:all .12s;
+}
+.tac-frame-dot.on{background:rgba(232,89,12,.5);border-color:#E8590C;}
+.tac-scene-btn{
+  font-size:9px;font-weight:700;padding:2px 8px;border-radius:4px;cursor:pointer;
+  border:0.5px solid rgba(255,255,255,.1);background:rgba(255,255,255,.04);
+  color:rgba(255,255,255,.4);white-space:nowrap;flex-shrink:0;
+}
+.tac-scene-btn.on{background:rgba(88,166,255,.12);border-color:rgba(88,166,255,.35);color:#58a6ff;}
+
 /* ── TRACKER TAB ────────────────────────────────────── */
 #tb-track{padding:0;}
 .tm-inner{padding:10px 12px;}
@@ -755,6 +782,7 @@ html,body{width:100%;height:100%;overflow:hidden;font-family:'DM Sans',sans-seri
         <div class="ptab on" data-t="track" onclick="switchTab('track')">Trackers</div>
         <div class="ptab" data-t="tags" onclick="switchTab('tags')">Tags</div>
         <div class="ptab" data-t="playlist" onclick="switchTab('playlist')">Playlist</div>
+        <div class="ptab" data-t="tactical" onclick="switchTab('tactical')" style="color:rgba(232,89,12,0.7);">Board</div>
       </div>
 
       <!-- TRACKERS TAB -->
@@ -845,6 +873,81 @@ html,body{width:100%;height:100%;overflow:hidden;font-family:'DM Sans',sans-seri
             <button class="tm-add-btn" id="tm-load-ai-btn" onclick="loadAI()" style="padding:5px 10px;font-size:10px;flex:1;margin-top:4px;margin-left:auto;">Load AI</button>
           </div>
           <div id="tm-ai-loaded" style="display:none;font-size:10px;color:#30D158;margin-top:4px;">✓ COCO-SSD ready — tracking active</div>
+        </div>
+      </div>
+
+      <!-- TACTICAL BOARD TAB -->
+      <div class="tb" id="tb-tactical" style="padding:0;flex-direction:column;overflow:hidden;">
+        <!-- ─ Scene bar ─ -->
+        <div id="tac-scene-bar" style="display:flex;align-items:center;gap:4px;padding:6px 8px;border-bottom:0.5px solid rgba(255,255,255,0.06);flex-shrink:0;background:#0a0c10;">
+          <span style="font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.6px;color:rgba(255,255,255,.25);margin-right:2px;">Scene</span>
+          <div id="tac-scenes" style="display:flex;gap:3px;flex:1;overflow-x:auto;"></div>
+          <button class="tm-add-btn" onclick="tacAddScene()" title="New scene" style="width:22px;height:22px;padding:0;font-size:14px;flex-shrink:0;">+</button>
+        </div>
+        <!-- ─ Canvas area ─ -->
+        <div id="tac-board-wrap" style="position:relative;flex:1;overflow:hidden;background:#0d1117;display:flex;align-items:center;justify-content:center;">
+          <canvas id="tac-canvas" style="display:block;cursor:crosshair;touch-action:none;"></canvas>
+        </div>
+        <!-- ─ Animation bar ─ -->
+        <div id="tac-anim-bar" style="display:flex;align-items:center;gap:5px;padding:5px 8px;border-top:0.5px solid rgba(255,255,255,0.06);flex-shrink:0;background:#0a0c10;">
+          <button id="tac-prev-frame" onclick="tacPrevFrame()" style="background:none;border:none;color:rgba(255,255,255,.5);cursor:pointer;font-size:14px;padding:2px 4px;">◀</button>
+          <button id="tac-play-btn" onclick="tacTogglePlay()" style="background:none;border:none;color:#E8590C;cursor:pointer;font-size:16px;padding:2px 4px;">▶</button>
+          <button id="tac-next-frame" onclick="tacNextFrame()" style="background:none;border:none;color:rgba(255,255,255,.5);cursor:pointer;font-size:14px;padding:2px 4px;">▶</button>
+          <div id="tac-frame-dots" style="display:flex;gap:3px;flex:1;overflow-x:auto;align-items:center;"></div>
+          <button onclick="tacAddFrame()" title="Add frame" style="background:rgba(232,89,12,.12);border:1px solid rgba(232,89,12,.3);color:#E8590C;border-radius:4px;font-size:10px;padding:2px 7px;cursor:pointer;white-space:nowrap;">+ Frame</button>
+        </div>
+        <!-- ─ Tools ─ -->
+        <div id="tac-tools" style="display:flex;flex-wrap:wrap;gap:3px;padding:6px 8px;border-top:0.5px solid rgba(255,255,255,0.06);flex-shrink:0;background:#0a0c10;">
+          <button class="tac-tool on" data-tool="select" onclick="tacSetTool('select')" title="Select">✦ Select</button>
+          <button class="tac-tool" data-tool="home" onclick="tacSetTool('home')" title="Add home player">● Home</button>
+          <button class="tac-tool" data-tool="away" onclick="tacSetTool('away')" title="Add away player">○ Away</button>
+          <button class="tac-tool" data-tool="ball" onclick="tacSetTool('ball')" title="Add ball">⬤ Ball</button>
+          <button class="tac-tool" data-tool="arrow" onclick="tacSetTool('arrow')" title="Draw arrow">→ Arrow</button>
+          <button class="tac-tool" data-tool="line" onclick="tacSetTool('line')" title="Draw line">— Line</button>
+          <button class="tac-tool" data-tool="zone" onclick="tacSetTool('zone')" title="Draw zone">□ Zone</button>
+          <button class="tac-tool" data-tool="erase" onclick="tacSetTool('erase')" title="Delete">✕ Delete</button>
+        </div>
+        <!-- ─ Action buttons ─ -->
+        <div style="display:flex;flex-wrap:wrap;gap:4px;padding:5px 8px;border-top:0.5px solid rgba(255,255,255,0.06);flex-shrink:0;background:#0a0c10;">
+          <button class="tm-add-btn" onclick="tacFormationPanel()" style="font-size:9px;padding:3px 7px;">⚽ Formation</button>
+          <button class="tm-add-btn" onclick="tacVoronoi()" style="font-size:9px;padding:3px 7px;">⬡ Voronoi</button>
+          <button class="tm-add-btn" onclick="tacToggleOrientation()" style="font-size:9px;padding:3px 7px;" id="tac-orient-btn">↕ Vertical</button>
+          <button class="tm-add-btn" onclick="tacExportPNG()" style="font-size:9px;padding:3px 7px;">↓ PNG</button>
+          <button class="tm-add-btn" onclick="tacExportGIF()" style="font-size:9px;padding:3px 7px;">↓ GIF</button>
+          <button class="tm-add-btn" onclick="tacClearScene()" style="font-size:9px;padding:3px 7px;color:rgba(232,89,12,.6);">✕ Clear</button>
+        </div>
+        <!-- ─ Formation panel (hidden by default) ─ -->
+        <div id="tac-form-panel" style="display:none;padding:7px 8px;border-top:0.5px solid rgba(255,255,255,0.06);background:#0a0c10;flex-shrink:0;">
+          <div style="font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.6px;color:rgba(255,255,255,.3);margin-bottom:5px;">Formation presets</div>
+          <div style="display:flex;flex-wrap:wrap;gap:3px;margin-bottom:6px;">
+            <button class="tac-form-btn" onclick="tacApplyFormation('home','4-4-2')">4-4-2</button>
+            <button class="tac-form-btn" onclick="tacApplyFormation('home','4-3-3')">4-3-3</button>
+            <button class="tac-form-btn" onclick="tacApplyFormation('home','3-5-2')">3-5-2</button>
+            <button class="tac-form-btn" onclick="tacApplyFormation('home','4-2-3-1')">4-2-3-1</button>
+            <button class="tac-form-btn" onclick="tacApplyFormation('home','5-3-2')">5-3-2</button>
+            <button class="tac-form-btn" onclick="tacApplyFormation('home','3-4-3')">3-4-3</button>
+          </div>
+          <div style="font-size:9px;color:rgba(255,255,255,.3);margin-bottom:3px;">Team colors</div>
+          <div style="display:flex;gap:5px;align-items:center;">
+            <label style="font-size:9px;color:rgba(255,255,255,.4);">Home</label>
+            <input type="color" id="tac-home-color" value="#E31837" onchange="tacSetTeamColor('home',this.value)" style="width:24px;height:20px;border:none;background:none;cursor:pointer;padding:0;">
+            <label style="font-size:9px;color:rgba(255,255,255,.4);">Away</label>
+            <input type="color" id="tac-away-color" value="#1a3a8f" onchange="tacSetTeamColor('away',this.value)" style="width:24px;height:20px;border:none;background:none;cursor:pointer;padding:0;">
+            <button class="tm-add-btn" onclick="$('tac-form-panel').style.display='none'" style="font-size:9px;padding:2px 6px;margin-left:auto;">Close</button>
+          </div>
+        </div>
+        <!-- ─ Selected player editor ─ -->
+        <div id="tac-player-editor" style="display:none;padding:6px 8px;border-top:0.5px solid rgba(255,255,255,0.06);background:#0a0c10;flex-shrink:0;">
+          <div style="font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.6px;color:rgba(255,255,255,.3);margin-bottom:5px;">Edit player</div>
+          <div style="display:flex;gap:5px;margin-bottom:4px;">
+            <input id="tac-p-num" type="text" placeholder="#" maxlength="3" oninput="tacUpdateSelected()" style="width:36px;padding:3px 5px;background:rgba(255,255,255,.06);border:0.5px solid rgba(255,255,255,.12);border-radius:4px;color:#fff;font-size:11px;text-align:center;">
+            <input id="tac-p-name" type="text" placeholder="Name" maxlength="14" oninput="tacUpdateSelected()" style="flex:1;padding:3px 6px;background:rgba(255,255,255,.06);border:0.5px solid rgba(255,255,255,.12);border-radius:4px;color:#fff;font-size:11px;">
+          </div>
+          <div style="display:flex;gap:5px;align-items:center;">
+            <label style="font-size:9px;color:rgba(255,255,255,.4);">Color</label>
+            <input type="color" id="tac-p-color" onchange="tacUpdateSelected()" style="width:24px;height:20px;border:none;background:none;cursor:pointer;padding:0;">
+            <button onclick="tacDeleteSelected()" style="margin-left:auto;background:rgba(227,24,55,.12);border:0.5px solid rgba(227,24,55,.3);color:#E31837;border-radius:4px;font-size:9px;padding:2px 7px;cursor:pointer;">Delete</button>
+          </div>
         </div>
       </div>
 
@@ -4286,6 +4389,780 @@ document.getElementById('tm-canvas').addEventListener('mousedown', e=>{
 }
 
 // ── End Occlusion Masking ─────────────────────────────────────────
+
+// ════════════════════════════════════════════════════════════════
+// TACTICAL BOARD ENGINE
+// ════════════════════════════════════════════════════════════════
+// Full tactical board: draggable players, formation presets,
+// multi-frame animation, Voronoi zones, distance labels,
+// PNG/GIF export. Horizontal + vertical pitch. Dark stripe style.
+//
+// DATA MODEL:
+//   _TAC.scenes[]        — array of scenes (each with frames)
+//   scene.frames[]       — array of frames
+//   frame.players[]      — [{id,team,x,y,num,name,color}]
+//   frame.balls[]        — [{id,x,y}]
+//   frame.drawings[]     — [{type,pts,color}]
+//
+// COORDINATE SYSTEM: 0-1 normalized (independent of canvas size)
+// Pitch: 105m × 68m (FIFA standard)
+
+const _TAC = {
+  // ── State ──────────────────────────────────────────────────────
+  scenes: [],
+  curScene: 0,
+  curFrame: 0,
+  tool: 'select',
+  vertical: false,
+  homeColor: '#E31837',
+  awayColor: '#1a3a8f',
+  voronoiOn: false,
+  distOn: true,
+  selId: null,       // selected object id
+  drawPts: [],       // in-progress arrow/line points
+  dragId: null,
+  dragOx: 0, dragOy: 0,
+  animTimer: null,
+  animPlaying: false,
+  _uid: 0,
+  _canvas: null,
+  _ctx: null,
+  _gif: null,        // gif.js instance for export
+
+  uid(){ return ++this._uid; },
+
+  // Current frame reference
+  get scene(){ return this.scenes[this.curScene]; },
+  get frame(){ return this.scene?.frames?.[this.curFrame]; },
+
+  // ── Initialise ─────────────────────────────────────────────────
+  init(){
+    const cvs = document.getElementById('tac-canvas');
+    if(!cvs || this._canvas) return;
+    this._canvas = cvs;
+    this._ctx = cvs.getContext('2d');
+    this._resize();
+    new ResizeObserver(()=>this._resize()).observe(document.getElementById('tac-board-wrap'));
+
+    // Load saved or create blank
+    try{
+      const raw = localStorage.getItem('tm_tac_v1');
+      if(raw){
+        const d = JSON.parse(raw);
+        this._uid = d._uid||0;
+        this.scenes = d.scenes||[];
+        this.homeColor = d.homeColor||'#E31837';
+        this.awayColor = d.awayColor||'#1a3a8f';
+        document.getElementById('tac-home-color').value = this.homeColor;
+        document.getElementById('tac-away-color').value = this.awayColor;
+      }
+    }catch(e){}
+    if(!this.scenes.length) this._newScene();
+    this._renderScenes();
+    this._renderFrameDots();
+    this._draw();
+    this._bindEvents();
+  },
+
+  save(){
+    try{ localStorage.setItem('tm_tac_v1', JSON.stringify({
+      _uid: this._uid, scenes: this.scenes,
+      homeColor: this.homeColor, awayColor: this.awayColor,
+    })); }catch(e){}
+  },
+
+  _resize(){
+    const wrap = document.getElementById('tac-board-wrap');
+    if(!wrap||!this._canvas) return;
+    const W = wrap.clientWidth, H = wrap.clientHeight - 4;
+    const aspect = this.vertical ? 68/105 : 105/68;
+    let cw = W, ch = W/aspect;
+    if(ch > H){ ch = H; cw = H*aspect; }
+    this._canvas.width  = Math.round(cw);
+    this._canvas.height = Math.round(ch);
+    this._draw();
+  },
+
+  // ── Scene management ───────────────────────────────────────────
+  _newScene(name){
+    const s = { id: this.uid(), name: name||'Scene '+(this.scenes.length+1), frames: [] };
+    s.frames.push(this._blankFrame());
+    this.scenes.push(s);
+    this.curScene = this.scenes.length-1;
+    this.curFrame = 0;
+    this.selId = null;
+    return s;
+  },
+
+  _blankFrame(){
+    return { players:[], balls:[], drawings:[], voronoi:false };
+  },
+
+  // Deep clone a frame
+  _cloneFrame(f){
+    return JSON.parse(JSON.stringify(f));
+  },
+
+  // ── Frame management ───────────────────────────────────────────
+  addFrame(){
+    if(!this.scene) return;
+    // Clone current frame as starting point
+    const f = this._cloneFrame(this.frame || this._blankFrame());
+    this.scene.frames.push(f);
+    this.curFrame = this.scene.frames.length-1;
+    this._renderFrameDots();
+    this._draw();
+    this.save();
+  },
+
+  gotoFrame(i){
+    if(!this.scene || i<0 || i>=this.scene.frames.length) return;
+    this.curFrame = i;
+    this.selId = null;
+    this._renderFrameDots();
+    this._draw();
+    this._showPlayerEditor();
+  },
+
+  prevFrame(){ this.gotoFrame(this.curFrame-1); },
+  nextFrame(){ this.gotoFrame(this.curFrame+1); },
+
+  togglePlay(){
+    if(this.animPlaying){
+      clearInterval(this.animTimer);
+      this.animPlaying = false;
+      document.getElementById('tac-play-btn').textContent = '▶';
+      return;
+    }
+    this.animPlaying = true;
+    document.getElementById('tac-play-btn').textContent = '⏸';
+    this.animTimer = setInterval(()=>{
+      if(!this.scene) return;
+      const next = (this.curFrame+1) % this.scene.frames.length;
+      this.gotoFrame(next);
+    }, 800);
+  },
+
+  // ── PITCH DRAWING ─────────────────────────────────────────────
+  _draw(){
+    const cvs=this._canvas, ctx=this._ctx;
+    if(!cvs||!ctx) return;
+    const W=cvs.width, H=cvs.height;
+    ctx.clearRect(0,0,W,H);
+    this._drawPitch(ctx,W,H);
+    if(!this.frame) return;
+    if(this.voronoiOn) this._drawVoronoi(ctx,W,H);
+    this._drawDrawings(ctx,W,H);
+    this._drawPlayers(ctx,W,H);
+    this._drawBalls(ctx,W,H);
+    if(this.distOn) this._drawDistances(ctx,W,H);
+  },
+
+  // Convert normalized [0-1] → pixel
+  px(nx,W){ return nx*W; },
+  py(ny,H){ return ny*H; },
+  // Convert pixel → normalized
+  nx(px,W){ return px/W; },
+  ny(py,H){ return py/H; },
+
+  _drawPitch(ctx,W,H){
+    // Dark stripe background
+    const stripes = 10;
+    for(let i=0;i<stripes;i++){
+      ctx.fillStyle = i%2===0 ? '#1a3a1a' : '#1e421e';
+      if(this.vertical){
+        ctx.fillRect(0, i*H/stripes, W, H/stripes);
+      } else {
+        ctx.fillRect(i*W/stripes, 0, W/stripes, H);
+      }
+    }
+
+    ctx.strokeStyle='rgba(255,255,255,0.75)';
+    ctx.lineWidth=1.5;
+    const p=0.04; // padding fraction
+
+    if(!this.vertical){
+      // Horizontal layout — 105×68
+      const L=p*W, R=(1-p)*W, T=p*H, B=(1-p)*H;
+      const fw=R-L, fh=B-T;
+      // Border
+      ctx.strokeRect(L,T,fw,fh);
+      // Half line
+      ctx.beginPath(); ctx.moveTo(W/2,T); ctx.lineTo(W/2,B); ctx.stroke();
+      // Centre circle — radius ~9.15m/68m * fh
+      const cr = (9.15/68)*fh;
+      ctx.beginPath(); ctx.arc(W/2,H/2,cr,0,Math.PI*2); ctx.stroke();
+      ctx.beginPath(); ctx.arc(W/2,H/2,2,0,Math.PI*2);
+      ctx.fillStyle='rgba(255,255,255,0.7)'; ctx.fill();
+      // Penalty areas
+      const paW=(16.5/105)*fw, paH=(40.32/68)*fh;
+      const paCy=H/2;
+      ctx.strokeRect(L, paCy-paH/2, paW, paH);
+      ctx.strokeRect(R-paW, paCy-paH/2, paW, paH);
+      // Goal areas
+      const gaW=(5.5/105)*fw, gaH=(18.32/68)*fh;
+      ctx.strokeRect(L, paCy-gaH/2, gaW, gaH);
+      ctx.strokeRect(R-gaW, paCy-gaH/2, gaW, gaH);
+      // Goals
+      const gH=(7.32/68)*fh, gD=0.012*W;
+      ctx.strokeRect(L-gD, paCy-gH/2, gD, gH);
+      ctx.strokeRect(R, paCy-gH/2, gD, gH);
+      // Penalty spots
+      const psX=(11/105)*fw;
+      this._dot(ctx, L+psX, H/2, 2.5);
+      this._dot(ctx, R-psX, H/2, 2.5);
+      // Corner arcs
+      const cor=0.012*Math.min(fw,fh);
+      [[L,T],[R,T],[L,B],[R,B]].forEach(([cx,cy])=>{
+        const a1=cx===L?0:Math.PI, a2=cy===T?Math.PI/2:-Math.PI/2;
+        ctx.beginPath(); ctx.arc(cx,cy,cor, Math.min(a1,a1+a2), Math.max(a1,a1+a2));
+        ctx.stroke();
+      });
+    } else {
+      // Vertical layout — rotate 90°: pitch is 68×105
+      const L=p*W, R=(1-p)*W, T=p*H, B=(1-p)*H;
+      const fw=R-L, fh=B-T;
+      ctx.strokeRect(L,T,fw,fh);
+      ctx.beginPath(); ctx.moveTo(L,H/2); ctx.lineTo(R,H/2); ctx.stroke();
+      const cr=(9.15/105)*fh;
+      ctx.beginPath(); ctx.arc(W/2,H/2,cr,0,Math.PI*2); ctx.stroke();
+      ctx.beginPath(); ctx.arc(W/2,H/2,2,0,Math.PI*2);
+      ctx.fillStyle='rgba(255,255,255,0.7)'; ctx.fill();
+      const paH2=(16.5/105)*fh, paW2=(40.32/68)*fw;
+      const paCx=W/2;
+      ctx.strokeRect(paCx-paW2/2, T, paW2, paH2);
+      ctx.strokeRect(paCx-paW2/2, B-paH2, paW2, paH2);
+      const gaH2=(5.5/105)*fh, gaW2=(18.32/68)*fw;
+      ctx.strokeRect(paCx-gaW2/2, T, gaW2, gaH2);
+      ctx.strokeRect(paCx-gaW2/2, B-gaH2, gaW2, gaH2);
+      const gW2=(7.32/68)*fw, gD2=0.012*H;
+      ctx.strokeRect(paCx-gW2/2, T-gD2, gW2, gD2);
+      ctx.strokeRect(paCx-gW2/2, B, gW2, gD2);
+      const psY=(11/105)*fh;
+      this._dot(ctx,W/2,T+psY,2.5);
+      this._dot(ctx,W/2,B-psY,2.5);
+    }
+  },
+
+  _dot(ctx,x,y,r){
+    ctx.beginPath(); ctx.arc(x,y,r,0,Math.PI*2);
+    ctx.fillStyle='rgba(255,255,255,0.7)'; ctx.fill();
+  },
+
+  // ── PLAYER DRAWING ─────────────────────────────────────────────
+  _drawPlayers(ctx,W,H){
+    if(!this.frame) return;
+    this.frame.players.forEach(p=>{
+      const x=this.px(p.x,W), y=this.py(p.y,H);
+      const r=W*0.026, sel=(p.id===this.selId);
+      // Selection ring
+      if(sel){
+        ctx.beginPath(); ctx.arc(x,y,r+5,0,Math.PI*2);
+        ctx.strokeStyle='#FFEA00'; ctx.lineWidth=2; ctx.stroke();
+      }
+      // Body
+      ctx.beginPath(); ctx.arc(x,y,r,0,Math.PI*2);
+      ctx.fillStyle=p.color||(p.team==='home'?this.homeColor:this.awayColor);
+      ctx.fill();
+      ctx.strokeStyle='rgba(255,255,255,0.6)'; ctx.lineWidth=1.5; ctx.stroke();
+      // Number
+      ctx.fillStyle='#fff';
+      ctx.font=`700 ${Math.round(r*0.85)}px DM Sans,sans-serif`;
+      ctx.textAlign='center'; ctx.textBaseline='middle';
+      ctx.fillText(p.num||'',x,y);
+      // Name below
+      if(p.name){
+        ctx.font=`500 ${Math.round(r*0.55)}px DM Sans,sans-serif`;
+        ctx.fillStyle='rgba(255,255,255,0.85)';
+        ctx.fillText(p.name,x,y+r+7);
+      }
+    });
+    ctx.textAlign='left'; ctx.textBaseline='alphabetic';
+  },
+
+  _drawBalls(ctx,W,H){
+    if(!this.frame) return;
+    this.frame.balls.forEach(b=>{
+      const x=this.px(b.x,W), y=this.py(b.y,H), r=W*0.016;
+      ctx.beginPath(); ctx.arc(x,y,r,0,Math.PI*2);
+      ctx.fillStyle='#FFEA00'; ctx.fill();
+      ctx.strokeStyle='rgba(0,0,0,0.5)'; ctx.lineWidth=1.5; ctx.stroke();
+      if(b.id===this.selId){
+        ctx.beginPath(); ctx.arc(x,y,r+4,0,Math.PI*2);
+        ctx.strokeStyle='#FFEA00'; ctx.lineWidth=2; ctx.stroke();
+      }
+    });
+  },
+
+  // ── DRAWINGS (arrows, lines, zones) ───────────────────────────
+  _drawDrawings(ctx,W,H){
+    if(!this.frame) return;
+    this.frame.drawings.forEach(d=>{
+      const pts=d.pts.map(p=>({x:this.px(p.x,W),y:this.py(p.y,H)}));
+      if(pts.length<2) return;
+      ctx.save();
+      ctx.strokeStyle=d.color||'#FFEA00';
+      ctx.lineWidth=2.5;
+      ctx.globalAlpha=0.9;
+      if(d.type==='arrow'||d.type==='line'){
+        ctx.beginPath(); ctx.moveTo(pts[0].x,pts[0].y);
+        ctx.lineTo(pts[1].x,pts[1].y); ctx.stroke();
+        if(d.type==='arrow'){
+          const ang=Math.atan2(pts[1].y-pts[0].y,pts[1].x-pts[0].x);
+          const hl=12;
+          ctx.beginPath();
+          ctx.moveTo(pts[1].x,pts[1].y);
+          ctx.lineTo(pts[1].x-hl*Math.cos(ang-Math.PI/6),pts[1].y-hl*Math.sin(ang-Math.PI/6));
+          ctx.lineTo(pts[1].x-hl*Math.cos(ang+Math.PI/6),pts[1].y-hl*Math.sin(ang+Math.PI/6));
+          ctx.closePath(); ctx.fillStyle=d.color||'#FFEA00'; ctx.fill();
+        }
+      } else if(d.type==='zone'&&pts.length>=2){
+        const x=Math.min(pts[0].x,pts[1].x), y=Math.min(pts[0].y,pts[1].y);
+        const w=Math.abs(pts[1].x-pts[0].x), h=Math.abs(pts[1].y-pts[0].y);
+        ctx.fillStyle=d.color+'22'; ctx.fillRect(x,y,w,h);
+        ctx.strokeRect(x,y,w,h);
+      }
+      ctx.restore();
+    });
+  },
+
+  // ── VORONOI ────────────────────────────────────────────────────
+  _drawVoronoi(ctx,W,H){
+    if(!this.frame||!this.frame.players.length) return;
+    const pts=this.frame.players.map(p=>({
+      x:this.px(p.x,W), y:this.py(p.y,H),
+      color:p.color||(p.team==='home'?this.homeColor:this.awayColor)
+    }));
+    const img=ctx.createImageData(W,H);
+    const d=img.data;
+    for(let py2=0;py2<H;py2++){
+      for(let px2=0;px2<W;px2++){
+        let minD=Infinity,best=null;
+        for(const p of pts){
+          const dd=(px2-p.x)**2+(py2-p.y)**2;
+          if(dd<minD){minD=dd;best=p;}
+        }
+        if(best){
+          const col=this._hexToRgb(best.color||'#888888');
+          const idx=(py2*W+px2)*4;
+          d[idx]=col[0];d[idx+1]=col[1];d[idx+2]=col[2];d[idx+3]=38; // very light
+        }
+      }
+    }
+    ctx.putImageData(img,0,0);
+    // Voronoi edges (approximate with boundary pixels)
+    // skipped for perf — the fill conveys it
+  },
+
+  _hexToRgb(h){
+    const r=parseInt(h.slice(1,3),16)||128;
+    const g=parseInt(h.slice(3,5),16)||128;
+    const b=parseInt(h.slice(5,7),16)||128;
+    return [r,g,b];
+  },
+
+  // ── DISTANCE LABELS ────────────────────────────────────────────
+  _drawDistances(ctx,W,H){
+    if(!this.frame) return;
+    const players=this.frame.players;
+    // Show distance between each player and the nearest ball or between pairs < 20% of W
+    const balls=this.frame.balls;
+    players.forEach(p=>{
+      balls.forEach(b=>{
+        const px2=this.px(p.x,W),py2=this.py(p.y,H);
+        const bx=this.px(b.x,W),by=this.py(b.y,H);
+        const screenDist=Math.hypot(px2-bx,py2-by);
+        if(screenDist>W*0.35) return;
+        // Convert to meters: 105m across W pixels (horizontal)
+        const mPerPx=this.vertical?68/((1-0.08)*W):105/((1-0.08)*W);
+        const m=(screenDist*mPerPx).toFixed(1);
+        ctx.save();
+        ctx.strokeStyle='rgba(255,234,0,0.6)'; ctx.lineWidth=1; ctx.setLineDash([3,3]);
+        ctx.beginPath(); ctx.moveTo(px2,py2); ctx.lineTo(bx,by); ctx.stroke();
+        ctx.setLineDash([]);
+        const mx=(px2+bx)/2, my=(py2+by)/2;
+        ctx.font='700 9px DM Sans,sans-serif';
+        const tw=ctx.measureText(m+'m').width;
+        ctx.fillStyle='rgba(10,12,16,0.8)';
+        ctx.beginPath(); ctx.roundRect(mx-tw/2-3,my-7,tw+6,13,3); ctx.fill();
+        ctx.fillStyle='#FFEA00'; ctx.textAlign='center'; ctx.textBaseline='middle';
+        ctx.fillText(m+'m',mx,my);
+        ctx.restore();
+      });
+    });
+  },
+
+  // ── EVENTS ────────────────────────────────────────────────────
+  _bindEvents(){
+    const cvs=this._canvas;
+    cvs.addEventListener('pointerdown', e=>this._onDown(e));
+    cvs.addEventListener('pointermove', e=>this._onMove(e));
+    cvs.addEventListener('pointerup',   e=>this._onUp(e));
+    cvs.addEventListener('dblclick',    e=>this._onDbl(e));
+  },
+
+  _canvasP(e){
+    const r=this._canvas.getBoundingClientRect();
+    return {
+      x: (e.clientX-r.left)*(this._canvas.width/r.width),
+      y: (e.clientY-r.top)*(this._canvas.height/r.height),
+    };
+  },
+
+  _hitPlayer(px2,py2,W,H){
+    if(!this.frame) return null;
+    const r=W*0.026+8;
+    for(let i=this.frame.players.length-1;i>=0;i--){
+      const p=this.frame.players[i];
+      if(Math.hypot(px2-this.px(p.x,W),py2-this.py(p.y,H))<r) return p;
+    }
+    return null;
+  },
+
+  _hitBall(px2,py2,W,H){
+    if(!this.frame) return null;
+    const r=W*0.016+8;
+    for(const b of this.frame.balls){
+      if(Math.hypot(px2-this.px(b.x,W),py2-this.py(b.y,H))<r) return b;
+    }
+    return null;
+  },
+
+  _onDown(e){
+    e.preventDefault();
+    const {x,y}=this._canvasP(e);
+    const W=this._canvas.width,H=this._canvas.height;
+    const nx=this.nx(x,W),ny=this.ny(y,H);
+
+    if(this.tool==='select'){
+      const p=this._hitPlayer(x,y,W,H)||this._hitBall(x,y,W,H);
+      if(p){
+        this.selId=p.id; this.dragId=p.id;
+        this.dragOx=x-this.px(p.x,W); this.dragOy=y-this.py(p.y,H);
+        this._showPlayerEditor(p);
+      } else {
+        this.selId=null; this.dragId=null;
+        this._showPlayerEditor(null);
+      }
+      this._draw(); return;
+    }
+    if(this.tool==='erase'){
+      const p=this._hitPlayer(x,y,W,H); if(p){ this._removeById(p.id); this._draw(); return; }
+      const b=this._hitBall(x,y,W,H);  if(b){ this._removeById(b.id); this._draw(); return; }
+      return;
+    }
+    if(this.tool==='home'||this.tool==='away'){
+      const team=this.tool;
+      const num=this.frame.players.filter(p=>p.team===team).length+1;
+      this.frame.players.push({id:this.uid(),team,x:nx,y:ny,num:String(num),name:'',color:team==='home'?this.homeColor:this.awayColor});
+      this._draw(); this.save(); return;
+    }
+    if(this.tool==='ball'){
+      this.frame.balls.push({id:this.uid(),x:nx,y:ny});
+      this._draw(); this.save(); return;
+    }
+    if(this.tool==='arrow'||this.tool==='line'||this.tool==='zone'){
+      this.drawPts=[{x:nx,y:ny}];
+      return;
+    }
+  },
+
+  _onMove(e){
+    if(!this.frame) return;
+    const {x,y}=this._canvasP(e);
+    const W=this._canvas.width,H=this._canvas.height;
+
+    if(this.dragId){
+      const obj=[...this.frame.players,...this.frame.balls].find(o=>o.id===this.dragId);
+      if(obj){
+        obj.x=Math.max(0,Math.min(1,this.nx(x-this.dragOx,W)));
+        obj.y=Math.max(0,Math.min(1,this.ny(y-this.dragOy,H)));
+        this._draw(); return;
+      }
+    }
+    if(this.drawPts.length===1&&(this.tool==='arrow'||this.tool==='line'||this.tool==='zone')){
+      const nx=this.nx(x,W),ny=this.ny(y,H);
+      const preview={type:this.tool,pts:[this.drawPts[0],{x:nx,y:ny}],color:'#FFEA00'};
+      this._draw();
+      // draw preview
+      const ctx=this._ctx;
+      ctx.save(); ctx.strokeStyle='rgba(255,234,0,0.5)'; ctx.lineWidth=2; ctx.setLineDash([5,3]);
+      ctx.beginPath(); ctx.moveTo(this.px(this.drawPts[0].x,W),this.py(this.drawPts[0].y,H));
+      ctx.lineTo(x,y); ctx.stroke(); ctx.setLineDash([]); ctx.restore();
+    }
+  },
+
+  _onUp(e){
+    const {x,y}=this._canvasP(e);
+    const W=this._canvas.width,H=this._canvas.height;
+    const nx=this.nx(x,W),ny=this.ny(y,H);
+
+    if(this.dragId){ this.dragId=null; this.save(); return; }
+
+    if(this.drawPts.length===1&&(this.tool==='arrow'||this.tool==='line'||this.tool==='zone')){
+      const dist=Math.hypot(x-this.px(this.drawPts[0].x,W),y-this.py(this.drawPts[0].y,H));
+      if(dist>8){
+        this.frame.drawings.push({
+          type:this.tool,
+          pts:[this.drawPts[0],{x:nx,y:ny}],
+          color:'#FFEA00',
+        });
+        this.save();
+      }
+      this.drawPts=[];
+      this._draw();
+    }
+  },
+
+  _onDbl(e){
+    // Double-click a player to open editor
+    const {x,y}=this._canvasP(e);
+    const W=this._canvas.width,H=this._canvas.height;
+    const p=this._hitPlayer(x,y,W,H);
+    if(p){ this.selId=p.id; this._showPlayerEditor(p); this._draw(); }
+  },
+
+  _removeById(id){
+    if(!this.frame) return;
+    this.frame.players=this.frame.players.filter(p=>p.id!==id);
+    this.frame.balls=this.frame.balls.filter(b=>b.id!==id);
+    if(this.selId===id) this.selId=null;
+    this.save();
+  },
+
+  // ── PLAYER EDITOR ──────────────────────────────────────────────
+  _showPlayerEditor(p){
+    const ed=document.getElementById('tac-player-editor');
+    if(!ed) return;
+    if(!p){ ed.style.display='none'; return; }
+    if(this.frame&&this.frame.balls.find(b=>b.id===p.id)){ ed.style.display='none'; return; }
+    ed.style.display='block';
+    document.getElementById('tac-p-num').value=p.num||'';
+    document.getElementById('tac-p-name').value=p.name||'';
+    document.getElementById('tac-p-color').value=p.color||(p.team==='home'?this.homeColor:this.awayColor);
+  },
+
+  updateSelected(){
+    if(!this.frame||!this.selId) return;
+    const p=this.frame.players.find(p=>p.id===this.selId);
+    if(!p) return;
+    p.num=document.getElementById('tac-p-num').value;
+    p.name=document.getElementById('tac-p-name').value;
+    p.color=document.getElementById('tac-p-color').value;
+    this._draw(); this.save();
+  },
+
+  deleteSelected(){
+    if(this.selId){ this._removeById(this.selId); this._draw(); this._showPlayerEditor(null); }
+  },
+
+  // ── FORMATION PRESETS ──────────────────────────────────────────
+  // Returns normalized [x,y] positions for each formation
+  // Horizontal: attacking left→right
+  // Home: left half, Away: right half (mirrored)
+  _formationPositions(formation, team){
+    const flip = team==='away';
+    const rows = formation.split('-').map(Number);
+    const total = rows.reduce((a,b)=>a+b,0);
+    const lines = [[0.5,0.5]]; // GK
+    const lineXs=this.vertical
+      ? (flip?[0.12,...rows.map((_,i)=>0.15+((i+1)/(rows.length+1))*0.7)]:
+              [0.88,...rows.map((_,i)=>0.85-((i+1)/(rows.length+1))*0.7)])
+      : (flip?[0.88,...rows.map((_,i)=>0.85-((i+1)/(rows.length+1))*0.7)]:
+              [0.12,...rows.map((_,i)=>0.15+((i+1)/(rows.length+1))*0.7)]);
+
+    const positions=[];
+    // GK
+    positions.push(this.vertical
+      ? {x:flip?0.5:0.5, y:lineXs[0]}
+      : {x:lineXs[0], y:0.5});
+
+    // Outfield lines
+    rows.forEach((count,li)=>{
+      const lineX=lineXs[li+1];
+      for(let j=0;j<count;j++){
+        const t=(j+1)/(count+1);
+        const yPos=0.1+t*0.8;
+        positions.push(this.vertical
+          ? {x:yPos, y:lineX}
+          : {x:lineX, y:yPos});
+      }
+    });
+    return positions;
+  },
+
+  applyFormation(team, formation){
+    if(!this.frame) return;
+    // Remove existing players of this team
+    this.frame.players=this.frame.players.filter(p=>p.team!==team);
+    const positions=this._formationPositions(formation,team);
+    const jersey=['GK','RB','CB','CB','LB','CM','CM','CM','RW','ST','LW','DM','AM'];
+    positions.forEach((pos,i)=>{
+      this.frame.players.push({
+        id:this.uid(), team,
+        x:pos.x, y:pos.y,
+        num:String(i+1),
+        name:jersey[i]||String(i+1),
+        color:team==='home'?this.homeColor:this.awayColor,
+      });
+    });
+    this._draw(); this.save();
+    notify('Formation '+formation+' applied','#30D158');
+  },
+
+  setTeamColor(team,color){
+    if(team==='home') this.homeColor=color;
+    else this.awayColor=color;
+    if(this.frame){
+      this.frame.players.filter(p=>p.team===team).forEach(p=>p.color=color);
+    }
+    this._draw(); this.save();
+  },
+
+  // ── VORONOI TOGGLE ─────────────────────────────────────────────
+  toggleVoronoi(){
+    this.voronoiOn=!this.voronoiOn;
+    this._draw();
+    notify(this.voronoiOn?'Voronoi zones ON':'Voronoi zones OFF', this.voronoiOn?'#30D158':'#8b949e');
+  },
+
+  // ── ORIENTATION ────────────────────────────────────────────────
+  toggleOrientation(){
+    this.vertical=!this.vertical;
+    document.getElementById('tac-orient-btn').textContent=this.vertical?'↔ Horizontal':'↕ Vertical';
+    this._resize();
+  },
+
+  // ── SCENES ─────────────────────────────────────────────────────
+  gotoScene(i){
+    if(i<0||i>=this.scenes.length) return;
+    this.curScene=i;
+    this.curFrame=0;
+    this.selId=null;
+    this._renderScenes();
+    this._renderFrameDots();
+    this._draw();
+    this._showPlayerEditor(null);
+  },
+
+  _renderScenes(){
+    const c=document.getElementById('tac-scenes'); if(!c) return;
+    c.innerHTML='';
+    this.scenes.forEach((s,i)=>{
+      const btn=document.createElement('button');
+      btn.className='tac-scene-btn'+(i===this.curScene?' on':'');
+      btn.textContent=s.name;
+      btn.title='Right-click to rename';
+      btn.onclick=()=>this.gotoScene(i);
+      btn.oncontextmenu=e=>{
+        e.preventDefault();
+        const nm=prompt('Scene name:',s.name);
+        if(nm){s.name=nm.trim()||s.name; this._renderScenes(); this.save();}
+      };
+      c.appendChild(btn);
+    });
+  },
+
+  _renderFrameDots(){
+    const c=document.getElementById('tac-frame-dots'); if(!c||!this.scene) return;
+    c.innerHTML='';
+    this.scene.frames.forEach((_,i)=>{
+      const d=document.createElement('div');
+      d.className='tac-frame-dot'+(i===this.curFrame?' on':'');
+      d.title='Frame '+(i+1);
+      d.onclick=()=>this.gotoFrame(i);
+      c.appendChild(d);
+    });
+  },
+
+  clearScene(){
+    if(!this.frame||!confirm('Clear all players and drawings in this frame?')) return;
+    this.frame.players=[];
+    this.frame.balls=[];
+    this.frame.drawings=[];
+    this.selId=null;
+    this._showPlayerEditor(null);
+    this._draw(); this.save();
+  },
+
+  // ── EXPORT PNG ─────────────────────────────────────────────────
+  exportPNG(){
+    this._draw();
+    const a=document.createElement('a');
+    a.download='tactical-board.png';
+    a.href=this._canvas.toDataURL('image/png');
+    a.click();
+    notify('PNG exported','#30D158');
+  },
+
+  // ── EXPORT GIF ─────────────────────────────────────────────────
+  exportGIF(){
+    if(!this.scene||this.scene.frames.length<2){
+      notify('Add at least 2 frames for GIF export','#E8590C'); return;
+    }
+    notify('Generating GIF…','#d29922');
+
+    // Load gif.js from CDN
+    const W=this._canvas.width, H=this._canvas.height;
+    const script=document.createElement('script');
+    script.src='https://cdnjs.cloudflare.com/ajax/libs/gif.js/0.2.0/gif.js';
+    script.onload=()=>{
+      const gif=new GIF({workers:2,quality:8,width:W,height:H,workerScript:'https://cdnjs.cloudflare.com/ajax/libs/gif.js/0.2.0/gif.worker.js'});
+      const saved=this.curFrame;
+      this.scene.frames.forEach((_,i)=>{
+        this.curFrame=i;
+        this._draw();
+        gif.addFrame(this._canvas,{copy:true,delay:700});
+      });
+      this.curFrame=saved; this._draw();
+      gif.on('finished',blob=>{
+        const a=document.createElement('a');
+        a.download='tactical-board.gif';
+        a.href=URL.createObjectURL(blob);
+        a.click();
+        notify('GIF exported','#30D158');
+      });
+      gif.render();
+    };
+    script.onerror=()=>notify('GIF library failed to load — try PNG instead','#E31837');
+    document.head.appendChild(script);
+  },
+};
+
+// ── Public wrappers (called from HTML onclick) ─────────────────────
+function tacAddScene(){ _TAC._newScene(); _TAC._renderScenes(); _TAC._renderFrameDots(); _TAC._draw(); _TAC.save(); }
+function tacAddFrame(){ _TAC.addFrame(); }
+function tacPrevFrame(){ _TAC.prevFrame(); }
+function tacNextFrame(){ _TAC.nextFrame(); }
+function tacTogglePlay(){ _TAC.togglePlay(); }
+function tacSetTool(t){
+  _TAC.tool=t; _TAC.drawPts=[];
+  document.querySelectorAll('.tac-tool').forEach(b=>b.classList.toggle('on',b.dataset.tool===t));
+}
+function tacFormationPanel(){
+  const p=document.getElementById('tac-form-panel');
+  p.style.display=p.style.display==='none'?'block':'none';
+}
+function tacApplyFormation(team,f){ _TAC.applyFormation(team,f); }
+function tacSetTeamColor(team,c){ _TAC.setTeamColor(team,c); }
+function tacVoronoi(){ _TAC.toggleVoronoi(); }
+function tacToggleOrientation(){ _TAC.toggleOrientation(); }
+function tacExportPNG(){ _TAC.exportPNG(); }
+function tacExportGIF(){ _TAC.exportGIF(); }
+function tacClearScene(){ _TAC.clearScene(); }
+function tacUpdateSelected(){ _TAC.updateSelected(); }
+function tacDeleteSelected(){ _TAC.deleteSelected(); }
+
+// ── Init when tab is first opened ─────────────────────────────────
+(function(){
+  const orig=window.switchTab||function(){};
+  window.switchTab=function(name){
+    orig(name);
+    if(name==='tactical') setTimeout(()=>_TAC.init(),30);
+  };
+})();
+
+// ── End Tactical Board Engine ─────────────────────────────────────
 
 // ── NAVIGATION ───────────────────────────────────────────────────
 function goBack(){ window.location.href='/'; }
