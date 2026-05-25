@@ -1916,11 +1916,14 @@ function cancelAssign(){
   $('tm-assign-banner')?.classList.add('gone');
 }
 function openModal(){
+  // Save pendingPt BEFORE cancelAssign() clears it
+  const saved = S.pendingPt;
   cancelAssign();
+  S.pendingPt = saved; // restore after cancelAssign wiped it
   $('modal-jersey').value='';
   $('tm-modal-bg').classList.remove('gone');
   setTimeout(()=>$('modal-jersey').focus(),60);
-  // Update swatch colors to reflect current team colors
+  // Update swatch colors to match current team colors
   $('modal-swatches').querySelectorAll('.swatch').forEach(sw=>{
     sw.style.background=S.teamColors[sw.dataset.team]||sw.style.background;
   });
