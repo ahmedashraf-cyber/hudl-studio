@@ -328,6 +328,24 @@ html,body{width:100%;height:100%;overflow:hidden;font-family:'DM Sans',sans-seri
   width:268px;background:#0F0F0F;
   border-left:0.5px solid rgba(255,255,255,0.06);
   display:flex;flex-direction:column;overflow:hidden;flex-shrink:0;
+  transition:width .25s cubic-bezier(0.4,0,0.2,1);
+}
+/* Board tab expanded — right panel takes 50%, video takes 50% */
+#tm-main.board-expanded #tm-right{
+  width:50%;
+  min-width:480px;
+}
+#tm-main.board-expanded #tm-center{
+  flex:1;
+  min-width:320px;
+}
+/* Hide left tools when board is expanded — reclaim space */
+#tm-main.board-expanded #tm-tools{
+  display:none;
+}
+/* Make tactical canvas fill more of the expanded panel */
+#tm-main.board-expanded #tac-board-wrap{
+  flex:1;
 }
 /* Panel tabs — exact .panel-tabs / .ptab */
 #tm-tabs{
@@ -3373,6 +3391,11 @@ function drawHockey(ctx,W,H){
 function switchTab(name){
   document.querySelectorAll('.ptab').forEach(t=>t.classList.toggle('on',t.dataset.t===name));
   document.querySelectorAll('.tb').forEach(b=>b.classList.toggle('on',b.id==='tb-'+name));
+  // Board tab: expand right panel to 50% / shrink video to 50%
+  const main=document.getElementById('tm-main');
+  if(main) main.classList.toggle('board-expanded', name==='tactical');
+  // Init board if switching to it
+  if(name==='tactical') setTimeout(()=>_TAC.init(),30);
 }
 
 // ── CSV EXPORT ────────────────────────────────────────────────────
@@ -5154,13 +5177,7 @@ function tacUpdateSelected(){ _TAC.updateSelected(); }
 function tacDeleteSelected(){ _TAC.deleteSelected(); }
 
 // ── Init when tab is first opened ─────────────────────────────────
-(function(){
-  const orig=window.switchTab||function(){};
-  window.switchTab=function(name){
-    orig(name);
-    if(name==='tactical') setTimeout(()=>_TAC.init(),30);
-  };
-})();
+// switchTab already handles _TAC.init() directly above
 
 // ── End Tactical Board Engine ─────────────────────────────────────
 
