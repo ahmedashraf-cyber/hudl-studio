@@ -801,18 +801,29 @@ html,body{width:100%;height:100%;overflow:hidden;font-family:'DM Sans',sans-seri
 
       <!-- TAGS TAB -->
       <div class="tb" id="tb-tags">
-        <div id="tm-tag-groups"></div>
+        <!-- Tag toolbar -->
+        <div style="display:flex;align-items:center;gap:5px;padding:7px 12px;border-bottom:0.5px solid rgba(255,255,255,0.06);flex-shrink:0;">
+          <span style="font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.6px;color:rgba(255,255,255,.3);">Tag Groups</span>
+          <div style="margin-left:auto;display:flex;gap:4px;">
+            <button class="tm-add-btn" onclick="addTagGroup()" style="width:auto;padding:3px 8px;font-size:10px;border-style:solid;">+ Group</button>
+            <button class="tm-add-btn" onclick="resetTagGroups()" style="width:auto;padding:3px 8px;font-size:10px;border-style:solid;color:rgba(255,255,255,.3);">Reset</button>
+          </div>
+        </div>
+        <div id="tm-tag-groups" style="flex:1;overflow-y:auto;"></div>
       </div>
 
       <!-- PLAYLIST TAB -->
       <div class="tb" id="tb-playlist">
-        <div class="pl-filter-wrap">
-          <select id="tm-pl-filter" class="tm-select" onchange="filterPL(this.value)">
+        <div style="padding:7px 12px;border-bottom:0.5px solid rgba(255,255,255,0.06);flex-shrink:0;display:flex;align-items:center;gap:6px;">
+          <select id="tm-pl-filter" class="tm-select" style="flex:1;" onchange="filterPL(this.value)">
             <option value="all">All clips</option>
           </select>
+          <span id="tm-pl-count" style="font-size:10px;color:rgba(255,255,255,.3);white-space:nowrap;flex-shrink:0;">0 clips</span>
         </div>
+        <!-- Quick stats bar -->
+        <div id="tm-pl-stats" style="padding:6px 12px;border-bottom:0.5px solid rgba(255,255,255,0.05);display:flex;gap:8px;flex-wrap:wrap;flex-shrink:0;"></div>
         <div class="pl-list" id="tm-pl-list">
-          <div class="pl-empty">No clips tagged yet.</div>
+          <div class="pl-empty">No clips tagged yet.<br>Use the Tags tab to record clips.</div>
         </div>
       </div>
     </div>
@@ -848,6 +859,10 @@ html,body{width:100%;height:100%;overflow:hidden;font-family:'DM Sans',sans-seri
 ═══════════════════════════════════════════════════════════════ -->
 <script>
 'use strict';
+
+// Core color utility — must be first
+function hex2rgba(h,a){if(!h||h.startsWith('rgb'))return h;const r=parseInt(h.slice(1,3),16),g=parseInt(h.slice(3,5),16),b=parseInt(h.slice(5,7),16);return `rgba(${r},${g},${b},${a})`;}
+
 
 // ── Shorthand ─────────────────────────────────────────────────────
 const $ = id => document.getElementById(id);
@@ -1012,12 +1027,6 @@ function getP(e){
 }
 
 // ── CANVAS EVENTS ─────────────────────────────────────────────────
-function hex2rgba(h,a){
-  if(!h||h.startsWith('rgb'))return h;
-  const r=parseInt(h.slice(1,3),16),g=parseInt(h.slice(3,5),16),b=parseInt(h.slice(5,7),16);
-  return `rgba(${r},${g},${b},${a})`;
-}
-
 // ════════════════════════════════════════════════════════════════
 // PHASE 3 — ANCHOR ENGINE (tracker → drawing live binding)
 // ════════════════════════════════════════════════════════════════
@@ -1948,33 +1957,164 @@ function pickTeam(t){ const c=prompt('Hex color for Team '+t+':',S.teamColors[t]
 // ── TAG GROUPS ────────────────────────────────────────────────────
 function renderTags(){
   const w=$('tm-tag-groups'); if(!w)return;
-  w.innerHTML=S.tagGroups.map(g=>`<div class="tag-grp"><div class="tag-grp-hdr"><div class="tag-grp-dot" style="background:${g.color}"></div><span class="tag-grp-name" style="color:${g.color}">${g.name}</span><span class="tag-grp-ct">${S.events.filter(e=>g.tags.includes(e.tag)).length}</span></div><div class="tag-btns">${g.tags.map(tag=>{ const isR=S.recEvent?.tag===tag; return `<button class="tag-btn${isR?' rec':''}" style="background:${g.color}${isR?'33':'18'};border-color:${g.color}${isR?'77':'33'};color:${g.color}" onclick="toggleTag('${tag}','${g.color}')">${isR?'⏹ Stop':tag}</button>`; }).join('')}</div></div>`).join('');
-  // Rebuild playlist filter
+  w.innerHTML=S.tagGroups.map((g,gi)=>`
+    <div class="tag-grp" id="tg-${g.id}">
+      <div class="tag-grp-hdr" style="display:flex;align-items:center;gap:6px;padding:7px 12px 4px;border-bottom:0.5px solid rgba(255,255,255,0.04);">
+        <div class="tag-grp-dot" style="background:${g.color};width:7px;height:7px;border-radius:50%;flex-shrink:0;cursor:pointer;" onclick="pickGroupColor(${gi})" title="Change color"></div>
+        <span class="tag-grp-name" style="color:${g.color};font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.3px;cursor:pointer;" onclick="renameGroup(${gi})">${g.name}</span>
+        <span style="font-size:9px;color:rgba(255,255,255,.2);margin-left:auto;">${S.events.filter(e=>g.tags.includes(e.tag)).length} clips</span>
+        <button onclick="addTagToGroup(${gi})" style="background:none;border:none;cursor:pointer;color:rgba(255,255,255,.25);font-size:11px;padding:0 2px;transition:color .12s;" title="Add tag">+</button>
+        <button onclick="deleteGroup(${gi})" style="background:none;border:none;cursor:pointer;color:rgba(255,255,255,.15);font-size:11px;padding:0 2px;transition:color .12s;" title="Delete group">×</button>
+      </div>
+      <div class="tag-btns" style="padding:5px 10px 7px;display:flex;flex-wrap:wrap;gap:3px;">
+        ${g.tags.map((tag,ti)=>{
+          const isR=S.recEvent?.tag===tag;
+          const clipCount=S.events.filter(e=>e.tag===tag).length;
+          return `<button class="tag-btn${isR?' rec':''}" data-gi="${gi}" data-ti="${ti}"
+            style="background:${g.color}${isR?'33':'15'};border:0.5px solid ${g.color}${isR?'66':'30'};color:${g.color};padding:4px 8px;border-radius:4px;font-size:10px;font-weight:600;font-family:'DM Sans',sans-serif;cursor:pointer;transition:all .12s;display:flex;align-items:center;gap:4px;"
+            onclick="toggleTag('${tag}','${g.color}')"
+            oncontextmenu="event.preventDefault();deleteTag(${gi},${ti})">
+            <span>${isR?'⏹':tag}</span>${clipCount>0?`<span style="background:rgba(0,0,0,.3);border-radius:3px;padding:0 4px;font-size:9px;">${clipCount}</span>`:''}
+          </button>`;
+        }).join('')}
+      </div>
+    </div>`).join('');
+
+  // Update playlist filter
   const sel=$('tm-pl-filter'); if(!sel)return;
   const tags=['all',...S.tagGroups.flatMap(g=>g.tags)];
-  sel.innerHTML=tags.map(t=>`<option value="${t}"${S.plFilter===t?' selected':''}>${t==='all'?'All clips':t}</option>`).join('');
+  const cur=S.plFilter;
+  sel.innerHTML=tags.map(t=>`<option value="${t}"${cur===t?' selected':''}>${t==='all'?'All clips':t}</option>`).join('');
 }
+
+// ── Tag group management ──────────────────────────────────────────
+function addTagGroup(){
+  const name=prompt('Group name:'); if(!name?.trim())return;
+  const colors=['#30D158','#E8590C','#FFEA00','#58a6ff','#bf5af2','#ff375f','#ffd60a'];
+  const color=colors[S.tagGroups.length%colors.length];
+  S.tagGroups.push({id:'g_'+Date.now(),name:name.trim(),color,tags:[]});
+  renderTags(); scheduleSave(); notify('Group "'+name.trim()+'" created');
+}
+function renameGroup(gi){
+  const g=S.tagGroups[gi]; if(!g)return;
+  const name=prompt('Rename group:',g.name); if(!name?.trim())return;
+  g.name=name.trim(); renderTags(); scheduleSave();
+}
+function pickGroupColor(gi){
+  const g=S.tagGroups[gi]; if(!g)return;
+  const c=prompt('Hex color:',g.color); if(!c||!/^#[0-9a-fA-F]{3,6}$/.test(c))return;
+  g.color=c; renderTags(); scheduleSave();
+}
+function deleteGroup(gi){
+  const g=S.tagGroups[gi]; if(!g)return;
+  if(!confirm(`Delete group "${g.name}" and its ${g.tags.length} tags?`))return;
+  S.tagGroups.splice(gi,1); renderTags(); scheduleSave();
+  notify('Group deleted');
+}
+function addTagToGroup(gi){
+  const g=S.tagGroups[gi]; if(!g)return;
+  const tag=prompt('New tag name:'); if(!tag?.trim())return;
+  g.tags.push(tag.trim()); renderTags(); scheduleSave();
+  notify('Tag "'+tag.trim()+'" added');
+}
+function deleteTag(gi,ti){
+  const g=S.tagGroups[gi]; if(!g)return;
+  if(!confirm(`Delete tag "${g.tags[ti]}"?`))return;
+  g.tags.splice(ti,1); renderTags(); scheduleSave();
+}
+function resetTagGroups(){
+  if(!confirm('Reset to default football tags?'))return;
+  S.tagGroups=[
+    {id:'pos',name:'In Possession',color:'#30D158',tags:['Build-up','Progression','Final Third','Att Wing','Box Attack']},
+    {id:'out',name:'Out of Possession',color:'#E8590C',tags:['High Press','Mid Block','Low Block','Def Wing','Box Defend']},
+    {id:'trans',name:'Transitions',color:'#FFEA00',tags:['Attack Trans','Defend Trans']},
+    {id:'att',name:'Att Set-pieces',color:'#58a6ff',tags:['Att Corner','Att Free Kick','Att Throw-in','Att Goal Kick','Penalty']},
+    {id:'def',name:'Def Set-pieces',color:'#d29922',tags:['Def Corner','Def Free Kick','Def Throw-in','Def Goal Kick','Def Penalty']},
+  ];
+  renderTags(); scheduleSave(); notify('Tags reset to defaults');
+}
+
 function toggleTag(tag,color){
   if(!S.loaded){notify('Load a video first','#E8590C');return;}
   const t=$('tm-video').currentTime;
+  // Capture current tracker snapshot for this moment
+  const trackerSnapshot=S.trackers.map(tr=>({
+    id:tr.id,jersey:tr.jersey,team:tr.team,
+    box:tr.box?{...tr.box}:null,lost:tr.lost
+  }));
   if(S.recEvent?.tag===tag){
-    const ev={id:'ev_'+Date.now(),tag,color,time:S.recEvent.startTime,endTime:t,timeStr:fmt(S.recEvent.startTime)+'–'+fmt(t)};
+    const ev={id:'ev_'+Date.now(),tag,color,
+      time:S.recEvent.startTime,endTime:t,
+      timeStr:fmt(S.recEvent.startTime)+'–'+fmt(t),
+      trackerSnapshotStart:S.recEvent.trackerSnapshot,
+      trackerSnapshotEnd:trackerSnapshot,
+      dur:+(t-S.recEvent.startTime).toFixed(1)
+    };
     S.events.push(ev); S.recEvent=null;
-    $('tm-rec-banner').classList.add('gone'); addEvDot(ev);
-    renderTags(); renderPL(); scheduleSave(); notify(tag+' tagged');
+    $('tm-rec-banner').classList.add('gone');
+    addEvDot(ev); renderTags(); renderPL(); scheduleSave();
+    notify(tag+' — '+fmt(ev.dur)+'s tagged','#30D158');
   } else if(S.recEvent){
     const prev=S.recEvent;
-    S.events.push({id:'ev_'+Date.now(),tag:prev.tag,color:prev.color,time:prev.startTime,endTime:t,timeStr:fmt(prev.startTime)+'–'+fmt(t)});
-    addEvDot(S.events[S.events.length-1]);
-    S.recEvent={tag,color,startTime:t};
+    const prevEv={id:'ev_'+Date.now(),tag:prev.tag,color:prev.color,
+      time:prev.startTime,endTime:t,timeStr:fmt(prev.startTime)+'–'+fmt(t),
+      trackerSnapshotStart:prev.trackerSnapshot,trackerSnapshotEnd:trackerSnapshot,
+      dur:+(t-prev.startTime).toFixed(1)
+    };
+    S.events.push(prevEv); addEvDot(prevEv);
+    S.recEvent={tag,color,startTime:t,trackerSnapshot};
+    $('rec-text').textContent='Recording: '+tag;
     renderTags(); renderPL();
   } else {
-    S.recEvent={tag,color,startTime:t};
+    S.recEvent={tag,color,startTime:t,trackerSnapshot};
     $('tm-rec-banner').classList.remove('gone');
-    $('rec-text').textContent='Recording: '+tag;
+    $('rec-text').textContent='⏺ '+tag;
     renderTags();
   }
 }
+
+function filterPL(v){ S.plFilter=v; renderPL(); }
+
+function renderPL(){
+  const list=$('tm-pl-list'); if(!list)return;
+  const arr=S.plFilter==='all'?S.events:S.events.filter(e=>e.tag===S.plFilter);
+
+  // Update count
+  const ct=$('tm-pl-count'); if(ct) ct.textContent=arr.length+' clip'+(arr.length===1?'':'s');
+
+  // Stats bar — count per tag group
+  const statsEl=$('tm-pl-stats');
+  if(statsEl){
+    if(S.events.length===0){ statsEl.innerHTML=''; }
+    else {
+      const groupStats=S.tagGroups.map(g=>{
+        const n=S.events.filter(e=>g.tags.includes(e.tag)).length;
+        return n>0?`<span style="font-size:9px;padding:2px 7px;border-radius:4px;background:${g.color}20;color:${g.color};border:0.5px solid ${g.color}40;white-space:nowrap;">${g.name}: ${n}</span>`:'';
+      }).filter(Boolean);
+      statsEl.innerHTML=groupStats.join('');
+    }
+  }
+
+  if(!arr.length){
+    list.innerHTML='<div class="pl-empty">No clips match this filter.<br><span style="font-size:10px;color:rgba(255,255,255,.15);">Use Tags tab to record clips.</span></div>';
+    return;
+  }
+
+  list.innerHTML=arr.map(ev=>`
+    <div class="pl-row${S.selEvent?.id===ev.id?' on':''}" onclick="clickClip('${ev.id}')">
+      <div class="pl-dot" style="background:${ev.color}"></div>
+      <div class="pl-info">
+        <div class="pl-tag">${evLabel(ev)}</div>
+        <div class="pl-time">${ev.timeStr}${ev.dur?' · '+ev.dur+'s':''}</div>
+      </div>
+      <div class="pl-actions">
+        <button class="pl-btn" onclick="event.stopPropagation();extractClip('${ev.id}')" title="Download clip">↓</button>
+        <button class="pl-btn" onclick="event.stopPropagation();delEvent('${ev.id}')" title="Delete">×</button>
+      </div>
+    </div>`).join('');
+}
+
+
 function evLabel(ev){ const same=S.events.filter(e=>e.tag===ev.tag); return ev.tag+' '+(same.findIndex(e=>e.id===ev.id)+1); }
 function addEvDot(ev){
   const wrap=$('tm-tl-events'); if(!wrap||!S.dur)return;
