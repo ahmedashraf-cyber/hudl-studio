@@ -797,6 +797,25 @@ html,body{width:100%;height:100%;overflow:hidden;font-family:'DM Sans',sans-seri
             📥 Import Track File (.json)
           </button>
           <div id="tm-track-imported" style="display:none;font-size:10px;color:#30D158;margin-bottom:6px;">✓ Track data loaded — <span id="tm-track-info"></span></div>
+          <!-- Cloud AI processing — sends video to backend, imports result automatically -->
+          <button class="tm-add-btn" id="tm-cloud-btn" onclick="processWithCloud()" style="width:100%;font-size:10px;margin-bottom:4px;color:#a78bfa;border-color:rgba(167,139,250,0.35);background:rgba(167,139,250,0.07);" title="Upload video to cloud backend for YOLOv8 player tracking">
+            ☁ Process with AI (Cloud)
+          </button>
+          <div id="tm-cloud-status" style="display:none;font-size:10px;color:rgba(255,255,255,.4);margin-bottom:6px;line-height:1.5;">
+            <span id="tm-cloud-msg">Uploading…</span>
+            <div style="height:3px;background:rgba(255,255,255,.08);border-radius:2px;margin-top:4px;">
+              <div id="tm-cloud-bar" style="height:100%;width:0%;background:#a78bfa;border-radius:2px;transition:width .3s;"></div>
+            </div>
+          </div>
+          <!-- Endpoint config (hidden by default, revealed by long-press / settings) -->
+          <div id="tm-cloud-cfg" style="display:none;margin-bottom:6px;">
+            <input id="tm-cloud-url" class="tm-input" style="font-size:10px;height:26px;" placeholder="https://your-api.com/analyze" value="">
+            <div style="display:flex;gap:4px;margin-top:3px;">
+              <button class="tm-add-btn" onclick="saveCloudUrl()" style="flex:1;font-size:10px;padding:3px 0;">Save URL</button>
+              <button class="tm-add-btn" onclick="$('tm-cloud-cfg').style.display='none'" style="font-size:10px;padding:3px 8px;">✕</button>
+            </div>
+          </div>
+          <div style="font-size:9px;color:rgba(255,255,255,.2);margin-bottom:4px;cursor:pointer;" onclick="toggleCloudCfg()" title="Configure cloud endpoint">⚙ Configure endpoint</div>
           <div id="tm-ai-status" style="display:flex;align-items:center;gap:7px;font-size:11px;color:rgba(255,255,255,.4);">
             <div class="tm-spin" id="ai-status-spin" style="display:none;"></div>
             <span id="ai-status-text">Not loaded yet</span>
@@ -2917,6 +2936,294 @@ function restoreSession(){
     if(S.drawings.length||S.events.length) notify('Session restored');
   }catch(e){console.warn('[TotalMatch] restore:',e);}
 }
+
+// ════════════════════════════════════════════════════════════════
+// requestVideoFrameCallback — frame-perfect sync
+// ════════════════════════════════════════════════════════════════
+// Standard RAF polling reads video.currentTime which can be up to
+// one frame behind the actual displayed frame. requestVideoFrameCallback
+// fires exactly when a new frame is presented to the screen, giving us
+// the precise media timestamp of what the user is actually seeing.
+//
+// We use this to drive ofTrackAll() at the right moment —
+// optical flow runs on the exact frame being displayed, not an
+// approximation. Falls back to RAF on browsers without support.
+
+let _rvfcId = null;
+
+function _rvfcLoop(now, metadata){
+  if(!S.playing) return; // stop if paused
+  // metadata.mediaTime is the precise video timestamp of this frame
+  const frameTime = metadata.mediaTime;
+  // Run optical flow at the exact frame time
+  ofTrackAllAt(frameTime);
+  updateTrackerBoxesFromData();
+  redraw();
+  // Re-register for next frame
+  _rvfcId = $('tm-video').requestVideoFrameCallback(_rvfcLoop);
+}
+
+// Start rvfc loop — called from startDrawLoop when supported
+function startRvfc(){
+  if(_rvfcId) return;
+  _rvfcId = $('tm-video').requestVideoFrameCallback(_rvfcLoop);
+}
+function stopRvfc(){
+  if(_rvfcId){ $('tm-video').cancelVideoFrameCallback(_rvfcId); _rvfcId=null; }
+}
+
+// Variant of ofTrackAll that accepts an explicit timestamp
+// instead of reading video.currentTime (which lags by ~1 frame)
+function ofTrackAllAt(t){
+  if(!S.trackers.length) return;
+  const v = document.getElementById('tm-video');
+  if(!v || v.readyState < 2) return;
+  if(Math.abs(t - _ofLastVideoTime) < 0.001) return;
+  if(!_OF._ready) _OF.init();
+  _OF.captureGray(v, _OF._currGray);
+  if(_ofLastVideoTime >= 0 && Math.abs(t - _ofLastVideoTime) < 0.5){
+    const frame = Math.round(t * 25);
+    S.trackers.forEach(tr => {
+      if(!tr.box) return;
+      tr.box._ofId = tr.id;
+      const newBox = _OF.trackBox(_OF._prevGray, _OF._currGray, tr.box);
+      if(newBox){
+        newBox.x = Math.max(0, Math.min(1280 - newBox.w, newBox.x));
+        newBox.y = Math.max(0, Math.min(720  - newBox.h, newBox.y));
+        newBox._ofId = tr.id;
+        tr.box = newBox; tr.lost = false;
+        if(!S.trackData[tr.id]) S.trackData[tr.id] = [];
+        const arr = S.trackData[tr.id];
+        if(!arr.length || arr[arr.length-1].frame !== frame)
+          arr.push({frame, t:+t.toFixed(3),
+            x:+newBox.x.toFixed(1), y:+newBox.y.toFixed(1),
+            w:+newBox.w.toFixed(1), h:+newBox.h.toFixed(1)});
+      } else {
+        delete _OF._features[tr.id]; tr.lost = true;
+      }
+    });
+  }
+  const tmp=_OF._prevGray; _OF._prevGray=_OF._currGray; _OF._currGray=tmp;
+  _OF._ctxPrev.drawImage(_OF._cvsCurr, 0, 0);
+  _ofLastVideoTime = t;
+}
+
+// Patch startDrawLoop to prefer rvfc, fall back to RAF
+// IMPORTANT: original startDrawLoop is kept for scrub/pause redraws
+{
+  const _origStartDrawLoop = startDrawLoop;
+  const _origStopDrawLoop  = stopDrawLoop;
+  window.startDrawLoop = function(){
+    if('requestVideoFrameCallback' in HTMLVideoElement.prototype){
+      // Use frame-perfect rvfc
+      S.playing = true;
+      startRvfc();
+    } else {
+      // Fallback: original RAF loop
+      _origStartDrawLoop();
+    }
+  };
+  window.stopDrawLoop = function(){
+    stopRvfc();
+    _origStopDrawLoop();
+  };
+}
+
+// ════════════════════════════════════════════════════════════════
+// CLOUD AI PROCESSING
+// ════════════════════════════════════════════════════════════════
+// Architecture:
+//   1. User clicks "Process with AI (Cloud)"
+//   2. Frontend reads the local video file as binary (no re-upload
+//      if a blob URL — we need the original File object)
+//   3. POST multipart/form-data to configured endpoint
+//   4. Poll job status endpoint every 2s
+//   5. On completion, fetch result JSON and call loadTrackJSON logic
+//
+// Expected backend API (FastAPI/Flask — user deploys separately):
+//
+//   POST /analyze          body: {file: <video>}
+//   → {job_id: "abc123"}
+//
+//   GET  /status/{job_id}
+//   → {status: "processing"|"done"|"failed", progress: 0-100}
+//
+//   GET  /result/{job_id}
+//   → TotalMatch Schema A JSON (same as Import Track File)
+//
+// The endpoint URL is saved to localStorage so it persists.
+
+let _cloudJobId = null;
+let _cloudPollTimer = null;
+let _lastVideoFile = null; // store File ref from loadLocal
+
+// Intercept loadLocal to capture the File object
+{
+  const _origLoadLocal = loadLocal;
+  window.loadLocal = function(input){
+    if(input.files[0]) _lastVideoFile = input.files[0];
+    _origLoadLocal(input);
+  };
+}
+
+function getCloudUrl(){
+  return localStorage.getItem('tm_cloud_url') || '';
+}
+function saveCloudUrl(){
+  const url = ($('tm-cloud-url').value||'').trim();
+  if(!url){ notify('Paste an endpoint URL first','#E8590C'); return; }
+  localStorage.setItem('tm_cloud_url', url);
+  notify('Endpoint saved','#30D158');
+  $('tm-cloud-cfg').style.display='none';
+}
+function toggleCloudCfg(){
+  const el = $('tm-cloud-cfg');
+  const showing = el.style.display !== 'none';
+  el.style.display = showing ? 'none' : 'block';
+  if(!showing){
+    $('tm-cloud-url').value = getCloudUrl();
+    setTimeout(()=>$('tm-cloud-url').focus(), 60);
+  }
+}
+
+function _setCloudStatus(msg, pct, color){
+  $('tm-cloud-status').style.display = 'block';
+  $('tm-cloud-msg').textContent = msg;
+  $('tm-cloud-msg').style.color = color || 'rgba(255,255,255,.5)';
+  $('tm-cloud-bar').style.width = (pct||0) + '%';
+  $('tm-cloud-bar').style.background = color || '#a78bfa';
+}
+function _clearCloudPoll(){
+  if(_cloudPollTimer){ clearInterval(_cloudPollTimer); _cloudPollTimer=null; }
+}
+
+async function processWithCloud(){
+  const endpoint = getCloudUrl();
+  if(!endpoint){
+    toggleCloudCfg();
+    notify('Set your cloud endpoint URL first','#d29922');
+    return;
+  }
+  if(!S.loaded){
+    notify('Load a video first','#E8590C'); return;
+  }
+  if(!_lastVideoFile){
+    notify('Re-open video from local file to upload','#E8590C'); return;
+  }
+
+  // Disable button while processing
+  $('tm-cloud-btn').disabled = true;
+  $('tm-cloud-btn').textContent = '☁ Processing…';
+  _clearCloudPoll();
+  _setCloudStatus('Uploading video…', 5);
+
+  try{
+    // ── Step 1: Upload ─────────────────────────────────────────
+    const form = new FormData();
+    form.append('file', _lastVideoFile);
+    form.append('fps', '25');
+
+    const uploadResp = await fetch(endpoint + '/analyze', {
+      method:'POST', body:form
+    });
+    if(!uploadResp.ok) throw new Error('Upload failed: ' + uploadResp.status);
+    const { job_id } = await uploadResp.json();
+    _cloudJobId = job_id;
+    _setCloudStatus('Queued — waiting for GPU…', 12);
+
+    // ── Step 2: Poll status ────────────────────────────────────
+    await new Promise((resolve, reject)=>{
+      _cloudPollTimer = setInterval(async ()=>{
+        try{
+          const r = await fetch(endpoint + '/status/' + job_id);
+          if(!r.ok){ clearInterval(_cloudPollTimer); reject(new Error('Status error')); return; }
+          const { status, progress, message } = await r.json();
+          const pct = Math.max(12, Math.min(90, progress||0));
+          _setCloudStatus(message || (status==='processing'?'Tracking players…':'Processing…'), pct);
+          if(status === 'done'){ clearInterval(_cloudPollTimer); resolve(); }
+          if(status === 'failed'){ clearInterval(_cloudPollTimer); reject(new Error(message||'Processing failed')); }
+        }catch(e){ clearInterval(_cloudPollTimer); reject(e); }
+      }, 2000);
+    });
+
+    // ── Step 3: Fetch result JSON ──────────────────────────────
+    _setCloudStatus('Downloading track data…', 92);
+    const resultResp = await fetch(endpoint + '/result/' + job_id);
+    if(!resultResp.ok) throw new Error('Result fetch failed: ' + resultResp.status);
+    const trackJson = await resultResp.json();
+
+    // ── Step 4: Import into app (same logic as loadTrackJSON) ──
+    _importTrackData(trackJson);
+    _setCloudStatus('✓ Tracking complete!', 100, '#30D158');
+    notify('Cloud tracking complete — shapes will follow players','#30D158');
+
+  }catch(err){
+    _setCloudStatus('✗ ' + err.message, 0, '#E31837');
+    notify('Cloud error: ' + err.message, '#E31837');
+    console.error('[Cloud]', err);
+  }finally{
+    $('tm-cloud-btn').disabled = false;
+    $('tm-cloud-btn').textContent = '☁ Process with AI (Cloud)';
+  }
+}
+
+// Core track import logic extracted so both loadTrackJSON and
+// processWithCloud can share it without duplication
+function _importTrackData(data){
+  let tracks={}, meta={};
+  if(Array.isArray(data)){
+    data.forEach(p=>{
+      const id='tr_'+p.id;
+      tracks[id]=(p.frames||p.data||[]).map(fr=>({
+        frame:fr.frame||0, t:+fr.t.toFixed(3),
+        x:+fr.x.toFixed(1), y:+fr.y.toFixed(1),
+        w:+(fr.w||50).toFixed(1), h:+(fr.h||70).toFixed(1)
+      }));
+      meta[id]={jersey:p.jersey||p.id, team:p.team||'A'};
+    });
+  } else if(data.tracks){
+    Object.entries(data.tracks).forEach(([pid,frames])=>{
+      const id='tr_'+pid;
+      tracks[id]=frames.map(fr=>({
+        frame:fr.frame||0, t:+fr.t.toFixed(3),
+        x:+fr.x.toFixed(1), y:+fr.y.toFixed(1),
+        w:+(fr.w||50).toFixed(1), h:+(fr.h||70).toFixed(1)
+      }));
+      meta[id]=(data.meta&&data.meta[pid])||{jersey:pid,team:'A'};
+    });
+  } else { notify('Unrecognized track format','#E31837'); return; }
+
+  Object.values(tracks).forEach(arr=>arr.sort((a,b)=>a.t-b.t));
+
+  Object.entries(tracks).forEach(([id,frames])=>{
+    if(S.trackData[id]){
+      const existing=new Set(S.trackData[id].map(f=>f.frame));
+      frames.forEach(fr=>{ if(!existing.has(fr.frame)) S.trackData[id].push(fr); });
+      S.trackData[id].sort((a,b)=>a.t-b.t);
+    } else {
+      S.trackData[id]=frames;
+    }
+  });
+
+  Object.entries(tracks).forEach(([id,frames])=>{
+    if(S.trackers.find(t=>t.id===id)) return;
+    const m=meta[id]||{};
+    const f0=frames[0];
+    S.trackers.push({id, jersey:m.jersey||id.replace('tr_',''), team:m.team||'A',
+      box:f0?{x:f0.x,y:f0.y,w:f0.w,h:f0.h}:null, trail:[], lost:false});
+  });
+
+  renderTrackerList(); updateTeamCts(); updateTrackerSVG();
+  if(S.loaded){ updateTrackerBoxesFromData(); redraw(); }
+  const total=Object.keys(tracks).length;
+  const frames=Object.values(tracks).reduce((s,a)=>s+a.length,0);
+  const info=total+' players · '+frames.toLocaleString()+' frames';
+  $('tm-track-info').textContent=info;
+  $('tm-track-imported').style.display='block';
+  scheduleSave();
+}
+
+// ── End Cloud AI Processing ───────────────────────────────────────
 
 // ── NAVIGATION ───────────────────────────────────────────────────
 function goBack(){ window.location.href='/'; }
