@@ -4008,7 +4008,7 @@ function renderCutTimeline() {
         if(e.target.classList.contains('clip-resize-r')) return;
         if(e._effectBarHandled) return; // effect bar already handled
         e.stopPropagation();
-        // Guard against click firing as part of a dblclick sequence
+        // Ignore single click if it's the second click of a dblclick (within 300ms)
         const _now = Date.now();
         if(el._lastClickTime && _now - el._lastClickTime < 300){ el._lastClickTime = 0; return; }
         el._lastClickTime = _now;
@@ -4016,15 +4016,26 @@ function renderCutTimeline() {
       }, true); // capture:true — fires before children
       el.addEventListener('contextmenu',e=>{e.stopPropagation();clipContextMenu(e,ci);});
       // Double-click → jump playhead to first frame of this clip
-      el.addEventListener('dblclick', e => {
-        e.stopPropagation();
-        el._lastClickTime = 0; // cancel pending single-click
-        const c2 = S.cut.clips[ci];
-        if(!c2) return;
-        S.cut.ph = c2.start;
-        updateCutPH();
-        syncCutVid();
-      });
+      // Use mousedown-based detection (capture) to avoid click handler interference
+      el.addEventListener('mousedown', e => {
+        if(e.button !== 0) return;
+        if(e.target.classList.contains('clip-resize-l')) return;
+        if(e.target.classList.contains('clip-resize-r')) return;
+        const _now2 = Date.now();
+        if(el._lastMdTime && _now2 - el._lastMdTime < 300){
+          // Double mousedown = double-click
+          e.stopPropagation();
+          el._lastMdTime = 0;
+          el._lastClickTime = 0;
+          const c2 = S.cut.clips[ci];
+          if(!c2) return;
+          S.cut.ph = c2.start;
+          updateCutPH();
+          syncCutVid();
+          return;
+        }
+        el._lastMdTime = _now2;
+      }, true);
       el.addEventListener('mousedown', e => {
         if(e.target.classList.contains('clip-resize-l')||e.target.classList.contains('clip-resize-r')) return;
         // Select immediately on mousedown (before any drag), capture phase
