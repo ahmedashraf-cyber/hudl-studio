@@ -445,6 +445,7 @@ window.openProject = async function(id) {
       }
     }
 
+    window._vpZoom = 1; // reset viewport zoom on project open
     openApp(project.appType || 'cut');
     const missingFiles = restoredMedia.filter(m => !m.url).length;
     if (missingFiles > 0) {
@@ -661,6 +662,10 @@ function applyCanvasAspectRatio(w, h){
   if(ph2 > maxH){ ph2 = maxH; pw = maxH * ar; }
   pw = Math.round(pw); ph2 = Math.round(ph2);
 
+  // Store base (fit) dimensions so _applyVpZoom can scale from them
+  frame._baseW = pw;
+  frame._baseH = ph2;
+
   // Resize only the frame boundary — never the video element
   frame.style.width  = pw + 'px';
   frame.style.height = ph2 + 'px';
@@ -676,8 +681,100 @@ function applyCanvasAspectRatio(w, h){
     mv.style.maxWidth  = '';
     mv.style.maxHeight = '';
   }
+
+  // Wire hover tracking for viewport zoom (once only)
+  if(!screen._vpHooked){
+    screen._vpHooked = true;
+    screen.addEventListener('mouseenter', () => { window._mouseOverViewport = true; });
+    screen.addEventListener('mouseleave', () => { window._mouseOverViewport = false; });
+    // Ctrl+wheel over viewport → zoom viewport
+    screen.addEventListener('wheel', e => {
+      if(!e.ctrlKey) return;
+      e.preventDefault();
+      const factor = e.deltaY < 0 ? 1.1 : 1/1.1;
+      window._vpZoom = Math.max(0.25, Math.min(4, (window._vpZoom||1) * factor));
+      _applyVpZoom();
+    }, {passive: false});
+  }
+
+  // Apply current zoom (reset to 1 on new project open)
+  window._vpZoom = window._vpZoom || 1;
+  _applyVpZoom();
 }
 window.applyCanvasAspectRatio = applyCanvasAspectRatio;
+
+// ── Viewport Zoom ─────────────────────────────────────────────────────────────
+// Scales cut-viewport-frame independently of timeline PPS zoom.
+// Uses CSS transform so nothing else (overlays, bbox, event coords) is affected —
+// the frame's logical size stays the same; only its visual presentation scales.
+function _applyVpZoom(){
+  const frame  = document.getElementById('cut-viewport-frame');
+  const screen = document.getElementById('cut-screen');
+  if(!frame || !screen) return;
+
+  const z = window._vpZoom || 1;
+
+  // At zoom=1 the frame fits snugly. At zoom>1 we scale up and let cut-screen scroll.
+  // We set transform-origin to center so zoom is centered on the preview.
+  frame.style.transformOrigin = '50% 50%';
+  frame.style.transform       = z === 1 ? '' : `scale(${z.toFixed(3)})`;
+
+  // cut-screen needs overflow:auto when zoomed so user can pan
+  screen.style.overflow = z > 1 ? 'auto' : 'visible';
+
+  // When zoomed in, expand cut-screen's scroll area to fit the scaled frame.
+  // We do this with a transparent spacer div.
+  let spacer = document.getElementById('cut-vp-spacer');
+  if(z > 1){
+    const bW = (frame._baseW || frame.offsetWidth)  * z;
+    const bH = (frame._baseH || frame.offsetHeight) * z;
+    if(!spacer){
+      spacer = document.createElement('div');
+      spacer.id = 'cut-vp-spacer';
+      spacer.style.cssText = 'position:absolute;pointer-events:none;top:0;left:0;';
+      screen.appendChild(spacer);
+    }
+    spacer.style.width  = bW + 'px';
+    spacer.style.height = bH + 'px';
+  } else {
+    if(spacer) spacer.remove();
+  }
+
+  // Update zoom badge
+  _updateVpZoomBadge(z);
+}
+window._applyVpZoom = _applyVpZoom;
+
+function _updateVpZoomBadge(z){
+  let badge = document.getElementById('vp-zoom-badge');
+  const screen = document.getElementById('cut-screen');
+  if(!screen) return;
+  if(!badge){
+    badge = document.createElement('div');
+    badge.id = 'vp-zoom-badge';
+    badge.title = 'Viewport zoom — double-click to reset (Ctrl+0)';
+    badge.style.cssText = [
+      'position:absolute','bottom:38px','left:8px',
+      'background:rgba(0,0,0,0.65)','color:rgba(255,255,255,0.75)',
+      'font-size:10px','font-family:DM Mono,monospace',
+      'padding:2px 7px','border-radius:4px',
+      'pointer-events:all','cursor:pointer',
+      'z-index:50','user-select:none',
+      'transition:opacity 0.2s',
+      'border:0.5px solid rgba(255,255,255,0.12)'
+    ].join(';');
+    badge.addEventListener('dblclick', () => {
+      window._vpZoom = 1;
+      _applyVpZoom();
+    });
+    screen.appendChild(badge);
+  }
+  const pct = Math.round(z * 100);
+  badge.textContent = pct + '%';
+  badge.style.color = z === 1 ? 'rgba(255,255,255,0.45)' : '#E8590C';
+  badge.style.opacity = z === 1 ? '0.5' : '1';
+}
+window._updateVpZoomBadge = _updateVpZoomBadge;
 
 window.goToLauncher = async function() {
   if (S.cut.playing) stopCutPlay();
@@ -6306,21 +6403,44 @@ document.addEventListener('keydown', e => {
     // Arrow keys: move playhead frame by frame
     if (!e.ctrlKey&&!e.metaKey&&e.code==='ArrowRight'){e.preventDefault();const fps=S.proj.fps||30;S.cut.ph=Math.min(S.cut.ph+(e.shiftKey?1:1/fps),99999);updateCutPH();syncCutVid();}
     if (!e.ctrlKey&&!e.metaKey&&e.code==='ArrowLeft'){e.preventDefault();const fps=S.proj.fps||30;S.cut.ph=Math.max(0,S.cut.ph-(e.shiftKey?1:1/fps));updateCutPH();syncCutVid();}
-    // = / - keys: zoom in/out anchored to playhead
+    // = / - keys: zoom viewport (if mouse over preview) or timeline (otherwise)
     if(e.code==='Equal'||e.code==='NumpadAdd'){e.preventDefault();
-      const sc=$('tl-scroll');if(sc){
-        const phPx=S.cut.ph*PPS-sc.scrollLeft;
-        PPS=Math.min(600,PPS*1.25); window.PPS=PPS;
-        sc.scrollLeft=Math.max(0,S.cut.ph*PPS-phPx);
-        renderCutTimeline();
+      if(window._mouseOverViewport){
+        window._vpZoom = Math.min(4, (window._vpZoom||1) * 1.2);
+        _applyVpZoom();
+      } else {
+        const sc=$('tl-scroll');if(sc){
+          const phPx=S.cut.ph*PPS-sc.scrollLeft;
+          PPS=Math.min(600,PPS*1.25); window.PPS=PPS;
+          window._snapCache=null;
+          sc.scrollLeft=Math.max(0,S.cut.ph*PPS-phPx);
+          renderCutTimeline();
+        }
       }
     }
     if(e.code==='Minus'||e.code==='NumpadSubtract'){e.preventDefault();
-      const sc=$('tl-scroll');if(sc){
-        const phPx=S.cut.ph*PPS-sc.scrollLeft;
-        PPS=Math.max(8,PPS*0.8); window.PPS=PPS;
-        sc.scrollLeft=Math.max(0,S.cut.ph*PPS-phPx);
+      if(window._mouseOverViewport){
+        window._vpZoom = Math.max(0.25, (window._vpZoom||1) / 1.2);
+        _applyVpZoom();
+      } else {
+        const sc=$('tl-scroll');if(sc){
+          const phPx=S.cut.ph*PPS-sc.scrollLeft;
+          PPS=Math.max(8,PPS*0.8); window.PPS=PPS;
+          window._snapCache=null;
+          sc.scrollLeft=Math.max(0,S.cut.ph*PPS-phPx);
+          renderCutTimeline();
+        }
+      }
+    }
+    // Ctrl+0: reset viewport zoom (hover=preview) or timeline zoom (hover=elsewhere)
+    if((e.ctrlKey||e.metaKey)&&(e.code==='Digit0'||e.code==='Numpad0')){e.preventDefault();
+      if(window._mouseOverViewport){
+        window._vpZoom=1; _applyVpZoom();
+      } else {
+        const _sc=$('tl-scroll'),_ph=S.cut.ph||0,_vw=_sc?_sc.clientWidth:800;
+        PPS=60; window.PPS=PPS; window._snapCache=null;
         renderCutTimeline();
+        if(_sc) _sc.scrollLeft=Math.max(0,_ph*PPS-_vw*0.4);
       }
     }
   }
