@@ -6508,187 +6508,201 @@ window.cutAddToTL = cutAddToTL;
 // Shows interactive handles on the selected clip in the preview
 
 function renderBoundingBox(ci){
-  // Remove existing bounding box
+  // Cleanup previous bbox listeners before removing element
   const old = document.getElementById('cut-bbox');
-  if(old) old.remove();
+  if(old){ if(old._cleanup) old._cleanup(); old._cleanup = null; old.remove(); }
 
   const frame = document.getElementById('cut-viewport-frame');
   if(!frame) return;
 
-  // Only show for video and image clips
-  const clip = ci !== null && ci !== undefined ? S.cut.clips[ci] : null;
+  const clip = (ci !== null && ci !== undefined) ? S.cut.clips[ci] : null;
   if(!clip || (clip.type !== 'video' && clip.type !== 'image')) return;
 
-  // Only show when clip is active at current ph
   const ph = S.cut.ph;
   if(ph < clip.start || ph >= clip.start + clip.dur) return;
 
-  const tf = clip.transform || {x:0, y:0, scaleX:100, scaleY:100, rotation:0};
+  if(!clip.transform) clip.transform = {x:0, y:0, scaleX:100, scaleY:100, rotation:0};
+  const tf = clip.transform;
   const fW = frame.offsetWidth;
   const fH = frame.offsetHeight;
 
-  // Bounding box overlay (sits on top of video in the frame)
+  // Compute actual rendered image base dimensions (contain-fit inside frame)
+  let baseW = fW, baseH = fH;
+  if(clip.type === 'image'){
+    const item = S.cut.media[clip.mediaIdx];
+    const imgEl = item && item.url ? getPoolImg(item.url) : null;
+    if(imgEl && imgEl.naturalWidth && imgEl.naturalHeight){
+      const iAR = imgEl.naturalWidth / imgEl.naturalHeight;
+      const cAR = fW / fH;
+      if(iAR > cAR){ baseW = fW; baseH = fW / iAR; }
+      else          { baseH = fH; baseW = fH * iAR; }
+    }
+  }
+
+  const sx  = (tf.scaleX||100) / 100;
+  const sy  = (tf.scaleY||100) / 100;
+  const rot = tf.rotation || 0;
+  const tx  = (tf.x||0) / 100 * fW;
+  const ty  = (tf.y||0) / 100 * fH;
+  const bW  = baseW * sx;
+  const bH  = baseH * sy;
+  const cx  = fW/2 + tx;
+  const cy  = fH/2 + ty;
+
   const box = document.createElement('div');
   box.id = 'cut-bbox';
-  box.style.cssText = `
-    position:absolute; inset:0;
-    pointer-events:none;
-    z-index:10;
-    overflow:visible;
-  `;
+  box.style.cssText = 'position:absolute;inset:0;pointer-events:none;z-index:10;overflow:visible;';
 
-  // Calculate box dimensions based on scale
-  const sx = (tf.scaleX||100)/100;
-  const sy = (tf.scaleY||100)/100;
-  const rot = tf.rotation||0;
-  const tx = (tf.x||0)/100 * fW;
-  const ty = (tf.y||0)/100 * fH;
-
-  // Box is centered in the frame, then scaled and translated
-  const bW = fW * sx;
-  const bH = fH * sy;
-  const bLeft = (fW - bW)/2 + tx;
-  const bTop  = (fH - bH)/2 + ty;
-
-  // SVG for the bounding box outline + handles
   const svg = document.createElementNS('http://www.w3.org/2000/svg','svg');
-  svg.style.cssText = `position:absolute;inset:0;width:100%;height:100%;overflow:visible;pointer-events:none;`;
+  svg.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;overflow:visible;pointer-events:none;';
 
-  // Ghost border (dashed white outline around the clip area)
-  const rect = document.createElementNS('http://www.w3.org/2000/svg','rect');
-  const cx = fW/2 + tx, cy = fH/2 + ty;
-  rect.setAttribute('x', cx - bW/2);
-  rect.setAttribute('y', cy - bH/2);
-  rect.setAttribute('width', bW);
-  rect.setAttribute('height', bH);
-  rect.setAttribute('fill','none');
-  rect.setAttribute('stroke','rgba(232,89,12,0.8)');
-  rect.setAttribute('stroke-width','1');
-  rect.setAttribute('stroke-dasharray','6,3');
-  rect.setAttribute('transform', `rotate(${rot},${cx},${cy})`);
-  svg.appendChild(rect);
+  // Dashed border
+  const borderRect = document.createElementNS('http://www.w3.org/2000/svg','rect');
+  borderRect.setAttribute('x', cx - bW/2);
+  borderRect.setAttribute('y', cy - bH/2);
+  borderRect.setAttribute('width',  bW);
+  borderRect.setAttribute('height', bH);
+  borderRect.setAttribute('fill',   'none');
+  borderRect.setAttribute('stroke', 'rgba(232,89,12,0.9)');
+  borderRect.setAttribute('stroke-width', '1.5');
+  borderRect.setAttribute('stroke-dasharray','6,3');
+  borderRect.setAttribute('transform', 'rotate('+rot+','+cx+','+cy+')');
+  svg.appendChild(borderRect);
 
-  // Corner handles
+  // Corner handles — [x, y, cursor, name, scaleSignX]
+  // scaleSignX: +1 means drag-right grows width, -1 means drag-right shrinks width
   const corners = [
-    [cx - bW/2, cy - bH/2],
-    [cx + bW/2, cy - bH/2],
-    [cx + bW/2, cy + bH/2],
-    [cx - bW/2, cy + bH/2],
+    [cx-bW/2, cy-bH/2, 'nw-resize', 'nw', -1],
+    [cx+bW/2, cy-bH/2, 'ne-resize', 'ne', +1],
+    [cx+bW/2, cy+bH/2, 'se-resize', 'se', +1],
+    [cx-bW/2, cy+bH/2, 'sw-resize', 'sw', -1],
   ];
-  // Midpoint handles
-  const mids = [
-    [cx, cy - bH/2],
-    [cx + bW/2, cy],
-    [cx, cy + bH/2],
-    [cx - bW/2, cy],
-  ];
-
-  // Draw corner handles (larger, square) — interactive resize
-  const cornerNames = ['nw','ne','se','sw'];
-  corners.forEach(([hx, hy], idx) => {
-    const g = document.createElementNS('http://www.w3.org/2000/svg','g');
-    g.setAttribute('transform', `rotate(${rot},${cx},${cy})`);
-    g.setAttribute('data-handle', cornerNames[idx]);
-    g.style.cursor = 'nwse-resize';
-    g.style.pointerEvents = 'all';
-    const r = document.createElementNS('http://www.w3.org/2000/svg','rect');
-    r.setAttribute('x', hx-6); r.setAttribute('y', hy-6);
-    r.setAttribute('width', 12); r.setAttribute('height', 12);
-    r.setAttribute('rx', 2);
+  corners.forEach(function(corner){
+    var hx=corner[0],hy=corner[1],cur=corner[2],name=corner[3];
+    var g = document.createElementNS('http://www.w3.org/2000/svg','g');
+    g.setAttribute('transform','rotate('+rot+','+cx+','+cy+')');
+    g.setAttribute('data-handle', name);
+    g.setAttribute('data-sign',   corner[4]);
+    g.style.cssText = 'cursor:'+cur+';pointer-events:all;';
+    var r = document.createElementNS('http://www.w3.org/2000/svg','rect');
+    r.setAttribute('x',hx-6); r.setAttribute('y',hy-6);
+    r.setAttribute('width',12); r.setAttribute('height',12);
+    r.setAttribute('rx',2);
     r.setAttribute('fill','#fff'); r.setAttribute('stroke','#E8590C'); r.setAttribute('stroke-width','1.5');
     g.appendChild(r); svg.appendChild(g);
   });
 
-  // Draw midpoint handles (smaller, circle)
-  mids.forEach(([hx, hy]) => {
-    const g = document.createElementNS('http://www.w3.org/2000/svg','g');
-    g.setAttribute('transform', `rotate(${rot},${cx},${cy})`);
-    const c2 = document.createElementNS('http://www.w3.org/2000/svg','circle');
-    c2.setAttribute('cx', hx); c2.setAttribute('cy', hy);
-    c2.setAttribute('r', 4);
+  // Midpoint handles
+  [[cx,cy-bH/2],[cx+bW/2,cy],[cx,cy+bH/2],[cx-bW/2,cy]].forEach(function(m){
+    var g = document.createElementNS('http://www.w3.org/2000/svg','g');
+    g.setAttribute('transform','rotate('+rot+','+cx+','+cy+')');
+    var c2 = document.createElementNS('http://www.w3.org/2000/svg','circle');
+    c2.setAttribute('cx',m[0]); c2.setAttribute('cy',m[1]); c2.setAttribute('r',4);
     c2.setAttribute('fill','#fff'); c2.setAttribute('stroke','#E8590C'); c2.setAttribute('stroke-width','1.5');
     g.appendChild(c2); svg.appendChild(g);
   });
 
   // Center crosshair
-  [[cx-6,cy,cx+6,cy],[cx,cy-6,cx,cy+6]].forEach(([x1,y1,x2,y2]) => {
-    const l = document.createElementNS('http://www.w3.org/2000/svg','line');
-    l.setAttribute('x1',x1); l.setAttribute('y1',y1);
-    l.setAttribute('x2',x2); l.setAttribute('y2',y2);
-    l.setAttribute('stroke','rgba(232,89,12,0.9)'); l.setAttribute('stroke-width','1.5');
-    svg.appendChild(l);
+  [[cx-8,cy,cx+8,cy],[cx,cy-8,cx,cy+8]].forEach(function(l){
+    var line = document.createElementNS('http://www.w3.org/2000/svg','line');
+    line.setAttribute('x1',l[0]); line.setAttribute('y1',l[1]);
+    line.setAttribute('x2',l[2]); line.setAttribute('y2',l[3]);
+    line.setAttribute('stroke','rgba(232,89,12,0.9)'); line.setAttribute('stroke-width','1.5');
+    svg.appendChild(line);
   });
+
+  // Transparent interior hit-rect for move
+  var hitRect = document.createElementNS('http://www.w3.org/2000/svg','rect');
+  hitRect.setAttribute('x', cx-bW/2+8); hitRect.setAttribute('y', cy-bH/2+8);
+  hitRect.setAttribute('width',  Math.max(0,bW-16));
+  hitRect.setAttribute('height', Math.max(0,bH-16));
+  hitRect.setAttribute('fill',   'rgba(0,0,0,0.001)');
+  hitRect.setAttribute('transform','rotate('+rot+','+cx+','+cy+')');
+  hitRect.style.cssText = 'cursor:move;pointer-events:all;';
+  svg.appendChild(hitRect);
 
   box.appendChild(svg);
   frame.appendChild(box);
 
-  // ── Drag to move ────────────────────────────────────────────
-  // Make the viewport frame draggable for the selected clip
-  // ── Interactive handles — re-wire on every call ──
-  frame._bboxDrag = true;
-  let _mode = null; // 'move' | 'scale'
-  let _startX, _startY, _origTX, _origTY, _origSX, _origSY;
+  // ── Interaction ───────────────────────────────────────────────────────────
+  var _mode=null, _startX=0, _startY=0;
+  var _origTX=0, _origTY=0, _origSX=100, _origSY=100, _scaleSign=1;
+  var _rafPending=false;
 
-  // Corner handles — scale
-  box.querySelectorAll('[data-handle]').forEach(h => {
-    h.addEventListener('mousedown', e => {
+  // Corner mousedown → scale
+  box.querySelectorAll('[data-handle]').forEach(function(h){
+    h.addEventListener('mousedown', function(e){
       e.stopPropagation(); e.preventDefault();
-      const ci2 = S.cut.sel;
-      if(ci2 === null || ci2 === undefined) return;
-      const cl = S.cut.clips[ci2];
+      var cl = S.cut.clips[S.cut.sel];
       if(!cl) return;
-      if(!cl.transform) cl.transform = {x:0,y:0,scaleX:100,scaleY:100,rotation:0};
-      _mode = 'scale';
-      _startX = e.clientX; _startY = e.clientY;
-      _origSX = cl.transform.scaleX||100;
-      _origSY = cl.transform.scaleY||100;
+      if(!cl.transform) cl.transform={x:0,y:0,scaleX:100,scaleY:100,rotation:0};
+      _mode='scale';
+      _startX=e.clientX; _startY=e.clientY;
+      _origSX=cl.transform.scaleX||100;
+      _origSY=cl.transform.scaleY||100;
+      _scaleSign = parseInt(h.getAttribute('data-sign')||'1');
     });
   });
 
-  // Frame click — move
-  frame.addEventListener('mousedown', e => {
-    if(e.target.closest('[data-handle]')) return;
-    if(S.cut.sel === null || S.cut.sel === undefined) return;
-    const cl = S.cut.clips[S.cut.sel];
-    if(!cl || (cl.type !== 'video' && cl.type !== 'image')) return;
-    _mode = 'move';
-    _startX = e.clientX; _startY = e.clientY;
-    if(!cl.transform) cl.transform = {x:0,y:0,scaleX:100,scaleY:100,rotation:0};
-    _origTX = cl.transform.x||0;
-    _origTY = cl.transform.y||0;
-    e.preventDefault();
+  // Interior hit-rect mousedown → move
+  hitRect.addEventListener('mousedown', function(e){
+    e.stopPropagation(); e.preventDefault();
+    var cl = S.cut.clips[S.cut.sel];
+    if(!cl) return;
+    if(!cl.transform) cl.transform={x:0,y:0,scaleX:100,scaleY:100,rotation:0};
+    _mode='move';
+    _startX=e.clientX; _startY=e.clientY;
+    _origTX=cl.transform.x||0;
+    _origTY=cl.transform.y||0;
   });
 
-  window.addEventListener('mousemove', e => {
-    if(!_mode) return;
-    const ci2 = S.cut.sel;
-    if(ci2 === null || ci2 === undefined) return;
-    const cl = S.cut.clips[ci2];
-    if(!cl || !cl.transform) return;
-    const fr = document.getElementById('cut-viewport-frame');
-    if(!fr) return;
-    const dx = (e.clientX - _startX) / fr.offsetWidth  * 100;
-    const dy = (e.clientY - _startY) / fr.offsetHeight * 100;
-    if(_mode === 'move'){
-      cl.transform.x = Math.max(-200, Math.min(200, _origTX + dx));
-      cl.transform.y = Math.max(-200, Math.min(200, _origTY + dy));
-    } else {
-      const delta = (Math.abs(dx) > Math.abs(dy) ? dx : dy);
-      cl.transform.scaleX = Math.max(0, Math.round(_origSX + delta));
-      cl.transform.scaleY = Math.max(0, Math.round(_origSY + delta));
-    }
-    syncCutVid(); renderBoundingBox(ci2);
-    const xSl = document.querySelector('#cut-props-body input[oninput*=".x="]');
-    const ySl = document.querySelector('#cut-props-body input[oninput*=".y="]');
-    const sxSl= document.querySelector('#cut-props-body input[oninput*=".scaleX="]');
-    const sySl= document.querySelector('#cut-props-body input[oninput*=".scaleY="]');
-    if(xSl){ xSl.value=cl.transform.x.toFixed(1); xSl.nextElementSibling.textContent=cl.transform.x.toFixed(1)+'%'; }
-    if(ySl){ ySl.value=cl.transform.y.toFixed(1); ySl.nextElementSibling.textContent=cl.transform.y.toFixed(1)+'%'; }
-    if(sxSl){ sxSl.value=cl.transform.scaleX; sxSl.nextElementSibling.textContent=cl.transform.scaleX+'%'; }
-    if(sySl){ sySl.value=cl.transform.scaleY; sySl.nextElementSibling.textContent=cl.transform.scaleY+'%'; }
-  });
+  function _onMove(e){
+    if(!_mode || _rafPending) return;
+    _rafPending=true;
+    requestAnimationFrame(function(){
+      _rafPending=false;
+      var cl2=S.cut.clips[S.cut.sel];
+      if(!cl2||!cl2.transform) return;
+      var fr2=document.getElementById('cut-viewport-frame');
+      if(!fr2) return;
+      var dx=(e.clientX-_startX)/fr2.offsetWidth*100;
+      var dy=(e.clientY-_startY)/fr2.offsetHeight*100;
+      if(_mode==='move'){
+        cl2.transform.x=Math.max(-200,Math.min(200,_origTX+dx));
+        cl2.transform.y=Math.max(-200,Math.min(200,_origTY+dy));
+      } else {
+        var delta=(Math.abs(dx)>=Math.abs(dy)?dx:dy)*_scaleSign;
+        cl2.transform.scaleX=Math.max(1,Math.round(_origSX+delta));
+        cl2.transform.scaleY=Math.max(1,Math.round(_origSY+delta));
+      }
+      syncCutVid();
+      renderBoundingBox(S.cut.sel);
+      var xSl=document.querySelector('#cut-props-body input[oninput*=".x="]');
+      var ySl=document.querySelector('#cut-props-body input[oninput*=".y="]');
+      var sxSl=document.querySelector('#cut-props-body input[oninput*=".scaleX="]');
+      var sySl=document.querySelector('#cut-props-body input[oninput*=".scaleY="]');
+      if(xSl){xSl.value=cl2.transform.x.toFixed(1);xSl.nextElementSibling.textContent=cl2.transform.x.toFixed(1)+'%';}
+      if(ySl){ySl.value=cl2.transform.y.toFixed(1);ySl.nextElementSibling.textContent=cl2.transform.y.toFixed(1)+'%';}
+      if(sxSl){sxSl.value=cl2.transform.scaleX;sxSl.nextElementSibling.textContent=cl2.transform.scaleX+'%';}
+      if(sySl){sySl.value=cl2.transform.scaleY;sySl.nextElementSibling.textContent=cl2.transform.scaleY+'%';}
+    });
+  }
 
-  window.addEventListener('mouseup', () => { _mode = null; });
+  function _onUp(){
+    if(_mode){ if(window.cutSaveHistory) cutSaveHistory('transform'); if(window.scheduleSave) scheduleSave(); }
+    _mode=null;
+  }
+
+  window.addEventListener('mousemove', _onMove);
+  window.addEventListener('mouseup',   _onUp);
+
+  // Store cleanup so it runs exactly once when box is replaced
+  box._cleanup = function(){
+    window.removeEventListener('mousemove', _onMove);
+    window.removeEventListener('mouseup',   _onUp);
+  };
+  var _origRemove = box.remove.bind(box);
+  box.remove = function(){ if(box._cleanup){box._cleanup();box._cleanup=null;} _origRemove(); };
 }
 window.renderBoundingBox = renderBoundingBox;
 
