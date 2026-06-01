@@ -413,20 +413,36 @@ window.openProject = async function(id) {
       const n = parseInt((o.id||'').replace('ov_',''))||0; return Math.max(max,n);
     }, window._overlayIdCounter||0);
 
-    // Restore image_bg overlay blob URLs from IndexedDB (blob URLs die on reload)
+    // Restore image_bg overlay blob URLs from media library (blob URLs die on reload)
+    // Primary path: overlay has mediaIdx → use the already-restored media url
+    // Fallback: match by name in IndexedDB stored files
     const _imgBgOverlays = window._overlays.filter(o => o.type === 'image_bg' && o.bgType === 'image' && o.name);
     if(_imgBgOverlays.length > 0){
-      loadMediaFiles(id).then(storedFiles => {
-        _imgBgOverlays.forEach(o => {
-          // Look for file saved with 'ov_' prefix first, then plain name
-          const match = storedFiles.find(sf => sf.name === 'ov_' + o.name || sf.name === o.name);
-          if(match){
-            o.url = match.url;
-            o._img = null; // force re-create Image on next render
-            if(window.syncCutVid) syncCutVid();
+      // First pass: try to restore from restoredMedia using mediaIdx
+      _imgBgOverlays.forEach(o => {
+        if(o.mediaIdx !== undefined && o.mediaIdx !== null){
+          const mItem = restoredMedia[o.mediaIdx];
+          if(mItem && mItem.url){
+            o.url  = mItem.url;
+            o._img = null;
           }
-        });
-      }).catch(e => console.warn('Could not restore overlay images:', e));
+        }
+      });
+      // Second pass: any still missing → scan IndexedDB by name
+      const _stillMissing = _imgBgOverlays.filter(o => !o.url || o.url.startsWith('blob:') === false);
+      if(_stillMissing.length > 0 || _imgBgOverlays.some(o => !o.url)){
+        loadMediaFiles(id).then(storedFiles => {
+          _imgBgOverlays.forEach(o => {
+            if(o.url) return; // already restored
+            const match = storedFiles.find(sf => sf.name === o.name || sf.name === 'ov_' + o.name);
+            if(match){ o.url = match.url; o._img = null; }
+          });
+          if(window.syncCutVid) syncCutVid();
+        }).catch(e => console.warn('Could not restore overlay images:', e));
+      } else {
+        // All restored via mediaIdx — just redraw
+        setTimeout(() => { if(window.syncCutVid) syncCutVid(); }, 100);
+      }
     }
 
     openApp(project.appType || 'cut');
