@@ -2032,7 +2032,6 @@ function cutToggleEffect(i){
     const eff=CUT_EFFECTS[i];
     if(ov && eff && eff.type==='transition'){
       cutSaveHistory('overlay_transition');
-      // Determine in vs out based on current setting (toggle in → out → both → off)
       const mode = eff.mode;
       const outMode = mode==='fadein'?'fadeout':mode==='zoomin'?'zoomout':mode;
       if(!ov.inTransition || ov.inTransition==='none'){
@@ -2051,38 +2050,53 @@ function cutToggleEffect(i){
       return;
     }
   }
+
   const ci=S.cut.sel;
   if(ci===null||ci===undefined){notify('Select a clip or overlay first','#E31837');return;}
   cutSaveHistory('effect_toggle');
-  if(!S.cut.effects[ci]) S.cut.effects[ci]=[];
-  const idx=S.cut.effects[ci].findIndex(e=>e.i===i);
-  const eff=CUT_EFFECTS[i];
-  if(idx>=0){
-    S.cut.effects[ci].splice(idx,1);
-    notify(eff.name+' removed');
+
+  // ── Helper: toggle effect on a single clip index ──
+  function _applyEffectToClip(tci){
+    if(!S.cut.effects[tci]) S.cut.effects[tci]=[];
+    const existing=S.cut.effects[tci].findIndex(e=>e.i===i);
+    const eff=CUT_EFFECTS[i];
+    if(existing>=0){
+      S.cut.effects[tci].splice(existing,1);
+    } else {
+      const clip=S.cut.clips[tci];
+      const clipDur = clip?.dur || 2;
+      const defaultStartOffset = eff.type==='transition'
+        ? Math.max(0, S.cut.ph - clip.start)
+        : 0;
+      S.cut.effects[tci].push({
+        i,
+        v: eff.default||0,
+        startOffset: defaultStartOffset,
+        effectDur: eff.type==='transition' ? Math.min(eff.dur||1, clipDur*0.5) : clipDur,
+        visible: true,
+      });
+    }
+  }
+
+  // Apply to all selected clips if multi-select active
+  if(window._selectedClips?.size > 1){
+    window._selectedClips.forEach(tci => _applyEffectToClip(tci));
+    notify(CUT_EFFECTS[i].name + ' applied to ' + window._selectedClips.size + ' clips', '#3fb950');
   } else {
-    // Apply from current playhead position within clip
+    _applyEffectToClip(ci);
+    const eff=CUT_EFFECTS[i];
     const clip=S.cut.clips[ci];
     const offsetInClip=Math.max(0,S.cut.ph-clip.start);
-    const clipDur = S.cut.clips[ci]?.dur || 2;
-    const defaultStartOffset = eff.type==='transition'
-      ? Math.max(0, S.cut.ph - clip.start)  // transition starts at current playhead
-      : 0;                                   // filters start at clip beginning
-    S.cut.effects[ci].push({
-      i,
-      v: eff.default||0,
-      startOffset: defaultStartOffset,
-      effectDur: eff.type==='transition' ? Math.min(eff.dur||1, clipDur*0.5) : clipDur,
-      visible: true,
-    });
-    notify(eff.name+' applied at '+fmtTC(offsetInClip)+' into clip','#3fb950');
+    const hasNow = (S.cut.effects[ci]||[]).some(e=>e.i===i);
+    notify(hasNow ? eff.name+' applied at '+fmtTC(offsetInClip)+' into clip' : eff.name+' removed', hasNow?'#3fb950':undefined);
   }
+
   applyVideoEffects();
-  showEffectIndicator(i,idx<0);
+  showEffectIndicator(i, !!(S.cut.effects[ci]||[]).some(e=>e.i===i));
   const p=$('cut-p-effects'); if(p) p.innerHTML=cutEffectsHTML();
-  renderCutTimeline(); // redraw timeline to show effect bars
-  syncCutVid();        // update canvas with new effect immediately
-  if(ci !== null && ci !== undefined) updatePropsPanel(ci); // refresh props so transition sliders appear
+  renderCutTimeline();
+  syncCutVid();
+  if(ci !== null && ci !== undefined) updatePropsPanel(ci);
   scheduleSave();
 }
 
@@ -4328,7 +4342,30 @@ function cutRedo(){
 }
 
 function cutDuplicate(ciOverride){
-  // Accept explicit clip index (from props panel button) or use current selection
+  // ── Multi-select: duplicate all selected clips ──
+  if(ciOverride === undefined && window._selectedClips?.size > 1){
+    cutSaveHistory('duplicate_multi');
+    const indices = [...window._selectedClips].sort((a,b)=>a-b);
+    indices.forEach(ci => {
+      const c = S.cut.clips[ci];
+      if(!c) return;
+      const dup = JSON.parse(JSON.stringify(c));
+      dup.start = c.start + c.dur;
+      const newCi = S.cut.clips.length;
+      if(S.cut.effects[ci]?.length > 0){
+        S.cut.effects[newCi] = JSON.parse(JSON.stringify(S.cut.effects[ci]));
+      }
+      S.cut.clips.push(dup);
+    });
+    window._selectedClips = new Set();
+    S.cut.sel = null;
+    renderCutTimeline();
+    notify('Duplicated ' + indices.length + ' clips', '#3fb950');
+    scheduleSave();
+    return;
+  }
+
+  // ── Single clip duplicate ──
   const ci = (ciOverride !== undefined && ciOverride !== null) ? ciOverride : S.cut.sel;
   if(ci === null || ci === undefined || !S.cut.clips[ci]){
     notify('Select a clip first', '#E31837');
@@ -4336,24 +4373,15 @@ function cutDuplicate(ciOverride){
   }
   cutSaveHistory('duplicate');
   const c = S.cut.clips[ci];
-
-  // ── Deep-clone all clip properties ──
   const dup = JSON.parse(JSON.stringify(c));
-
-  // Place immediately after original on the same track
   dup.start = c.start + c.dur;
-
-  // ── Clone effects (stored by clip index, not on clip object) ──
   const newCi = S.cut.clips.length;
   if(S.cut.effects[ci] && S.cut.effects[ci].length > 0){
     S.cut.effects[newCi] = JSON.parse(JSON.stringify(S.cut.effects[ci]));
   }
-
   S.cut.clips.push(dup);
   S.cut.sel = newCi;
-
   renderCutTimeline();
-  // Also update props panel to show new clip
   setTimeout(() => updatePropsPanel(newCi), 50);
   notify('Clip duplicated (Ctrl+Z to undo)', '#3fb950');
   scheduleSave();
@@ -4377,8 +4405,11 @@ function deleteSelected(){
   if(window._activeEditId){
     // Overlay is selected — delete it
     deleteOverlay(window._activeEditId);
+  } else if(window._selectedClips?.size > 1){
+    // Multi-select — delegate to cutDelete which handles it
+    cutDelete();
   } else if(S.cut.sel !== null && S.cut.sel !== undefined){
-    // Clip is selected — delete it
+    // Single clip selected — delete it
     cutDelete();
   } else {
     notify('Select a clip or overlay first', '#E31837');
@@ -5250,7 +5281,26 @@ function syncCutVid(){
     if(active._img && active._img.complete){
       ctxFH.drawImage(active._img, 0, 0, canvas.width, canvas.height);
     } else {
-      ctxFH.fillStyle='#000'; ctxFH.fillRect(0,0,canvas.width,canvas.height);
+      // _imgData not yet regenerated — try to grab last frame from the video element
+      // (the video is paused at the correct position right before the frame_hold starts)
+      const _mvFallback = document.getElementById('cut-main-vid');
+      let _drewFallback = false;
+      if(_mvFallback && _mvFallback.readyState >= 2 && _mvFallback.videoWidth){
+        try{
+          ctxFH.drawImage(_mvFallback, 0, 0, canvas.width, canvas.height);
+          _drewFallback = true;
+          // Cache the result so we don't redraw every frame
+          if(!active._imgData){
+            active._imgData = canvas.toDataURL('image/jpeg', 0.85);
+            active._img = new Image(); active._img.src = active._imgData;
+          }
+        }catch(e){}
+      }
+      if(!_drewFallback){
+        ctxFH.fillStyle='#111'; ctxFH.fillRect(0,0,canvas.width,canvas.height);
+        // Trigger async regeneration if not already running
+        if(!window._fhRegenPending){ window._fhRegenPending=true; setTimeout(()=>{ window._fhRegenPending=false; if(window._regenerateFrameHolds) _regenerateFrameHolds(); }, 200); }
+      }
     }
     // 2. Apply effects (color grade, filters) on top of frozen frame
     const fhFilterStr = buildFilterStr(activeCI);

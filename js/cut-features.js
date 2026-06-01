@@ -1650,39 +1650,22 @@ function getVideoEl(screen){
 }
 
 function getVideoRect(screen){
-  const el = getVideoEl(screen);
-  if(!el) return {left:0, top:0, width:screen.clientWidth, height:screen.clientHeight};
-  const sr = screen.getBoundingClientRect();
-  const er = el.getBoundingClientRect();
-  const elW = er.width, elH = er.height;
-
-  // For video elements with object-fit:contain we must compute the actual
-  // rendered area (which may be letterboxed / pillarboxed inside the element box)
-  if(el.tagName === 'VIDEO' && el.videoWidth && el.videoHeight){
-    const natAR = el.videoWidth / el.videoHeight;
-    const boxAR = elW / elH;
-    let rw, rh;
-    if(natAR > boxAR){
-      // Letterboxed (bars on top/bottom)
-      rw = elW;
-      rh = elW / natAR;
-    } else {
-      // Pillarboxed (bars on left/right)
-      rh = elH;
-      rw = elH * natAR;
-    }
-    const ox = (elW - rw) / 2;
-    const oy = (elH - rh) / 2;
+  // Always use cut-viewport-frame as the authoritative video boundary.
+  // The frame is sized by applyCanvasAR() to exactly match the project AR,
+  // so there is no letterboxing offset — the frame IS the video area.
+  const frame = document.getElementById('cut-viewport-frame');
+  if(frame){
+    const fr = frame.getBoundingClientRect();
+    const sr = screen.getBoundingClientRect();
     return {
-      left: (er.left - sr.left) + ox,
-      top:  (er.top  - sr.top)  + oy,
-      width: rw,
-      height: rh
+      left:   fr.left - sr.left,
+      top:    fr.top  - sr.top,
+      width:  fr.width,
+      height: fr.height
     };
   }
-
-  // Canvas / fallback: use full element rect
-  return {left: er.left - sr.left, top: er.top - sr.top, width: elW, height: elH};
+  // Fallback: no frame found — use full screen
+  return {left:0, top:0, width:screen.clientWidth, height:screen.clientHeight};
 }
 
 function removeOverlayHandles(){
@@ -1696,16 +1679,17 @@ function showOverlayHandles(id){
   if(!ov) return;
   const screen = document.getElementById('cut-screen');
   if(!screen) return;
+  // Attach to the viewport frame so position:absolute coords are frame-local (no offset needed)
+  const frame = document.getElementById('cut-viewport-frame') || screen;
 
-  // Ensure overlays default position/size
+  // Ensure overlays have default position/size
   if(ov.x === undefined) ov.x = 0.5;
   if(ov.y === undefined) ov.y = 0.5;
   if(ov.w === undefined) ov.w = ov.type==='text' ? 0.4 : 0.25;
   if(ov.h === undefined) ov.h = ov.type==='text' ? 0.12 : 0.2;
 
-  const isFull = ov.type==='freeze'; // Only freeze is fullscreen — all image_bg types get transform handles
+  const isFull = ov.type==='freeze';
   if(isFull){
-    // Full-screen overlay — show a floating edit badge
     const editor = document.createElement('div');
     editor.id = 'overlay-editor';
     editor.style.cssText = 'position:absolute;top:0;left:0;right:0;bottom:0;z-index:100;pointer-events:none';
@@ -1714,7 +1698,7 @@ function showOverlayHandles(id){
     badge.textContent = '✏️ Click to edit properties';
     badge.addEventListener('click', ()=>{ setActiveEditId(null); removeOverlayHandles(); openOverlayEditDialog(id); });
     editor.appendChild(badge);
-    screen.appendChild(editor);
+    frame.appendChild(editor);
     return;
   }
 
@@ -1722,21 +1706,21 @@ function showOverlayHandles(id){
   const editor = document.createElement('div');
   editor.id = 'overlay-editor';
   editor.style.cssText = 'position:absolute;top:0;left:0;right:0;bottom:0;z-index:100;pointer-events:none';
-  screen.appendChild(editor);
+  frame.appendChild(editor);
+
+  function getFrameSize(){ return {W: frame.clientWidth, H: frame.clientHeight}; }
 
   function redraw(){
-    // Clear old handles (keep editor div)
     Array.from(editor.children).forEach(c=>c.remove());
-    const vr = getVideoRect(screen);
-    const W=vr.width, H=vr.height, ox=vr.left, oy=vr.top;
-    const bx = ox + ov.x*W - (ov.w*W)/2;
-    const by = oy + ov.y*H - (ov.h*H)/2;
+    const {W, H} = getFrameSize();
+    // Frame-local coordinates: no ox/oy offset needed
+    const bx = ov.x*W - (ov.w*W)/2;
+    const by = ov.y*H - (ov.h*H)/2;
     const bw = ov.w*W, bh = ov.h*H;
 
     // Main bounding box
     const box = document.createElement('div');
     box.style.cssText = `position:absolute;left:${bx}px;top:${by}px;width:${bw}px;height:${bh}px;border:2px solid #58a6ff;border-radius:3px;box-sizing:border-box;pointer-events:all;cursor:move;background:rgba(88,166,255,0.06)`;
-    // Double-click on text overlay box → inline editor
     if(ov.type === 'text'){
       box.title = 'Double-click to edit text';
       box.addEventListener('dblclick', (ev)=>{
@@ -1749,7 +1733,7 @@ function showOverlayHandles(id){
 
     // Action bar above box
     const bar = document.createElement('div');
-    bar.style.cssText = `position:absolute;left:${bx}px;top:${by-26}px;display:flex;gap:4px;pointer-events:all`;
+    bar.style.cssText = `position:absolute;left:${bx}px;top:${Math.max(0,by-26)}px;display:flex;gap:4px;pointer-events:all`;
     const editBtn = document.createElement('div');
     editBtn.style.cssText = 'background:#58a6ff;color:#fff;font-size:10px;padding:3px 10px;border-radius:4px;cursor:pointer;font-family:DM Sans,sans-serif;white-space:nowrap';
     editBtn.textContent = ov.type === 'text' ? '✏ Edit Text' : '✏ Properties';
@@ -1777,47 +1761,39 @@ function showOverlayHandles(id){
         e.preventDefault(); e.stopPropagation();
         const sx=e.clientX,sy=e.clientY,ox2=ov.x,oy2=ov.y,ow=ov.w,oh=ov.h;
         const mv=(e2)=>{
-          const vr2=getVideoRect(screen);
-          const dx=(e2.clientX-sx)/vr2.width, dy=(e2.clientY-sy)/vr2.height;
-          if(cx===0){ov.x=ox2+dx/2;ov.w=Math.max(0,ow-dx);}
-          else{ov.x=ox2+dx/2;ov.w=Math.max(0,ow+dx);}
-          if(cy===0){ov.y=oy2+dy/2;ov.h=Math.max(0,oh-dy);}
-          else{ov.y=oy2+dy/2;ov.h=Math.max(0,oh+dy);}
+          const {W:W2,H:H2} = getFrameSize();
+          const dx=(e2.clientX-sx)/W2, dy=(e2.clientY-sy)/H2;
+          if(cx===0){ov.x=ox2+dx/2;ov.w=Math.max(0.05,ow-dx);}
+          else{ov.x=ox2+dx/2;ov.w=Math.max(0.05,ow+dx);}
+          if(cy===0){ov.y=oy2+dy/2;ov.h=Math.max(0.02,oh-dy);}
+          else{ov.y=oy2+dy/2;ov.h=Math.max(0.02,oh+dy);}
           redraw();
           if(window.syncCutVid) syncCutVid();
         };
         const up=()=>{
           document.removeEventListener('mousemove',mv);
           document.removeEventListener('mouseup',up);
-          if(window.cutSaveHistory) cutSaveHistory('move_overlay');
+          if(window.cutSaveHistory) cutSaveHistory('resize_overlay');
         };
         document.addEventListener('mousemove',mv); document.addEventListener('mouseup',up);
       });
     });
 
-    // ── Rotation handle — circle above the box ──
-    // Only show for shape and image overlays (not text which has no rotation yet)
+    // ── Rotation handle ──
     if(ov.type==='shape' || ov.type==='image_bg'){
       const rot = ov.rotation || 0;
-
-      // Center of the box in screen coords
       const cxPx = bx + bw/2;
       const cyPx = by + bh/2;
-
-      // Rotation handle sits 36px above the top-center of the box
-      // But if box is rotated, rotate this offset too
       const rotRad = rot * Math.PI / 180;
       const handleDist = bh/2 + 36;
-      const rhx = cxPx + Math.sin(rotRad) * handleDist * -1; // offset perpendicular
+      const rhx = cxPx + Math.sin(rotRad) * handleDist * -1;
       const rhy = cyPx - Math.cos(rotRad) * handleDist;
 
-      // Line from top-center of box to rotation handle
       const lineSvg = document.createElementNS('http://www.w3.org/2000/svg','svg');
       lineSvg.style.cssText = 'position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none;overflow:visible';
       lineSvg.innerHTML = `<line x1="${cxPx}" y1="${by}" x2="${rhx}" y2="${rhy}" stroke="#58a6ff" stroke-width="1.5" stroke-dasharray="4,3" opacity="0.7"/>`;
       editor.appendChild(lineSvg);
 
-      // The circular rotation handle
       const rh = document.createElement('div');
       rh.title = 'Drag to rotate';
       rh.style.cssText = `position:absolute;left:${rhx-10}px;top:${rhy-10}px;width:20px;height:20px;background:#fff;border:2px solid #58a6ff;border-radius:50%;cursor:grab;pointer-events:all;z-index:3;box-sizing:border-box;display:flex;align-items:center;justify-content:center;font-size:11px;user-select:none;box-shadow:0 2px 8px rgba(0,0,0,0.4)`;
@@ -1827,30 +1803,27 @@ function showOverlayHandles(id){
       rh.addEventListener('mousedown', e=>{
         e.preventDefault(); e.stopPropagation();
         rh.style.cursor = 'grabbing';
-        const vr2 = getVideoRect(screen);
-        // Center of the overlay in screen absolute coords
-        const centerX = vr2.left + ov.x * vr2.width;
-        const centerY = vr2.top  + ov.y * vr2.height;
-        // Starting angle from center to mouse
+        // Center in viewport/page coords for atan2
+        const fr2 = frame.getBoundingClientRect();
+        const {W:W2, H:H2} = getFrameSize();
+        const centerX = fr2.left + ov.x * W2;
+        const centerY = fr2.top  + ov.y * H2;
         const startAngle = Math.atan2(e.clientY - centerY, e.clientX - centerX) * 180 / Math.PI;
         const startRot   = ov.rotation || 0;
-
-        const mv = (e2)=>{
+        const mv=(e2)=>{
           const currentAngle = Math.atan2(e2.clientY - centerY, e2.clientX - centerX) * 180 / Math.PI;
-          let delta = currentAngle - startAngle;
-          // Normalise to -180..180
-          ov.rotation = Math.round(((startRot + delta + 540) % 360) - 180);
+          ov.rotation = Math.round(((startRot + (currentAngle - startAngle) + 540) % 360) - 180);
           redraw();
           if(window.syncCutVid) syncCutVid();
         };
-        const up = ()=>{
+        const up=()=>{
           rh.style.cursor = 'grab';
-          document.removeEventListener('mousemove', mv);
-          document.removeEventListener('mouseup', up);
+          document.removeEventListener('mousemove',mv);
+          document.removeEventListener('mouseup',up);
           if(window.cutSaveHistory) cutSaveHistory('rotate_overlay');
         };
-        document.addEventListener('mousemove', mv);
-        document.addEventListener('mouseup', up);
+        document.addEventListener('mousemove',mv);
+        document.addEventListener('mouseup',up);
       });
     }
 
@@ -1859,52 +1832,43 @@ function showOverlayHandles(id){
       e.preventDefault(); e.stopPropagation();
       const sx=e.clientX,sy=e.clientY,ox3=ov.x,oy3=ov.y;
       const mv=(e2)=>{
-        const vr3=getVideoRect(screen);
-        ov.x=Math.max(0,Math.min(1,ox3+(e2.clientX-sx)/vr3.width));
-        ov.y=Math.max(0,Math.min(1,oy3+(e2.clientY-sy)/vr3.height));
+        const {W:W2,H:H2} = getFrameSize();
+        ov.x=Math.max(0,Math.min(1,ox3+(e2.clientX-sx)/W2));
+        ov.y=Math.max(0,Math.min(1,oy3+(e2.clientY-sy)/H2));
         redraw();
         if(window.syncCutVid) syncCutVid();
       };
-      const up=()=>{document.removeEventListener('mousemove',mv);document.removeEventListener('mouseup',up);};
+      const up=()=>{
+        document.removeEventListener('mousemove',mv);
+        document.removeEventListener('mouseup',up);
+        if(window.cutSaveHistory) cutSaveHistory('move_overlay');
+      };
       document.addEventListener('mousemove',mv); document.addEventListener('mouseup',up);
     });
   }
 
   redraw();
 
-  // Also add transparent drag layer over video for easier grabbing
-  const vr = getVideoRect(screen);
+  // Transparent drag layer over video for easier grabbing when clicking outside handles
   const layer = document.createElement('div');
   layer.id = 'ov-drag-layer';
-  layer.style.cssText = `position:absolute;left:${vr.left}px;top:${vr.top}px;width:${vr.width}px;height:${vr.height}px;z-index:99;cursor:crosshair`;
-  screen.appendChild(layer);
+  layer.style.cssText = `position:absolute;top:0;left:0;right:0;bottom:0;z-index:99;cursor:crosshair`;
+  frame.appendChild(layer);
   layer.addEventListener('mousedown', e=>{
     e.preventDefault();
-    const vr2=getVideoRect(screen);
     const sx=e.clientX,sy=e.clientY,ox4=ov.x,oy4=ov.y;
     layer.style.cursor='grabbing';
     const mv=(e2)=>{
-      ov.x=Math.max(0,Math.min(1,ox4+(e2.clientX-sx)/vr2.width));
-      ov.y=Math.max(0,Math.min(1,oy4+(e2.clientY-sy)/vr2.height));
-      // Redraw handles
-      const ed=document.getElementById('overlay-editor');
-      if(ed) Array.from(ed.children).forEach(c=>c.remove());
-      if(ed){
-        // quick redraw via re-calling showOverlayHandles is slow; call redraw inline
-        const vr3=getVideoRect(screen);
-        const W2=vr3.width,H2=vr3.height,offx=vr3.left,offy=vr3.top;
-        const bx2=offx+ov.x*W2-(ov.w*W2)/2,by2=offy+ov.y*H2-(ov.h*H2)/2,bw2=ov.w*W2,bh2=ov.h*H2;
-        const b2=document.createElement('div');
-        b2.style.cssText=`position:absolute;left:${bx2}px;top:${by2}px;width:${bw2}px;height:${bh2}px;border:2px solid #58a6ff;border-radius:3px;box-sizing:border-box;background:rgba(88,166,255,0.1)`;
-        ed.appendChild(b2);
-      }
+      const {W,H} = getFrameSize();
+      ov.x=Math.max(0,Math.min(1,ox4+(e2.clientX-sx)/W));
+      ov.y=Math.max(0,Math.min(1,oy4+(e2.clientY-sy)/H));
+      redraw();
       if(window.syncCutVid) syncCutVid();
     };
     const up=()=>{
       layer.style.cursor='crosshair';
       document.removeEventListener('mousemove',mv);
       document.removeEventListener('mouseup',up);
-      // Full redraw on release
       showOverlayHandles(id);
     };
     document.addEventListener('mousemove',mv);
@@ -1932,18 +1896,20 @@ function setupVideoDragForOverlay(){ /* now handled inside showOverlayHandles */
 function _openInlineTextEditor(id){
   const ov = window._overlays.find(o=>o.id===id);
   if(!ov || ov.type !== 'text') return;
+  const frame = document.getElementById('cut-viewport-frame');
   const screen = document.getElementById('cut-screen');
   if(!screen) return;
+  const container = frame || screen;
 
-  const vr = getVideoRect(screen);
-  const W = vr.width, H = vr.height;
+  const W = container.clientWidth;
+  const H = container.clientHeight;
   // Compute box position (same logic as showOverlayHandles)
   if(ov.x === undefined) ov.x = 0.5;
   if(ov.y === undefined) ov.y = 0.5;
   if(ov.w === undefined) ov.w = 0.4;
   if(ov.h === undefined) ov.h = 0.12;
-  const bx = vr.left + ov.x * W - (ov.w * W) / 2;
-  const by = vr.top  + ov.y * H - (ov.h * H) / 2;
+  const bx = ov.x * W - (ov.w * W) / 2;
+  const by = ov.y * H - (ov.h * H) / 2;
   const bw = ov.w * W;
   const bh = Math.max(ov.h * H, (ov.size||48) * 1.5);
 
@@ -1951,7 +1917,7 @@ function _openInlineTextEditor(id){
   const wrap = document.createElement('div');
   wrap.id = 'inline-text-editor';
   wrap.style.cssText = `position:absolute;left:${bx}px;top:${by}px;width:${bw}px;min-height:${bh}px;z-index:200;pointer-events:all;box-sizing:border-box`;
-  screen.appendChild(wrap);
+  container.appendChild(wrap);
 
   const ta = document.createElement('textarea');
   const fontSize = Math.round((ov.size||48) * (W / 1920));
