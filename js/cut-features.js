@@ -295,7 +295,6 @@ function showFreezeEditDialog(id){
 const TEXT_EFFECTS = [
   {id:'none',       label:'Static'},
   {id:'typewriter', label:'Typewriter'},
-  {id:'draw_in',    label:'Draw In (color shift)'},
   {id:'fadein',     label:'Fade In'},
   {id:'fadeout',    label:'Fade Out'},
   {id:'slideup',    label:'Slide Up'},
@@ -363,16 +362,6 @@ function showTextDialog(editId){
         </select>
       </div>
     </div>
-    <div id="draw-in-color-row" style="margin-bottom:12px;display:${(existing?.effect||'none')==='draw_in'?'block':'none'}">
-      <label class="modal-field-label">Draw In Color <span style="font-size:9px;color:var(--mu)">(color while writing → flips to main color)</span></label>
-      <input id="txt-draw-in-color" type="color" value="${existing?.drawInColor||'#FFD700'}" style="${inputStyle()};padding:4px;height:36px">
-    </div>
-    <script>
-      document.getElementById('txt-effect').addEventListener('change', function(){
-        var row = document.getElementById('draw-in-color-row');
-        if(row) row.style.display = this.value === 'draw_in' ? 'block' : 'none';
-      });
-    <\/script>
     <div style="margin-bottom:12px">
       <label class="modal-field-label">Text Background</label>
       <select id="txt-bg" style="${inputStyle()}">
@@ -406,7 +395,6 @@ function showTextDialog(editId){
       bg:document.getElementById('txt-bg').value,
       stroke:document.getElementById('txt-stroke').value,
       strokeW:parseInt(document.getElementById('txt-stroke-w').value)||0,
-      drawInColor: document.getElementById('txt-draw-in-color')?.value || '#FFD700',
     };
     if(editId){
       if(window.cutSaveHistory) cutSaveHistory('edit_overlay');
@@ -1072,17 +1060,9 @@ function renderTextOverlay(ctx,W,H,ov,progress){
   if(scale!==1) ctx.scale(scale,scale);
 
   let displayText=ov.text||'';
-  // For draw_in we track how many chars are "drawn" vs remaining
-  let _drawInWrittenChars = -1; // -1 = not draw_in mode
   if(e==='typewriter'){
     const chars=Math.floor(ov.text.length*Math.min(1,progress*1.5));
     displayText=ov.text.substring(0,chars);
-  } else if(e==='draw_in'){
-    // Characters appear one by one in drawInColor, then the full text flips to ov.color
-    const totalChars = ov.text.length;
-    const writtenChars = Math.floor(totalChars * Math.min(1, progress * 1.5));
-    _drawInWrittenChars = writtenChars;
-    displayText = ov.text; // always show full text in background; overlay drawn portion on top
   } else if(e==='wordbyw'){
     const words=ov.text.split(' ');
     const count=Math.ceil(words.length*Math.min(1,progress*1.5));
@@ -1108,64 +1088,13 @@ function renderTextOverlay(ctx,W,H,ov,progress){
   const startY = -(totalH / 2) + lineH / 2;
   lines.forEach((line, i) => {
     const lineY = startY + i * lineH;
-    if(_drawInWrittenChars >= 0){
-      // ── draw_in effect: two-pass per line ──
-      // Pass 1: full line in final color (already drawn)
-      // Pass 2: clip to written portion in drawInColor, then remaining portion fades in
-      const drawColor = ov.drawInColor || '#FFD700';
-      const finalColor = ov.color || '#fff';
-      // Count chars in lines before this one
-      const charsBeforeLine = lines.slice(0,i).reduce((s,l2)=>s+l2.length+1,0); // +1 for \n
-      const writtenInLine = Math.max(0, _drawInWrittenChars - charsBeforeLine);
-      const lineAllWritten = writtenInLine >= line.length;
-
-      if(ov.strokeW > 0){
-        ctx.strokeStyle = ov.stroke || '#000';
-        ctx.lineWidth   = ov.strokeW;
-        ctx.strokeText(line, 0, lineY);
-      }
-
-      if(lineAllWritten){
-        // Entire line written → final color
-        ctx.fillStyle = finalColor;
-        ctx.fillText(line, 0, lineY);
-      } else if(writtenInLine === 0){
-        // Nothing written yet in this line → transparent (don't draw)
-      } else {
-        // Partial: written chars in drawColor, rest invisible
-        const writtenPart = line.substring(0, writtenInLine);
-        ctx.fillStyle = drawColor;
-        ctx.fillText(writtenPart, 0, lineY);
-        // Remaining chars: measure written width, clip and draw rest dimmed
-        const writtenW = ctx.measureText(writtenPart).width;
-        const fullW    = ctx.measureText(line).width;
-        // Draw remaining portion with low opacity as "ghost" so user knows what's coming
-        ctx.save();
-        ctx.globalAlpha *= 0.18;
-        ctx.fillStyle = finalColor;
-        // Clip to the unwritten region
-        ctx.beginPath();
-        ctx.rect(writtenW - fullW/2 + 0.5, lineY - lineH/2, fullW - writtenW + 1, lineH);
-        // Note: we translate origin is at (0,0) = center of text, so account for textAlign:center
-        const textLeft = -fullW / 2;
-        ctx.save();
-        ctx.beginPath();
-        ctx.rect(textLeft + writtenW, lineY - lineH * 0.75, fullW - writtenW + 2, lineH * 1.5);
-        ctx.clip();
-        ctx.fillText(line, 0, lineY);
-        ctx.restore();
-        ctx.globalAlpha = alpha; // restore
-      }
-    } else {
-      // Normal (non draw_in) rendering
-      if(ov.strokeW>0){
-        ctx.strokeStyle=ov.stroke||'#000';
-        ctx.lineWidth=ov.strokeW;
-        ctx.strokeText(line, 0, lineY);
-      }
-      ctx.fillStyle=ov.color||'#fff';
-      ctx.fillText(line, 0, lineY);
+    if(ov.strokeW>0){
+      ctx.strokeStyle=ov.stroke||'#000';
+      ctx.lineWidth=ov.strokeW;
+      ctx.strokeText(line, 0, lineY);
     }
+    ctx.fillStyle=ov.color||'#fff';
+    ctx.fillText(line, 0, lineY);
   });
 
   ctx.restore();

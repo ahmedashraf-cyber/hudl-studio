@@ -4008,12 +4008,17 @@ function renderCutTimeline() {
         if(e.target.classList.contains('clip-resize-r')) return;
         if(e._effectBarHandled) return; // effect bar already handled
         e.stopPropagation();
+        // Guard against click firing as part of a dblclick sequence
+        const _now = Date.now();
+        if(el._lastClickTime && _now - el._lastClickTime < 300){ el._lastClickTime = 0; return; }
+        el._lastClickTime = _now;
         _selectClip(ci);
       }, true); // capture:true — fires before children
       el.addEventListener('contextmenu',e=>{e.stopPropagation();clipContextMenu(e,ci);});
       // Double-click → jump playhead to first frame of this clip
       el.addEventListener('dblclick', e => {
         e.stopPropagation();
+        el._lastClickTime = 0; // cancel pending single-click
         const c2 = S.cut.clips[ci];
         if(!c2) return;
         S.cut.ph = c2.start;
