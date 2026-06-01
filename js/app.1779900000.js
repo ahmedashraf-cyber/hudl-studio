@@ -413,6 +413,22 @@ window.openProject = async function(id) {
       const n = parseInt((o.id||'').replace('ov_',''))||0; return Math.max(max,n);
     }, window._overlayIdCounter||0);
 
+    // Restore image_bg overlay blob URLs from IndexedDB (blob URLs die on reload)
+    const _imgBgOverlays = window._overlays.filter(o => o.type === 'image_bg' && o.bgType === 'image' && o.name);
+    if(_imgBgOverlays.length > 0){
+      loadMediaFiles(id).then(storedFiles => {
+        _imgBgOverlays.forEach(o => {
+          // Look for file saved with 'ov_' prefix first, then plain name
+          const match = storedFiles.find(sf => sf.name === 'ov_' + o.name || sf.name === o.name);
+          if(match){
+            o.url = match.url;
+            o._img = null; // force re-create Image on next render
+            if(window.syncCutVid) syncCutVid();
+          }
+        });
+      }).catch(e => console.warn('Could not restore overlay images:', e));
+    }
+
     openApp(project.appType || 'cut');
     const missingFiles = restoredMedia.filter(m => !m.url).length;
     if (missingFiles > 0) {

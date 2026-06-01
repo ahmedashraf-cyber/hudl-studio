@@ -466,6 +466,14 @@ function showImageBgDialog(){
       if(!file){notify('Select an image file','#E31837');return;}
       ov.url=URL.createObjectURL(file);
       ov.name=file.name;
+      // Persist image bytes in IndexedDB using a dedicated overlay key prefix
+      // so the blob URL can be regenerated after page reload
+      const _projId = window.S?.currentProject?.id;
+      if(_projId && window.saveMediaFile){
+        // Prefix with 'ov_' to distinguish from timeline media files
+        const _ovFile = new File([file], 'ov_' + file.name, {type: file.type});
+        window.saveMediaFile(_projId, _ovFile).catch(e => console.warn('Overlay image save failed:', e));
+      }
     } else if(type==='color'){
       ov.color=document.getElementById('img-color').value;
     } else {
@@ -1081,8 +1089,13 @@ function renderImageBg(ctx,W,H,ov,progress){
     else{const g=ctx.createLinearGradient(_bx,_by,_bx,_by+_bh);g.addColorStop(0,ov.grad1||'#E31837');g.addColorStop(1,ov.grad2||'#0a0c10');ctx.fillStyle=g;ctx.fillRect(_bx,_by,_bw,_bh);}
     ctx.restore();
   } else if(ov.bgType==='image'&&ov.url){
-    if(!ov._img){ov._img=new Image();ov._img.src=ov.url;}
-    if(ov._img.complete){
+    if(!ov._img || ov._img._srcUsed !== ov.url){
+      ov._img = new Image();
+      ov._img._srcUsed = ov.url;
+      ov._img.onload = () => { if(window.syncCutVid) syncCutVid(); };
+      ov._img.src = ov.url;
+    }
+    if(ov._img.complete && ov._img.naturalWidth > 0){
       try{
         ctx.save();
         if(_rot){ ctx.translate(_bx+_bw/2,_by+_bh/2); ctx.rotate(_rot); ctx.drawImage(ov._img,-_bw/2,-_bh/2,_bw,_bh); }
