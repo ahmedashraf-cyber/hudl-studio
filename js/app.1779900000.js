@@ -689,7 +689,7 @@ function applyCanvasAspectRatio(w, h){
     screen.addEventListener('mouseleave', () => { window._mouseOverViewport = false; });
     // Ctrl+wheel over viewport → zoom viewport
     screen.addEventListener('wheel', e => {
-      if(!e.ctrlKey) return;
+      if(!window._mouseOverViewport) return;
       e.preventDefault();
       const factor = e.deltaY < 0 ? 1.1 : 1/1.1;
       window._vpZoom = Math.max(0.25, Math.min(4, (window._vpZoom||1) * factor));
@@ -749,30 +749,114 @@ function _updateVpZoomBadge(z){
   let badge = document.getElementById('vp-zoom-badge');
   const screen = document.getElementById('cut-screen');
   if(!screen) return;
+
   if(!badge){
     badge = document.createElement('div');
     badge.id = 'vp-zoom-badge';
-    badge.title = 'Viewport zoom — double-click to reset (Ctrl+0)';
+    badge.title = 'Click for zoom presets · Double-click to reset · Scroll to zoom';
     badge.style.cssText = [
       'position:absolute','bottom:38px','left:8px',
-      'background:rgba(0,0,0,0.65)','color:rgba(255,255,255,0.75)',
+      'background:rgba(0,0,0,0.72)','color:rgba(255,255,255,0.8)',
       'font-size:10px','font-family:DM Mono,monospace',
-      'padding:2px 7px','border-radius:4px',
+      'padding:3px 8px','border-radius:5px',
       'pointer-events:all','cursor:pointer',
       'z-index:50','user-select:none',
-      'transition:opacity 0.2s',
-      'border:0.5px solid rgba(255,255,255,0.12)'
+      'border:0.5px solid rgba(255,255,255,0.14)',
+      'display:flex','align-items:center','gap:4px'
     ].join(';');
-    badge.addEventListener('dblclick', () => {
+
+    // Click → toggle dropdown
+    badge.addEventListener('click', e => {
+      e.stopPropagation();
+      const existing = document.getElementById('vp-zoom-menu');
+      if(existing){ existing.remove(); return; }
+
+      const menu = document.createElement('div');
+      menu.id = 'vp-zoom-menu';
+      menu.style.cssText = [
+        'position:absolute',
+        'bottom:' + (badge.offsetTop - badge.offsetParent.clientHeight + badge.offsetHeight + 4) + 'px',
+        'left:8px',
+        'background:#1a1f28',
+        'border:0.5px solid rgba(255,255,255,0.14)',
+        'border-radius:7px',
+        'padding:4px',
+        'z-index:200',
+        'min-width:100px',
+        'box-shadow:0 8px 24px rgba(0,0,0,0.6)'
+      ].join(';');
+
+      const presets = [
+        { label: '400%', v: 4 },
+        { label: '200%', v: 2 },
+        { label: '150%', v: 1.5 },
+        { label: '125%', v: 1.25 },
+        { label: '100%', v: 1 },
+        { label: '75%',  v: 0.75 },
+        { label: '50%',  v: 0.5 },
+        { label: '25%',  v: 0.25 },
+      ];
+
+      presets.forEach(p => {
+        const row = document.createElement('div');
+        const current = Math.round((window._vpZoom||1)*100) === Math.round(p.v*100);
+        row.style.cssText = [
+          'padding:5px 10px',
+          'font-size:11px',
+          'font-family:DM Mono,monospace',
+          'border-radius:5px',
+          'cursor:pointer',
+          'color:' + (current ? '#E8590C' : 'rgba(255,255,255,0.8)'),
+          'background:' + (current ? 'rgba(232,89,12,0.1)' : 'transparent'),
+          'display:flex','align-items:center','justify-content:space-between','gap:16px'
+        ].join(';');
+        row.textContent = p.label;
+        if(current){
+          const tick = document.createElement('span');
+          tick.textContent = '✓';
+          tick.style.cssText = 'color:#E8590C;font-size:10px';
+          row.appendChild(tick);
+        }
+        row.addEventListener('mouseenter', () => { if(!current) row.style.background='rgba(255,255,255,0.06)'; });
+        row.addEventListener('mouseleave', () => { if(!current) row.style.background='transparent'; });
+        row.addEventListener('click', ev => {
+          ev.stopPropagation();
+          window._vpZoom = p.v;
+          _applyVpZoom();
+          menu.remove();
+        });
+        menu.appendChild(row);
+      });
+
+      // Position relative to cut-screen
+      const br = badge.getBoundingClientRect();
+      const sr = screen.getBoundingClientRect();
+      menu.style.bottom = (sr.bottom - br.top + 4) + 'px';
+      menu.style.left   = (br.left - sr.left) + 'px';
+
+      screen.appendChild(menu);
+
+      // Close on outside click
+      const _close = ev => { if(!menu.contains(ev.target) && ev.target !== badge){ menu.remove(); document.removeEventListener('click', _close); } };
+      setTimeout(() => document.addEventListener('click', _close), 10);
+    });
+
+    // Double-click → reset
+    badge.addEventListener('dblclick', e => {
+      e.stopPropagation();
+      document.getElementById('vp-zoom-menu')?.remove();
       window._vpZoom = 1;
       _applyVpZoom();
     });
+
     screen.appendChild(badge);
   }
+
   const pct = Math.round(z * 100);
-  badge.textContent = pct + '%';
-  badge.style.color = z === 1 ? 'rgba(255,255,255,0.45)' : '#E8590C';
-  badge.style.opacity = z === 1 ? '0.5' : '1';
+  badge.innerHTML = '<span>' + pct + '%</span><span style="font-size:8px;opacity:0.6;margin-left:1px">▾</span>';
+  badge.style.color   = z === 1 ? 'rgba(255,255,255,0.45)' : '#E8590C';
+  badge.style.opacity = z === 1 ? '0.6' : '1';
+  badge.style.borderColor = z === 1 ? 'rgba(255,255,255,0.1)' : 'rgba(232,89,12,0.4)';
 }
 window._updateVpZoomBadge = _updateVpZoomBadge;
 
