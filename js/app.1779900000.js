@@ -4011,6 +4011,15 @@ function renderCutTimeline() {
         _selectClip(ci);
       }, true); // capture:true — fires before children
       el.addEventListener('contextmenu',e=>{e.stopPropagation();clipContextMenu(e,ci);});
+      // Double-click → jump playhead to first frame of this clip
+      el.addEventListener('dblclick', e => {
+        e.stopPropagation();
+        const c2 = S.cut.clips[ci];
+        if(!c2) return;
+        S.cut.ph = c2.start;
+        updateCutPH();
+        syncCutVid();
+      });
       el.addEventListener('mousedown', e => {
         if(e.target.classList.contains('clip-resize-l')||e.target.classList.contains('clip-resize-r')) return;
         // Select immediately on mousedown (before any drag), capture phase
