@@ -420,6 +420,8 @@ window.openProject = async function(id) {
     } else {
       notify('Opened: ' + project.name, '#3fb950');
     }
+    // Regenerate _imgData for frame_hold clips (stripped on save, must be rebuilt on load)
+    _regenerateFrameHolds();
   } catch (e) {
     notify('Could not open project', '#E31837');
     console.error('openProject error:', e);
@@ -2565,7 +2567,7 @@ function updatePropsPanel(ci){
 
     <div class="prop-row"><span class="prop-label">Volume</span>
       <input type="range" id="vol-val-${ci}-input" min="0" max="200" value="${Math.round(vol*100)}" style="flex:1;accent-color:#E8590C"
-        oninput="S.cut.clips[${ci}].volume=this.value/100;if(!S.cut.clips[${ci}].audioFx)S.cut.clips[${ci}].audioFx={};S.cut.clips[${ci}].audioFx.volume=parseInt(this.value);document.getElementById('vol-pct-${ci}').textContent=this.value+'%'">
+        oninput="S.cut.clips[${ci}].volume=this.value/100;if(!S.cut.clips[${ci}].audioFx)S.cut.clips[${ci}].audioFx={};S.cut.clips[${ci}].audioFx.volume=parseInt(this.value);document.getElementById('vol-pct-${ci}').textContent=this.value+'%';_applyPropToSelected('volume',this.value/100,${ci})">
       <span id="vol-pct-${ci}" style="font-size:10px;color:var(--mu);min-width:32px;text-align:right">${Math.round(vol*100)}%</span>
     </div>
     <div class="prop-section" style="padding-top:6px" style="color:rgba(255,220,80,0.9)">🎚 Fade</div>
@@ -2882,7 +2884,26 @@ function applyClipSpeed(ci, newSpeedPct, ripple){
 }
 window.applyClipSpeed = applyClipSpeed;
 
-// Show speed dialog (from context menu)
+// ── Apply a property change to ALL selected clips ──────────────────────────
+// Called after any single-clip property change when multi-select is active.
+// prop: string key (e.g. 'volume', 'speed'), val: new value
+function _applyPropToSelected(prop, val, sourceCi){
+  if(!window._selectedClips || window._selectedClips.size <= 1) return;
+  window._selectedClips.forEach(ci => {
+    if(ci === sourceCi) return; // already applied to source
+    const c = S.cut.clips[ci];
+    if(!c) return;
+    if(prop === 'speed'){
+      applyClipSpeed(ci, val * 100, false);
+    } else {
+      c[prop] = val;
+    }
+  });
+  renderCutTimeline();
+}
+window._applyPropToSelected = _applyPropToSelected;
+
+
 function showSpeedDialog(ci){
   const c = S.cut.clips[ci];
   if(!c) return;
@@ -4071,34 +4092,52 @@ function refreshEffectsPanel(){
 }
 
 function cutSplit(){
-  const ph=S.cut.ph; // current playhead position in seconds
+  const ph=S.cut.ph;
 
-  // Find clip under playhead — check ALL clips, prefer selected one
+  // ── Multi-select: split all selected clips that span the playhead ──
+  if(window._selectedClips?.size > 1){
+    const toSplit = [...window._selectedClips].filter(ci=>{
+      const c = S.cut.clips[ci];
+      return c && ph > c.start && ph < c.start + c.dur;
+    });
+    if(!toSplit.length){notify('Playhead not on any selected clip','#E31837');return;}
+    cutSaveHistory('split_multi');
+    toSplit.forEach(ci=>{
+      const c = S.cut.clips[ci];
+      const origEnd = c.start + c.dur;
+      const splitOffset = ph - c.start;
+      const c2 = {...c, start:ph, dur:origEnd-ph, fileStart:(c.fileStart||0)+splitOffset, effects:{}};
+      c.dur = ph - c.start;
+      S.cut.clips.push(c2);
+    });
+    window._selectedClips = new Set();
+    S.cut.sel = null;
+    rebuildTrackLabels(); renderCutTimeline(); setupPlayheadDrag();
+    notify('Split ' + toSplit.length + ' clips at '+fmtTC(ph),'#3fb950');
+    return;
+  }
+
+  // ── Single clip split ──
   let ci=S.cut.sel;
   const clipAtPH=S.cut.clips.findIndex(c=>ph>c.start&&ph<c.start+c.dur);
 
   if(clipAtPH<0){notify('Place playhead on a clip to split','#E31837');return;}
 
-  // If selected clip is under playhead use it, otherwise use clip at playhead
   if(ci===null||ci===undefined||!(ph>S.cut.clips[ci]?.start&&ph<S.cut.clips[ci]?.start+S.cut.clips[ci]?.dur)){
     ci=clipAtPH;
     S.cut.sel=ci;
   }
 
   const c=S.cut.clips[ci];
-  // Double check
   if(!c||ph<=c.start||ph>=c.start+c.dur){notify('Playhead must be on a clip','#E31837');return;}
-  cutSaveHistory('split'); // snapshot before split
+  cutSaveHistory('split');
 
-  // Split: both halves stay on the SAME track
   const origStart = c.start;
   const origEnd   = origStart + c.dur;
   const splitFileOffset = ph - origStart;
 
-  // Left part: shorten original in place
   c.dur = ph - origStart;
 
-  // Right part: same track, starts at split point
   const c2 = {
     ...c,
     start: ph,
@@ -4107,9 +4146,6 @@ function cutSplit(){
     effects: {}
   };
   S.cut.clips.push(c2);
-
-  // Only split the selected clip — don't auto-split linked audio
-  // User can select audio clip separately to split it
 
   rebuildTrackLabels();
   renderCutTimeline();
@@ -4351,28 +4387,56 @@ function deleteSelected(){
 window.deleteSelected = deleteSelected;
 
 function cutDelete(){
+  // ── Multi-select: delete all selected clips ──
+  if(window._selectedClips?.size > 1){
+    cutSaveHistory('delete_clips');
+    const indices = [...window._selectedClips].sort((a,b)=>b-a); // descending so splice doesn't shift
+    indices.forEach(ci => {
+      const c = S.cut.clips[ci];
+      if(!c) return;
+      if(c.type==='video'){
+        const li = S.cut.clips.findIndex((a,i)=>i!==ci&&a.linkedToVideo&&a.mediaIdx===c.mediaIdx&&Math.abs(a.start-c.start)<0.5);
+        if(li>=0){ S.cut.clips[li].linkedToVideo=false; S.cut.clips[li].name=S.cut.clips[li].name.replace(' [Audio]','')+' (Audio)'; }
+      } else if(c.linkedToVideo || c.type==='audio'){
+        const pv = S.cut.clips.find((v,i)=>i!==ci&&v.type==='video'&&v.mediaIdx===c.mediaIdx&&Math.abs(v.start-c.start)<1.0);
+        if(pv) pv.nativeAudioMuted = true;
+      }
+      S.cut.clips.splice(ci,1);
+    });
+    window._selectedClips = new Set();
+    S.cut.sel = null;
+    stopAudioPlayback();
+    renderCutTimeline();
+    setTimeout(()=>{ _syncVideoMute(); if(S.cut.playing) startAudioPlayback(); else syncAudioPlayback(); }, 60);
+    notify('Deleted ' + indices.length + ' clips');
+    scheduleSave();
+    return;
+  }
+  // ── Single clip delete ──
   const ci=S.cut.sel;
   if(ci===null||ci===undefined){notify('Select a clip first','#E31837');return;}
   const c=S.cut.clips[ci];
   cutSaveHistory('delete_clip'); // snapshot before delete
   S.cut.clips.splice(ci,1);
-  // Also delete linked audio
+  // Handle linked audio relationships
   if(c.type==='video'){
-    // Find any linked audio clip for this video
+    // Video deleted — unlink any linked audio clip (keep audio, detach from video)
     const li=S.cut.clips.findIndex(a=>a.linkedToVideo&&a.mediaIdx===c.mediaIdx&&Math.abs(a.start-c.start)<0.5);
     if(li>=0){
-      // Unlink the audio instead of deleting it — user may want to keep the audio track
-      // Only auto-delete if the audio clip is directly on top of the video (same start, same dur)
-      // and user hasn't explicitly moved it
       const linkedAudio = S.cut.clips[li];
       const isSamePosition = Math.abs(linkedAudio.start - c.start) < 0.1 && Math.abs(linkedAudio.dur - c.dur) < 0.1;
       if(isSamePosition){
-        // Audio untouched — keep it but unlink so it plays independently
         linkedAudio.linkedToVideo = false;
         linkedAudio.name = linkedAudio.name.replace(' [Audio]','') + ' (Audio)';
       }
-      // If user manually moved the audio clip, keep it as-is (already detached effectively)
     }
+  } else if(c.linkedToVideo || c.type==='audio'){
+    // Audio clip deleted — find its parent video and mark native audio as muted
+    // so video tag doesn't suddenly play raw audio
+    const parentVideo = S.cut.clips.find(
+      v => v.type==='video' && v.mediaIdx===c.mediaIdx && Math.abs(v.start-c.start)<1.0
+    );
+    if(parentVideo) parentVideo.nativeAudioMuted = true;
   }
   S.cut.sel=null;
   stopAudioPlayback();
@@ -4597,8 +4661,9 @@ function cutTogglePlay(){
               if(_mvFinal){
                 _mvFinal.dataset.clipIdx = String(S.cut.clips.indexOf(_nextVidClip));
                 _mvFinal.currentTime = Math.max(0, _resumeFileT);
-                _mvFinal.muted = false;
+                _mvFinal.muted = false; // will be corrected by _syncVideoMute below
                 _mvFinal.play().catch(()=>{});
+                setTimeout(_syncVideoMute, 30);
               }
               if(S.cut.playing) startAudioPlayback();
             } else {
@@ -4807,12 +4872,25 @@ function cutTogglePlay(){
 function _syncVideoMute(){
   const mv = document.getElementById('cut-main-vid');
   if (!mv) return;
-  // Only mute video if its specific track is muted via toggleTrackMute
-  // Standalone audio clips (voiceover/music) should play ALONGSIDE video — never mute it
   const ci = parseInt(mv.dataset.clipIdx);
   const clip = !isNaN(ci) ? S.cut.clips[ci] : null;
-  const trackMuted = clip ? !!(S.cut.mutedTracks?.[clip.track]) : false;
-  mv.muted = trackMuted;
+  if (!clip) { mv.muted = false; return; }
+
+  // 1. Track-level mute always wins
+  const trackMuted = !!(S.cut.mutedTracks?.[clip.track]);
+  if (trackMuted) { mv.muted = true; return; }
+
+  // 2. If this clip has nativeAudioMuted=true it means the user
+  //    explicitly extracted+deleted the linked audio — keep it muted
+  if (clip.nativeAudioMuted) { mv.muted = true; return; }
+
+  // 3. If a linkedToVideo audio clip exists for this video clip,
+  //    the audio plays through the standalone audio element — mute the video tag
+  const hasLinkedAudio = S.cut.clips.some(
+    a => a.linkedToVideo && a.mediaIdx === clip.mediaIdx &&
+         Math.abs(a.start - clip.start) < 1.0
+  );
+  mv.muted = hasLinkedAudio;
 }
 
 function stopCutPlay(){
@@ -6763,6 +6841,8 @@ function insertFrameHoldAtEnd(ci){
     type:'frame_hold', start:clipEnd, dur:holdDur, track:clip.track,
     name:'Frame Hold', color:'linear-gradient(135deg,#3d1a5a,#6b2fa0)',
     _imgData:dataURL, _img:img,
+    mediaIdx: clip.mediaIdx,
+    _sourceTime: (clip.fileStart||0) + clip.dur,
   };
   S.cut.clips.push(holdClip);
   S.cut.sel = S.cut.clips.indexOf(holdClip);
@@ -6771,7 +6851,48 @@ function insertFrameHoldAtEnd(ci){
 }
 window.insertFrameHoldAtEnd = insertFrameHoldAtEnd;
 
-
+// ── Regenerate _imgData for all frame_hold clips after project load ──
+// _imgData is stripped before Firestore save; must be rebuilt from the source video.
+async function _regenerateFrameHolds(){
+  const fhClips = S.cut.clips.filter(c => c.type === 'frame_hold' && !c._imgData);
+  if(!fhClips.length) return;
+  const off = document.createElement('canvas');
+  off.width = S.proj?.w || 1920;
+  off.height = S.proj?.h || 1080;
+  const ctx = off.getContext('2d');
+  for(const clip of fhClips){
+    const item = S.cut.media[clip.mediaIdx];
+    if(!item?.url) continue; // media not yet re-imported, skip
+    await new Promise(resolve => {
+      const v = document.createElement('video');
+      v.src = item.url;
+      v.muted = true;
+      v.preload = 'metadata';
+      // frame_hold sits at the end of the previous clip, so capture the last frame
+      // of the source: use fileStart + dur of the preceding clip as approximate seek point
+      const _prevClip = clip._sourceTime !== undefined ? null :
+                    S.cut.clips.find(c => c.type==='video' && c.mediaIdx===clip.mediaIdx && c.start < clip.start);
+      const seekT = clip._sourceTime !== undefined ? clip._sourceTime :
+                    (_prevClip ? ((_prevClip.fileStart||0) + _prevClip.dur) : 0);
+      v.addEventListener('seeked', () => {
+        try{
+          ctx.clearRect(0,0,off.width,off.height);
+          ctx.drawImage(v, 0, 0, off.width, off.height);
+          clip._imgData = off.toDataURL('image/jpeg', 0.85);
+          clip._img = new Image();
+          clip._img.src = clip._imgData;
+        }catch(e){ console.warn('frame_hold regen failed', e); }
+        v.src = '';
+        resolve();
+      }, {once:true});
+      v.addEventListener('error', () => { v.src=''; resolve(); }, {once:true});
+      v.load();
+      v.currentTime = Math.max(0, seekT - 0.05);
+    });
+  }
+  if(fhClips.some(c=>c._imgData)) syncCutVid();
+}
+window._regenerateFrameHolds = _regenerateFrameHolds;
 
 // ══════════════════════════════════════════════════════════════════════
 // MONITOR OVERLAY SYSTEM — Safe Zones, Guides, Metadata, Timecode

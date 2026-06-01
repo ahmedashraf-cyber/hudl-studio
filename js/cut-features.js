@@ -992,8 +992,7 @@ function renderTextOverlay(ctx,W,H,ov,progress){
   const size=ov.size||48;
   ctx.font=`bold ${size}px "${ov.font||'DM Sans'}",sans-serif`;
   ctx.textAlign='center'; ctx.textBaseline='middle';
-  // Position
-  // Use dragged x/y if set, otherwise use position preset
+  // Position — use dragged x/y if set, otherwise use preset
   let bx, by;
   if(ov.x !== undefined && ov.y !== undefined){
     bx = ov.x * W;
@@ -1022,7 +1021,7 @@ function renderTextOverlay(ctx,W,H,ov,progress){
   ctx.translate(tx,ty);
   if(scale!==1) ctx.scale(scale,scale);
 
-  let displayText=ov.text;
+  let displayText=ov.text||'';
   if(e==='typewriter'){
     const chars=Math.floor(ov.text.length*Math.min(1,progress*1.5));
     displayText=ov.text.substring(0,chars);
@@ -1036,18 +1035,30 @@ function renderTextOverlay(ctx,W,H,ov,progress){
     ctx.font=`italic bold ${size}px "Courier New",monospace`;
   }
 
-  // Background box
-  const metrics=ctx.measureText(displayText);
-  const tw=metrics.width;
-  const th=size*1.3;
-  if(ov.bg==='black'){ctx.fillStyle='rgba(0,0,0,0.85)';ctx.fillRect(-tw/2-12,-th/2,tw+24,th+8);}
-  else if(ov.bg==='white'){ctx.fillStyle='rgba(255,255,255,0.9)';ctx.fillRect(-tw/2-12,-th/2,tw+24,th+8);}
-  else if(ov.bg==='semi'){ctx.fillStyle='rgba(0,0,0,0.5)';ctx.fillRect(-tw/2-12,-th/2,tw+24,th+8);}
+  // ── Multiline support: split on \n ──
+  const lines = displayText.split('\n');
+  const lineH = size * 1.35;
+  const totalH = lines.length * lineH;
+  const maxW = Math.max(...lines.map(l => ctx.measureText(l).width));
 
-  // Stroke/outline
-  if(ov.strokeW>0){ctx.strokeStyle=ov.stroke||'#000';ctx.lineWidth=ov.strokeW;ctx.strokeText(displayText,0,0);}
-  ctx.fillStyle=ov.color||'#fff';
-  ctx.fillText(displayText,0,0);
+  // Background box (covers all lines)
+  if(ov.bg==='black'){ctx.fillStyle='rgba(0,0,0,0.85)';ctx.fillRect(-maxW/2-12,-totalH/2-4,maxW+24,totalH+8);}
+  else if(ov.bg==='white'){ctx.fillStyle='rgba(255,255,255,0.9)';ctx.fillRect(-maxW/2-12,-totalH/2-4,maxW+24,totalH+8);}
+  else if(ov.bg==='semi'){ctx.fillStyle='rgba(0,0,0,0.5)';ctx.fillRect(-maxW/2-12,-totalH/2-4,maxW+24,totalH+8);}
+
+  // Draw each line centered vertically around origin
+  const startY = -(totalH / 2) + lineH / 2;
+  lines.forEach((line, i) => {
+    const lineY = startY + i * lineH;
+    if(ov.strokeW>0){
+      ctx.strokeStyle=ov.stroke||'#000';
+      ctx.lineWidth=ov.strokeW;
+      ctx.strokeText(line, 0, lineY);
+    }
+    ctx.fillStyle=ov.color||'#fff';
+    ctx.fillText(line, 0, lineY);
+  });
+
   ctx.restore();
   ctx.globalAlpha=1;
 }
@@ -1640,10 +1651,38 @@ function getVideoEl(screen){
 
 function getVideoRect(screen){
   const el = getVideoEl(screen);
-  if(!el) return {left:0,top:0,width:screen.clientWidth,height:screen.clientHeight};
+  if(!el) return {left:0, top:0, width:screen.clientWidth, height:screen.clientHeight};
   const sr = screen.getBoundingClientRect();
   const er = el.getBoundingClientRect();
-  return {left:er.left-sr.left, top:er.top-sr.top, width:er.width, height:er.height};
+  const elW = er.width, elH = er.height;
+
+  // For video elements with object-fit:contain we must compute the actual
+  // rendered area (which may be letterboxed / pillarboxed inside the element box)
+  if(el.tagName === 'VIDEO' && el.videoWidth && el.videoHeight){
+    const natAR = el.videoWidth / el.videoHeight;
+    const boxAR = elW / elH;
+    let rw, rh;
+    if(natAR > boxAR){
+      // Letterboxed (bars on top/bottom)
+      rw = elW;
+      rh = elW / natAR;
+    } else {
+      // Pillarboxed (bars on left/right)
+      rh = elH;
+      rw = elH * natAR;
+    }
+    const ox = (elW - rw) / 2;
+    const oy = (elH - rh) / 2;
+    return {
+      left: (er.left - sr.left) + ox,
+      top:  (er.top  - sr.top)  + oy,
+      width: rw,
+      height: rh
+    };
+  }
+
+  // Canvas / fallback: use full element rect
+  return {left: er.left - sr.left, top: er.top - sr.top, width: elW, height: elH};
 }
 
 function removeOverlayHandles(){
@@ -1697,6 +1736,15 @@ function showOverlayHandles(id){
     // Main bounding box
     const box = document.createElement('div');
     box.style.cssText = `position:absolute;left:${bx}px;top:${by}px;width:${bw}px;height:${bh}px;border:2px solid #58a6ff;border-radius:3px;box-sizing:border-box;pointer-events:all;cursor:move;background:rgba(88,166,255,0.06)`;
+    // Double-click on text overlay box → inline editor
+    if(ov.type === 'text'){
+      box.title = 'Double-click to edit text';
+      box.addEventListener('dblclick', (ev)=>{
+        ev.stopPropagation();
+        setActiveEditId(null); removeOverlayHandles();
+        _openInlineTextEditor(id);
+      });
+    }
     editor.appendChild(box);
 
     // Action bar above box
@@ -1704,8 +1752,15 @@ function showOverlayHandles(id){
     bar.style.cssText = `position:absolute;left:${bx}px;top:${by-26}px;display:flex;gap:4px;pointer-events:all`;
     const editBtn = document.createElement('div');
     editBtn.style.cssText = 'background:#58a6ff;color:#fff;font-size:10px;padding:3px 10px;border-radius:4px;cursor:pointer;font-family:DM Sans,sans-serif;white-space:nowrap';
-    editBtn.textContent = '✏ Properties';
-    editBtn.addEventListener('click', ()=>{ setActiveEditId(null); removeOverlayHandles(); openOverlayEditDialog(id); });
+    editBtn.textContent = ov.type === 'text' ? '✏ Edit Text' : '✏ Properties';
+    editBtn.addEventListener('click', ()=>{
+      if(ov.type === 'text'){
+        setActiveEditId(null); removeOverlayHandles();
+        _openInlineTextEditor(id);
+      } else {
+        setActiveEditId(null); removeOverlayHandles(); openOverlayEditDialog(id);
+      }
+    });
     const closeBtn = document.createElement('div');
     closeBtn.style.cssText = 'background:#444;color:#ccc;font-size:10px;padding:3px 8px;border-radius:4px;cursor:pointer;font-family:DM Sans,sans-serif';
     closeBtn.textContent = '✕';
@@ -1870,6 +1925,83 @@ function openOverlayEditDialog(id){
 window.editOverlay = function(id){ /* handled by pill click events */ };
 
 function setupVideoDragForOverlay(){ /* now handled inside showOverlayHandles */ }
+
+// ── INLINE ON-CANVAS TEXT EDITOR ─────────────────────────────────────────────
+// Opens a textarea directly over the overlay's bounding box on the video viewport.
+// Enter creates a new line (no form submission). Blur or Escape commits the edit.
+function _openInlineTextEditor(id){
+  const ov = window._overlays.find(o=>o.id===id);
+  if(!ov || ov.type !== 'text') return;
+  const screen = document.getElementById('cut-screen');
+  if(!screen) return;
+
+  const vr = getVideoRect(screen);
+  const W = vr.width, H = vr.height;
+  // Compute box position (same logic as showOverlayHandles)
+  if(ov.x === undefined) ov.x = 0.5;
+  if(ov.y === undefined) ov.y = 0.5;
+  if(ov.w === undefined) ov.w = 0.4;
+  if(ov.h === undefined) ov.h = 0.12;
+  const bx = vr.left + ov.x * W - (ov.w * W) / 2;
+  const by = vr.top  + ov.y * H - (ov.h * H) / 2;
+  const bw = ov.w * W;
+  const bh = Math.max(ov.h * H, (ov.size||48) * 1.5);
+
+  // Container overlay
+  const wrap = document.createElement('div');
+  wrap.id = 'inline-text-editor';
+  wrap.style.cssText = `position:absolute;left:${bx}px;top:${by}px;width:${bw}px;min-height:${bh}px;z-index:200;pointer-events:all;box-sizing:border-box`;
+  screen.appendChild(wrap);
+
+  const ta = document.createElement('textarea');
+  const fontSize = Math.round((ov.size||48) * (W / 1920));
+  ta.value = ov.text || '';
+  ta.style.cssText = [
+    'width:100%','min-height:' + bh + 'px','box-sizing:border-box',
+    'background:rgba(0,0,0,0.75)','color:' + (ov.color||'#fff'),
+    'border:2px solid #58a6ff','border-radius:3px',
+    'font:bold ' + fontSize + 'px "' + (ov.font||'DM Sans') + '",sans-serif',
+    'text-align:center','padding:8px','resize:none','outline:none',
+    'line-height:1.35','overflow:hidden'
+  ].join(';');
+  wrap.appendChild(ta);
+
+  // Auto-grow height as user types
+  function autoGrow(){ ta.style.height='auto'; ta.style.height = ta.scrollHeight + 'px'; }
+  ta.addEventListener('input', () => {
+    autoGrow();
+    // Live preview: update overlay text and redraw canvas
+    ov.text = ta.value;
+    if(window.syncCutVid) syncCutVid();
+  });
+
+  // Enter = new line (default textarea behaviour is already correct,
+  // but prevent any parent keydown handlers from interfering)
+  ta.addEventListener('keydown', (e) => {
+    if(e.key === 'Enter'){
+      e.stopPropagation(); // don't bubble to timeline shortcuts
+      // default: inserts \n in textarea — that's exactly what we want
+    }
+    if(e.key === 'Escape'){
+      commit();
+    }
+  });
+
+  function commit(){
+    ov.text = ta.value;
+    wrap.remove();
+    if(window.syncCutVid) syncCutVid();
+    if(window.scheduleSave) scheduleSave();
+    if(window.renderOverlayTimeline) renderOverlayTimeline();
+  }
+
+  ta.addEventListener('blur', commit, {once:true});
+
+  autoGrow();
+  ta.focus();
+  ta.setSelectionRange(ta.value.length, ta.value.length);
+}
+window._openInlineTextEditor = _openInlineTextEditor;
 
 
 // ── SHAPE EDIT DIALOG ──
