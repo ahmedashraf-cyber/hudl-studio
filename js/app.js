@@ -249,12 +249,28 @@ async function loadUserProjects() {
   if (!S.user) return;
   const el = $('projects-list');
   if (el) el.innerHTML = '<div class="empty-projects" style="color:var(--mu2);padding:20px;text-align:center;font-size:13px">Loading projects…</div>';
-  try {
-    S.projects = await getUserProjects(S.user.uid);
-    renderProjectsList();
-  } catch (e) {
-    console.error('loadUserProjects error:', e);
-    if (el) el.innerHTML = '<div class="empty-projects" style="padding:20px;text-align:center;font-size:13px;color:#ff6b6b">Could not load projects. Check your connection.</div>';
+  // Ensure Firestore network is active (handles browser tab resume / offline recovery)
+  try { await db.enableNetwork(); } catch(_) {}
+  // Try up to 2 times with a short delay between attempts
+  for (let attempt = 1; attempt <= 2; attempt++) {
+    try {
+      S.projects = await getUserProjects(S.user.uid);
+      renderProjectsList();
+      return;
+    } catch (e) {
+      console.error('loadUserProjects error (attempt ' + attempt + '):', e.code, e.message, e);
+      if (attempt < 2) {
+        // Wait 1.5s then retry once
+        await new Promise(r => setTimeout(r, 1500));
+        if (el) el.innerHTML = '<div class="empty-projects" style="color:var(--mu2);padding:20px;text-align:center;font-size:13px">Retrying…</div>';
+      } else {
+        if (el) el.innerHTML =
+          '<div class="empty-projects" style="padding:20px;text-align:center;font-size:13px;color:#ff6b6b">' +
+          'Could not load projects.<br><span style="color:var(--mu2);font-size:11px">' + (e.message || e.code || 'Unknown error') + '</span><br><br>' +
+          '<button onclick="loadUserProjects()" style="background:var(--red);color:#fff;border:none;padding:6px 14px;border-radius:6px;cursor:pointer;font-size:12px">Retry</button>' +
+          '</div>';
+      }
+    }
   }
 }
 
