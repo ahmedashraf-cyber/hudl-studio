@@ -5137,29 +5137,16 @@ function cutTogglePlay(){
     _syncVideoMute();
   } else stopCutPlay();
 }
-// Mute/unmute the main video based on whether standalone audio is active at this position
+// Mute/unmute the main video — only mute if user explicitly muted the track
+// or if nativeAudioMuted is set. Never mute just because a linked audio clip exists.
 function _syncVideoMute(){
   const mv = document.getElementById('cut-main-vid');
   if (!mv) return;
   const ci = parseInt(mv.dataset.clipIdx);
   const clip = !isNaN(ci) ? S.cut.clips[ci] : null;
-  if (!clip) { mv.muted = false; return; }
-
-  // 1. Track-level mute always wins
-  const trackMuted = !!(S.cut.mutedTracks?.[clip.track]);
-  if (trackMuted) { mv.muted = true; return; }
-
-  // 2. If this clip has nativeAudioMuted=true it means the user
-  //    explicitly extracted+deleted the linked audio — keep it muted
-  if (clip.nativeAudioMuted) { mv.muted = true; return; }
-
-  // 3. If a linkedToVideo audio clip exists for this video clip,
-  //    the audio plays through the standalone audio element — mute the video tag
-  const hasLinkedAudio = S.cut.clips.some(
-    a => a.linkedToVideo && a.mediaIdx === clip.mediaIdx &&
-         Math.abs(a.start - clip.start) < 1.0
-  );
-  mv.muted = hasLinkedAudio;
+  const trackMuted = clip ? !!(S.cut.mutedTracks?.[clip.track]) : false;
+  const nativeMuted = clip ? !!(clip.nativeAudioMuted) : false;
+  mv.muted = trackMuted || nativeMuted;
 }
 
 function stopCutPlay(){
