@@ -8,7 +8,7 @@
     // Cache guard: localStorage version check + bfcache reload
     // No Service Worker — it was intercepting JS module requests
     (function() {
-      var V = '1780916882';
+      var V = '1780917579';
       try {
         if (localStorage.getItem('fstudio_v') !== V) {
           var hadOld = localStorage.getItem('fstudio_v') !== null;
@@ -119,19 +119,19 @@
         <div class="app-feats"><div class="app-feat">Import real video, audio & images</div><div class="app-feat">Drag clips to multi-track timeline</div><div class="app-feat">Trim, split, resize, delete clips</div><div class="app-feat">Color grade, transport controls</div></div>
         <div class="app-foot"><button class="btn-primary" onclick="event.stopPropagation();openApp('cut')">Open Footage</button><span class="app-badge">Ready</span></div>
       </div>
-      <div class="app-card" style="--ca:#00c896" onclick="openApp('totalmatch')">
+      <div class="app-card" style="--ca:#00c896" onclick="window.location.href='/totalmatch.html'">
         <div class="app-icon" style="background:rgba(0,200,150,0.12)"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#00c896" stroke-width="1.8"><circle cx="12" cy="12" r="3"/><path d="M12 2v4M12 18v4M2 12h4M18 12h4"/><rect x="3" y="3" width="18" height="18" rx="2" stroke-dasharray="2 3"/></svg></div>
         <div class="app-name">TotalMatch</div>
         <div class="app-tag">Professional sports video analysis</div>
         <div class="app-feats"><div class="app-feat">AI player tracking with bounding boxes</div><div class="app-feat">Tactical drawing tools & annotations</div><div class="app-feat">Event tagging & clip playlist</div><div class="app-feat">2D pitch map, heatmaps & CSV export</div></div>
-        <div class="app-foot"><button class="btn-primary" onclick="event.stopPropagation();openApp('totalmatch')">Open TotalMatch</button><span class="app-badge">Ready</span></div>
+        <div class="app-foot"><button class="btn-primary" onclick="event.stopPropagation();window.location.href='/totalmatch.html'">Open TotalMatch</button><span class="app-badge">Ready</span></div>
       </div>
-      <div class="app-card" style="--ca:#BF5AF2" onclick="openApp('knowledge')">
+      <div class="app-card" style="--ca:#BF5AF2" onclick="window.location.href='/knowledge-hub.html'">
         <div class="app-icon" style="background:rgba(191,90,242,0.12)"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#BF5AF2" stroke-width="1.8"><path d="M4 6h16M4 10h10M4 14h12M4 18h8"/></svg></div>
         <div class="app-name">Knowledge Hub</div>
         <div class="app-tag">Ops tagging reference & data spec</div>
         <div class="app-feats"><div class="app-feat">35 event types fully defined</div><div class="app-feat">200+ real video examples</div><div class="app-feat">Edge case event comparisons</div><div class="app-feat">Defensive, Offensive, GK & Independent</div></div>
-        <div class="app-foot"><button class="btn-primary" onclick="event.stopPropagation();openApp('knowledge')">Open Hub</button><span class="app-badge">Ready</span></div>
+        <div class="app-foot"><button class="btn-primary" onclick="event.stopPropagation();window.location.href='/knowledge-hub.html'">Open Hub</button><span class="app-badge">Ready</span></div>
       </div>
       </div>
     </div>
