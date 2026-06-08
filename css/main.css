@@ -528,7 +528,7 @@ html, body { width: 100%; height: 100%; overflow: hidden; font-family: 'DM Sans'
 }
 
 /* ── APP CARDS — FlowOps .card style ── */
-.apps-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-bottom: 8px; }
+.apps-grid { display: grid; grid-template-columns: 1fr 1fr 1fr 1fr; gap: 14px; margin-bottom: 8px; }
 .app-card {
   background: #0F0F0F;
   border: 0.5px solid rgba(255,255,255,0.06);

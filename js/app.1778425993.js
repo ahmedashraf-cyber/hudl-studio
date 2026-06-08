@@ -394,6 +394,8 @@ window.openProject = async function(id) {
 // APP SHELL
 // ═══════════════════════════════════════
 window.openApp = function(name) {
+  if (name === 'totalmatch') { window.location.href = '/totalmatch.html'; return; }
+  if (name === 'knowledge')  { window.location.href = '/knowledge-hub.html'; return; }
   if (S.cut.playing) stopCutPlay();
   if (S.ae.playing) stopAEPlay();
   S.app = name;

@@ -81,20 +81,11 @@ async function autoSave() {
   try {
     await saveProjectState(S.currentProject.id, {
       cut: {
-        // Strip runtime-only properties that are too large for Firestore (1MB limit):
-        // _imgData = base64 frame-hold image (can be 100-500KB per clip)
-        // _img = Image element reference (not serializable)
-        clips: S.cut.clips.map(c => {
-          if(c._imgData || c._img) {
-            const {_imgData, _img, ...rest} = c;
-            return rest;
-          }
-          return c;
-        }),
+        clips: S.cut.clips,
         effects: S.cut.effects,
         videoTracks: S.cut.videoTracks,
         audioTracks: S.cut.audioTracks,
-        overlays: (window._overlays || []).map(o => ({...o, _img: undefined, _imgData: undefined})),
+        // Save media metadata only (blob URLs can't be persisted, user re-imports)
         media: S.cut.media.map(m => ({
           name: m.name, type: m.type,
           duration: m.duration || 0,
@@ -249,28 +240,12 @@ async function loadUserProjects() {
   if (!S.user) return;
   const el = $('projects-list');
   if (el) el.innerHTML = '<div class="empty-projects" style="color:var(--mu2);padding:20px;text-align:center;font-size:13px">Loading projects…</div>';
-  // Ensure Firestore network is active (handles browser tab resume / offline recovery)
-  try { await db.enableNetwork(); } catch(_) {}
-  // Try up to 2 times with a short delay between attempts
-  for (let attempt = 1; attempt <= 2; attempt++) {
-    try {
-      S.projects = await getUserProjects(S.user.uid);
-      renderProjectsList();
-      return;
-    } catch (e) {
-      console.error('loadUserProjects error (attempt ' + attempt + '):', e.code, e.message, e);
-      if (attempt < 2) {
-        // Wait 1.5s then retry once
-        await new Promise(r => setTimeout(r, 1500));
-        if (el) el.innerHTML = '<div class="empty-projects" style="color:var(--mu2);padding:20px;text-align:center;font-size:13px">Retrying…</div>';
-      } else {
-        if (el) el.innerHTML =
-          '<div class="empty-projects" style="padding:20px;text-align:center;font-size:13px;color:#ff6b6b">' +
-          'Could not load projects.<br><span style="color:var(--mu2);font-size:11px">' + (e.message || e.code || 'Unknown error') + '</span><br><br>' +
-          '<button onclick="loadUserProjects()" style="background:var(--red);color:#fff;border:none;padding:6px 14px;border-radius:6px;cursor:pointer;font-size:12px">Retry</button>' +
-          '</div>';
-      }
-    }
+  try {
+    S.projects = await getUserProjects(S.user.uid);
+    renderProjectsList();
+  } catch (e) {
+    console.error('loadUserProjects error:', e);
+    if (el) el.innerHTML = '<div class="empty-projects" style="padding:20px;text-align:center;font-size:13px;color:#ff6b6b">Could not load projects. Check your connection.</div>';
   }
 }
 
@@ -321,14 +296,10 @@ window.closeNPModal = function() {
 window.createNewProject = async function() {
   const name = $('np-name')?.value.trim() || 'Untitled';
   const appType = $('np-app')?.value || 'cut';
-  const fps = parseInt($('np-fps')?.value) || 30;
-  const resPreset = $('np-res-preset')?.value || '1920x1080';
-  // Resolution: read from inputs (preset selector keeps them in sync)
   const w = parseInt($('np-w')?.value) || 1920;
   const h = parseInt($('np-h')?.value) || 1080;
-  const autoRes = resPreset === 'auto'; // flag to auto-inherit from first video
-  // Duration: always open-ended (3600s = 1hr workspace; timeline expands dynamically with content)
-  const dur = 3600;
+  const dur = parseInt($('np-dur')?.value) || 30;
+  const fps = parseInt($('np-fps')?.value) || 30;
 
   const btn = $('np-create-btn');
   if (btn) { btn.textContent = 'Creating…'; btn.disabled = true; }
@@ -338,12 +309,10 @@ window.createNewProject = async function() {
     const id = await createProject(S.user.uid, { name, appType, width: w, height: h, fps, duration: dur });
     const project = { id, name, appType, width: w, height: h, fps, duration: dur, state: {} };
     S.currentProject = project;
-    S.proj = { w, h, fps, dur, autoRes };
+    S.proj = { w, h, fps, dur };
     // Reset cut state for fresh project
     S.cut = { clips:[], media:[], effects:{}, sel:null, ph:0, playing:false,
               videoTracks:2, audioTracks:2, tick:null, _hist:[], _histIdx:-1 };
-    window._overlays = [];
-    window._overlayIdCounter = 0;
     S.projects.unshift(project);
     closeNPModal();
     openApp(appType);
@@ -362,7 +331,7 @@ window.openProject = async function(id) {
     const project = await loadProject(id);
     if (!project) { notify('Project not found', '#E31837'); return; }
     S.currentProject = project;
-    S.proj = { w: project.width||1920, h: project.height||1080, fps: project.fps||30, dur: 3600 };
+    S.proj = { w: project.width||1920, h: project.height||1080, fps: project.fps||30, dur: project.duration||30 };
 
     // Restore Cut state from saved Firestore state
     // project.state is stored as JSON string (via JSON.stringify in saveProjectState)
@@ -407,45 +376,7 @@ window.openProject = async function(id) {
       media:       restoredMedia,
       sel: null, ph: 0, playing: false, tick: null, _hist: [], _histIdx: -1
     };
-    // Restore overlays
-    window._overlays = (cs.overlays || []).map(o => ({...o, _img: undefined, _imgData: undefined}));
-    window._overlayIdCounter = window._overlays.reduce((max, o) => {
-      const n = parseInt((o.id||'').replace('ov_',''))||0; return Math.max(max,n);
-    }, window._overlayIdCounter||0);
 
-    // Restore image_bg overlay blob URLs from media library (blob URLs die on reload)
-    // Primary path: overlay has mediaIdx → use the already-restored media url
-    // Fallback: match by name in IndexedDB stored files
-    const _imgBgOverlays = window._overlays.filter(o => o.type === 'image_bg' && o.bgType === 'image' && o.name);
-    if(_imgBgOverlays.length > 0){
-      // First pass: try to restore from restoredMedia using mediaIdx
-      _imgBgOverlays.forEach(o => {
-        if(o.mediaIdx !== undefined && o.mediaIdx !== null){
-          const mItem = restoredMedia[o.mediaIdx];
-          if(mItem && mItem.url){
-            o.url  = mItem.url;
-            o._img = null;
-          }
-        }
-      });
-      // Second pass: any still missing → scan IndexedDB by name
-      const _stillMissing = _imgBgOverlays.filter(o => !o.url || o.url.startsWith('blob:') === false);
-      if(_stillMissing.length > 0 || _imgBgOverlays.some(o => !o.url)){
-        loadMediaFiles(id).then(storedFiles => {
-          _imgBgOverlays.forEach(o => {
-            if(o.url) return; // already restored
-            const match = storedFiles.find(sf => sf.name === o.name || sf.name === 'ov_' + o.name);
-            if(match){ o.url = match.url; o._img = null; }
-          });
-          if(window.syncCutVid) syncCutVid();
-        }).catch(e => console.warn('Could not restore overlay images:', e));
-      } else {
-        // All restored via mediaIdx — just redraw
-        setTimeout(() => { if(window.syncCutVid) syncCutVid(); }, 100);
-      }
-    }
-
-    window._vpZoom = 1; // reset viewport zoom on project open
     openApp(project.appType || 'cut');
     const missingFiles = restoredMedia.filter(m => !m.url).length;
     if (missingFiles > 0) {
@@ -453,8 +384,6 @@ window.openProject = async function(id) {
     } else {
       notify('Opened: ' + project.name, '#3fb950');
     }
-    // Regenerate _imgData for frame_hold clips (stripped on save, must be rebuilt on load)
-    _regenerateFrameHolds();
   } catch (e) {
     notify('Could not open project', '#E31837');
     console.error('openProject error:', e);
@@ -465,13 +394,10 @@ window.openProject = async function(id) {
 // APP SHELL
 // ═══════════════════════════════════════
 window.openApp = function(name) {
+  if (name === 'totalmatch') { window.location.href = '/totalmatch.html'; return; }
+  if (name === 'knowledge')  { window.location.href = '/knowledge-hub.html'; return; }
   if (S.cut.playing) stopCutPlay();
   if (S.ae.playing) stopAEPlay();
-  // TotalMatch opens as its own full page
-  if(name === 'totalmatch'){
-    window.location.href = '/totalmatch.html';
-    return;
-  }
   S.app = name;
   showPage('page-app');
   $('tl-app-name').textContent = { canvas: 'Canvas', cut: 'Footage' }[name] || name;
@@ -662,10 +588,6 @@ function applyCanvasAspectRatio(w, h){
   if(ph2 > maxH){ ph2 = maxH; pw = maxH * ar; }
   pw = Math.round(pw); ph2 = Math.round(ph2);
 
-  // Store base (fit) dimensions so _applyVpZoom can scale from them
-  frame._baseW = pw;
-  frame._baseH = ph2;
-
   // Resize only the frame boundary — never the video element
   frame.style.width  = pw + 'px';
   frame.style.height = ph2 + 'px';
@@ -681,184 +603,8 @@ function applyCanvasAspectRatio(w, h){
     mv.style.maxWidth  = '';
     mv.style.maxHeight = '';
   }
-
-  // Wire hover tracking for viewport zoom (once only)
-  if(!screen._vpHooked){
-    screen._vpHooked = true;
-    screen.addEventListener('mouseenter', () => { window._mouseOverViewport = true; });
-    screen.addEventListener('mouseleave', () => { window._mouseOverViewport = false; });
-    // Ctrl+wheel over viewport → zoom viewport
-    screen.addEventListener('wheel', e => {
-      if(!window._mouseOverViewport) return;
-      e.preventDefault();
-      const factor = e.deltaY < 0 ? 1.1 : 1/1.1;
-      window._vpZoom = Math.max(0.25, Math.min(4, (window._vpZoom||1) * factor));
-      _applyVpZoom();
-    }, {passive: false});
-  }
-
-  // Apply current zoom (reset to 1 on new project open)
-  window._vpZoom = window._vpZoom || 1;
-  _applyVpZoom();
 }
 window.applyCanvasAspectRatio = applyCanvasAspectRatio;
-
-// ── Viewport Zoom ─────────────────────────────────────────────────────────────
-// Scales cut-viewport-frame independently of timeline PPS zoom.
-// Uses CSS transform so nothing else (overlays, bbox, event coords) is affected —
-// the frame's logical size stays the same; only its visual presentation scales.
-function _applyVpZoom(){
-  const frame  = document.getElementById('cut-viewport-frame');
-  const screen = document.getElementById('cut-screen');
-  if(!frame || !screen) return;
-
-  const z = window._vpZoom || 1;
-
-  // At zoom=1 the frame fits snugly. At zoom>1 we scale up and let cut-screen scroll.
-  // We set transform-origin to center so zoom is centered on the preview.
-  frame.style.transformOrigin = '50% 50%';
-  frame.style.transform       = z === 1 ? '' : `scale(${z.toFixed(3)})`;
-
-  // cut-screen needs overflow:auto when zoomed so user can pan
-  screen.style.overflow = z > 1 ? 'auto' : 'visible';
-
-  // When zoomed in, expand cut-screen's scroll area to fit the scaled frame.
-  // We do this with a transparent spacer div.
-  let spacer = document.getElementById('cut-vp-spacer');
-  if(z > 1){
-    const bW = (frame._baseW || frame.offsetWidth)  * z;
-    const bH = (frame._baseH || frame.offsetHeight) * z;
-    if(!spacer){
-      spacer = document.createElement('div');
-      spacer.id = 'cut-vp-spacer';
-      spacer.style.cssText = 'position:absolute;pointer-events:none;top:0;left:0;';
-      screen.appendChild(spacer);
-    }
-    spacer.style.width  = bW + 'px';
-    spacer.style.height = bH + 'px';
-  } else {
-    if(spacer) spacer.remove();
-  }
-
-  // Update zoom badge
-  _updateVpZoomBadge(z);
-}
-window._applyVpZoom = _applyVpZoom;
-
-function _updateVpZoomBadge(z){
-  let badge = document.getElementById('vp-zoom-badge');
-  const screen = document.getElementById('cut-screen');
-  if(!screen) return;
-
-  if(!badge){
-    badge = document.createElement('div');
-    badge.id = 'vp-zoom-badge';
-    badge.title = 'Click for zoom presets · Double-click to reset · Scroll to zoom';
-    badge.style.cssText = [
-      'position:absolute','bottom:38px','left:8px',
-      'background:rgba(0,0,0,0.72)','color:rgba(255,255,255,0.8)',
-      'font-size:10px','font-family:DM Mono,monospace',
-      'padding:3px 8px','border-radius:5px',
-      'pointer-events:all','cursor:pointer',
-      'z-index:50','user-select:none',
-      'border:0.5px solid rgba(255,255,255,0.14)',
-      'display:flex','align-items:center','gap:4px'
-    ].join(';');
-
-    // Click → toggle dropdown
-    badge.addEventListener('click', e => {
-      e.stopPropagation();
-      const existing = document.getElementById('vp-zoom-menu');
-      if(existing){ existing.remove(); return; }
-
-      const menu = document.createElement('div');
-      menu.id = 'vp-zoom-menu';
-      menu.style.cssText = [
-        'position:absolute',
-        'bottom:' + (badge.offsetTop - badge.offsetParent.clientHeight + badge.offsetHeight + 4) + 'px',
-        'left:8px',
-        'background:#1a1f28',
-        'border:0.5px solid rgba(255,255,255,0.14)',
-        'border-radius:7px',
-        'padding:4px',
-        'z-index:200',
-        'min-width:100px',
-        'box-shadow:0 8px 24px rgba(0,0,0,0.6)'
-      ].join(';');
-
-      const presets = [
-        { label: '400%', v: 4 },
-        { label: '200%', v: 2 },
-        { label: '150%', v: 1.5 },
-        { label: '125%', v: 1.25 },
-        { label: '100%', v: 1 },
-        { label: '75%',  v: 0.75 },
-        { label: '50%',  v: 0.5 },
-        { label: '25%',  v: 0.25 },
-      ];
-
-      presets.forEach(p => {
-        const row = document.createElement('div');
-        const current = Math.round((window._vpZoom||1)*100) === Math.round(p.v*100);
-        row.style.cssText = [
-          'padding:5px 10px',
-          'font-size:11px',
-          'font-family:DM Mono,monospace',
-          'border-radius:5px',
-          'cursor:pointer',
-          'color:' + (current ? '#E8590C' : 'rgba(255,255,255,0.8)'),
-          'background:' + (current ? 'rgba(232,89,12,0.1)' : 'transparent'),
-          'display:flex','align-items:center','justify-content:space-between','gap:16px'
-        ].join(';');
-        row.textContent = p.label;
-        if(current){
-          const tick = document.createElement('span');
-          tick.textContent = '✓';
-          tick.style.cssText = 'color:#E8590C;font-size:10px';
-          row.appendChild(tick);
-        }
-        row.addEventListener('mouseenter', () => { if(!current) row.style.background='rgba(255,255,255,0.06)'; });
-        row.addEventListener('mouseleave', () => { if(!current) row.style.background='transparent'; });
-        row.addEventListener('click', ev => {
-          ev.stopPropagation();
-          window._vpZoom = p.v;
-          _applyVpZoom();
-          menu.remove();
-        });
-        menu.appendChild(row);
-      });
-
-      // Position relative to cut-screen
-      const br = badge.getBoundingClientRect();
-      const sr = screen.getBoundingClientRect();
-      menu.style.bottom = (sr.bottom - br.top + 4) + 'px';
-      menu.style.left   = (br.left - sr.left) + 'px';
-
-      screen.appendChild(menu);
-
-      // Close on outside click
-      const _close = ev => { if(!menu.contains(ev.target) && ev.target !== badge){ menu.remove(); document.removeEventListener('click', _close); } };
-      setTimeout(() => document.addEventListener('click', _close), 10);
-    });
-
-    // Double-click → reset
-    badge.addEventListener('dblclick', e => {
-      e.stopPropagation();
-      document.getElementById('vp-zoom-menu')?.remove();
-      window._vpZoom = 1;
-      _applyVpZoom();
-    });
-
-    screen.appendChild(badge);
-  }
-
-  const pct = Math.round(z * 100);
-  badge.innerHTML = '<span>' + pct + '%</span><span style="font-size:8px;opacity:0.6;margin-left:1px">▾</span>';
-  badge.style.color   = z === 1 ? 'rgba(255,255,255,0.45)' : '#E8590C';
-  badge.style.opacity = z === 1 ? '0.6' : '1';
-  badge.style.borderColor = z === 1 ? 'rgba(255,255,255,0.1)' : 'rgba(232,89,12,0.4)';
-}
-window._updateVpZoomBadge = _updateVpZoomBadge;
 
 window.goToLauncher = async function() {
   if (S.cut.playing) stopCutPlay();
@@ -889,14 +635,10 @@ window.doSave = async function() {
   try {
     await saveProjectState(S.currentProject.id, {
       cut: {
-        clips: S.cut.clips.map(c => {
-          if(c._imgData || c._img) { const {_imgData, _img, ...rest} = c; return rest; }
-          return c;
-        }),
+        clips: S.cut.clips,
         effects: S.cut.effects,
         videoTracks: S.cut.videoTracks,
         audioTracks: S.cut.audioTracks,
-        overlays: (window._overlays || []).map(o => ({...o, _img: undefined, _imgData: undefined})),
         media: S.cut.media.map(m => ({
           name: m.name, type: m.type,
           duration: m.duration || 0,
@@ -963,50 +705,22 @@ function setupMarqueeSelection(){
       _mqEl.style.left = x+'px'; _mqEl.style.top = y+'px';
       _mqEl.style.width = w+'px'; _mqEl.style.height = h+'px';
 
-      // Intersection hit-test: select clips AND overlays that overlap the marquee
-      // Use <= for boundary checks so items at exact row edges are included
+      // Intersection hit-test: select clips that overlap the marquee
       const mqLeft = x / PPS, mqRight = (x+w) / PPS;
       const mqTop  = y,        mqBottom = y + h;
       window._selectedClips = new Set();
-      window._selectedOverlays = window._selectedOverlays || new Set();
-      window._selectedOverlays.clear();
-
-      // Hit-test clips
       S.cut.clips.forEach((c, ci) => {
         const clipL = c.start, clipR = c.start + c.dur;
-        let rowTop;
-        if(c.track < S.cut.videoTracks){
-          rowTop = (S.cut.videoTracks - 1 - c.track) * 30;
-        } else {
-          rowTop = S.cut.videoTracks * 30 + (c.track - S.cut.videoTracks) * 30;
-        }
-        const rowBot = rowTop + 30;
-        // Use <= so clips at exact boundary edges are captured
-        const hOverlap = clipL <= mqRight && clipR >= mqLeft;
-        const vOverlap = rowTop <= mqBottom && rowBot >= mqTop;
+        const rowTop = c.track * 30, rowBot = rowTop + 26;
+        // Intersection check (not containment)
+        const hOverlap = clipL < mqRight && clipR > mqLeft;
+        const vOverlap = rowTop < mqBottom && rowBot > mqTop;
         if(hOverlap && vOverlap) window._selectedClips.add(ci);
       });
-
-      // Hit-test overlays
-      (window._overlays||[]).forEach(ov => {
-        const ovL = ov.startTime, ovR = ov.endTime;
-        const ovTrack = ov.track || 0;
-        const rowTop = (S.cut.videoTracks - 1 - ovTrack) * 30;
-        const rowBot = rowTop + 30;
-        const hOverlap = ovL <= mqRight && ovR >= mqLeft;
-        const vOverlap = rowTop <= mqBottom && rowBot >= mqTop;
-        if(hOverlap && vOverlap) window._selectedOverlays.add(ov.id);
-      });
-
-      // Visual feedback for clips
+      // Visual feedback
       document.querySelectorAll('.tl-clip:not(.tl-overlay-clip)').forEach(el => {
         const ci = parseInt(el.dataset.ci);
         el.classList.toggle('selected', window._selectedClips.has(ci));
-      });
-      // Visual feedback for overlay clips
-      document.querySelectorAll('.tl-overlay-clip').forEach(el => {
-        const ovId = el.dataset.ovId;
-        el.classList.toggle('selected', window._selectedOverlays.has(ovId));
       });
     };
 
@@ -1019,23 +733,9 @@ function setupMarqueeSelection(){
         window._selectedClips = new Set();
         document.querySelectorAll('.tl-clip.selected').forEach(el => el.classList.remove('selected'));
         S.cut.sel = null;
-      } else {
-        // Mark that a marquee drag just ended — suppress the follow-up click clear
-        _lastMarqueeEnd = Date.now();
-        const _totalSel = (window._selectedClips?.size||0) + (window._selectedOverlays?.size||0);
-        if(window._selectedClips?.size === 1 && !window._selectedOverlays?.size){
-          S.cut.sel = [...window._selectedClips][0];
-          if(typeof updatePropsPanel === 'function') updatePropsPanel(S.cut.sel);
-        } else if(_totalSel > 1){
-          // Multi-selection — clear single-selection state
-          S.cut.sel = null;
-          // Ensure all selected clips are visually highlighted
-          if(window._highlightSelected) window._highlightSelected();
-          // Ensure overlay clips show selected border
-          document.querySelectorAll('.tl-overlay-clip').forEach(el => {
-            el.classList.toggle('selected', window._selectedOverlays?.has(el.dataset.ovId)||false);
-          });
-        }
+      } else if(window._selectedClips?.size === 1){
+        S.cut.sel = [...window._selectedClips][0];
+        if(typeof updatePropsPanel === 'function') updatePropsPanel(S.cut.sel);
       }
       _mq = null;
     };
@@ -1103,21 +803,62 @@ window.setupFolderImport = setupFolderImport;
 window.doExport = function() { showExportModal(); };
 
 function showExportModal(){
-  // Create AudioContext synchronously in the gesture handler — unlocks it permanently
+  // AudioContext approach: works reliably with user-uploaded blob URLs
+  // captureStream() gives 0 audio tracks on unplayed video - AudioContext is the correct API
   try{
-    if(window._exportMasterVid){ try{window._exportMasterVid.pause();if(document.body.contains(window._exportMasterVid))window._exportMasterVid.remove();}catch(e){} window._exportMasterVid=null; }
+    // Clean up previous export session
+    if(window._exportMasterVid){ try{window._exportMasterVid.pause(); if(document.body.contains(window._exportMasterVid)) window._exportMasterVid.remove();}catch(e){} }
     if(window._exportAudioCtx){ try{window._exportAudioCtx.close();}catch(e){} window._exportAudioCtx=null; }
-    const _ctx = new (window.AudioContext||window.webkitAudioContext)({sampleRate:48000});
-    _ctx.resume(); // Must call in gesture stack
-    // Unlock with a silent oscillator — no video element, no ghost audio
-    const _osc = _ctx.createOscillator();
-    const _g   = _ctx.createGain(); _g.gain.value = 0;
-    _osc.connect(_g); _g.connect(_ctx.destination);
-    _osc.start(); _osc.stop(_ctx.currentTime + 0.001);
-    window._exportAudioCtx = _ctx;
-  }catch(e){ console.warn('[Export] AudioContext unlock failed:', e); }
 
-  // Build modal UI
+    // Step 1: Create AudioContext IN the gesture handler (synchronous)
+    const _ctx = new (window.AudioContext||window.webkitAudioContext)({sampleRate:48000});
+
+    // Step 2: resume() MUST be called synchronously in the same gesture call stack
+    // AudioContext starts 'suspended' - resume() here unlocks it permanently
+    _ctx.resume(); // synchronous call in gesture = Chrome allows it
+
+    // Step 3: Create master bus
+    const _gain = _ctx.createGain();
+    _gain.gain.value = 1.0;
+    const _dest = _ctx.createMediaStreamDestination();
+    _gain.connect(_dest);
+
+    // Step 4: Create masterVid and connect to AudioContext
+    const _vclips = (S?.cut?.clips||[]).filter(c=>c.type==='video');
+    const _firstUrl = _vclips.length ? S?.cut?.media?.[_vclips[0].mediaIdx]?.url : null;
+    const _mv = document.createElement('video');
+    _mv.muted = false; _mv.volume = 1.0; _mv.style.display='none';
+    if(_firstUrl) _mv.src = _firstUrl;
+    document.body.appendChild(_mv);
+
+    // Connect element to AudioContext BEFORE play()
+    const _mvSrc = _ctx.createMediaElementSource(_mv);
+    _mvSrc.connect(_gain);
+
+    // Step 5: play() in gesture = unlocks AudioContext (not for audio output)
+    // _mv is MUTED - drawEls will be the actual audio sources during export
+    // We only need _mv to trigger the user-gesture unlock
+    _mv.muted = true; // mute: only used to unlock AudioContext, not for audio output
+    const _playP = _mv.play();
+    if(_playP) _playP.catch(()=>{});
+
+    window._exportAudioCtx   = _ctx;
+    window._exportMasterGain = _gain;
+    window._exportAudioDest  = _dest;
+    window._exportMasterVid  = _mv;
+    window._exportMvSrc      = _mvSrc;
+
+    // These are now populated by the AudioContext destination
+    window._exportAudioStream = _dest.stream;
+    // Compatibility: also populate _exportMasterAudioTracks for legacy code paths
+    window._exportMasterAudioTracks = _dest.stream.getAudioTracks();
+
+    console.log('Export AudioContext:', _ctx.sampleRate+'Hz state='+_ctx.state,
+      'dest tracks:', _dest.stream.getAudioTracks().length,
+      'readyStates:', _dest.stream.getAudioTracks().map(t=>t.readyState).join(','));
+  }catch(e){ console.warn('showExportModal audio:', e); }
+
+  // Build and show the export modal UI
   document.querySelectorAll('#export-modal').forEach(m=>m.remove());
   const videoClips=S.cut.clips.filter(c=>c.type==='video').sort((a,b)=>a.start-b.start);
   const _allEnds=S.cut.clips.map(c=>c.start+c.dur);
@@ -1133,10 +874,11 @@ function showExportModal(){
       <div style="margin-bottom:14px">
         <label style="font-size:10px;font-weight:700;color:#8b949e;text-transform:uppercase;letter-spacing:.7px;display:block;margin-bottom:6px">Quality / Resolution</label>
         <select id="exp-quality" style="width:100%;padding:9px 11px;background:#252d3d;border:1px solid rgba(255,255,255,0.11);border-radius:8px;color:#f0f2f5;font-size:13px;outline:none">
-          <option value="3840,2160,16000000">4K Ultra HD (3840&times;2160) &mdash; 16 Mbps</option>
-          <option value="1920,1080,8000000" selected>1080p Full HD (1920&times;1080) &mdash; 8 Mbps</option>
-          <option value="1280,720,4000000">720p HD (1280&times;720) &mdash; 4 Mbps</option>
-          <option value="854,480,2000000">480p SD (854&times;480) &mdash; 2 Mbps</option>
+          <option value="3840,2160,8000000">4K Ultra HD (3840&#xD7;2160) &mdash; 8 Mbps</option>
+          <option value="1920,1080,4000000" selected>1080p Full HD (1920&#xD7;1080) &mdash; 4 Mbps</option>
+          <option value="1280,720,2000000">720p HD (1280&#xD7;720) &mdash; 2 Mbps</option>
+          <option value="854,480,1000000">480p SD (854&#xD7;480) &mdash; 1 Mbps</option>
+          <option value="640,360,500000">360p Low (640&#xD7;360) &mdash; 500 Kbps</option>
         </select>
       </div>
       <div style="margin-bottom:14px">
@@ -1144,28 +886,33 @@ function showExportModal(){
         <select id="exp-fps" style="width:100%;padding:9px 11px;background:#252d3d;border:1px solid rgba(255,255,255,0.11);border-radius:8px;color:#f0f2f5;font-size:13px;outline:none">
           <option value="60">60 fps &mdash; Smooth</option>
           <option value="30" selected>30 fps &mdash; Standard</option>
+          <option value="25">25 fps &mdash; PAL</option>
           <option value="24">24 fps &mdash; Cinematic</option>
         </select>
       </div>
       <div id="exp-progress" style="display:none;margin-bottom:14px">
-        <div style="font-size:12px;font-weight:600;color:#f0f2f5;margin-bottom:4px" id="exp-status">Preparing...</div>
-        <div style="background:#161b24;border-radius:6px;height:10px;overflow:hidden;margin-bottom:4px">
-          <div id="exp-bar" style="height:100%;background:linear-gradient(90deg,#E31837,#ff6b6b);width:0%;transition:width 0.4s;border-radius:6px"></div>
+        <div style="font-size:12px;font-weight:600;color:#f0f2f5;margin-bottom:8px" id="exp-status">Preparing...</div>
+        <div style="background:#161b24;border-radius:6px;height:10px;overflow:hidden;margin-bottom:6px">
+          <div id="exp-bar" style="height:100%;background:linear-gradient(90deg,#E31837,#ff6b6b);width:0%;transition:width 0.3s;border-radius:6px"></div>
         </div>
-        <div style="display:flex;justify-content:space-between;font-size:11px;color:#8b949e">
-          <span id="exp-phase">—</span>
-          <span id="exp-eta">—</span>
-        </div>
+        <div style="font-size:11px;color:#8b949e" id="exp-eta"></div>
       </div>
       <div style="margin-bottom:14px">
         <label style="font-size:10px;font-weight:700;color:#8b949e;text-transform:uppercase;letter-spacing:.7px;display:block;margin-bottom:6px">File Name</label>
         <input id="exp-filename" type="text" value="${(S.currentProject?.name||'export').replace(/[^\w\s-]/g,'').trim()}" style="width:100%;padding:9px 11px;background:#252d3d;border:1px solid rgba(255,255,255,0.11);border-radius:8px;color:#f0f2f5;font-size:13px;outline:none;box-sizing:border-box" placeholder="my-video">
       </div>
+      <div style="margin-bottom:14px">
+        <label style="font-size:10px;font-weight:700;color:#8b949e;text-transform:uppercase;letter-spacing:.7px;display:block;margin-bottom:6px">Format</label>
+        <select id="exp-format" style="width:100%;padding:9px 11px;background:#252d3d;border:1px solid rgba(255,255,255,0.11);border-radius:8px;color:#f0f2f5;font-size:13px;outline:none">
+          <option value="mp4" selected>MP4 &mdash; best compatibility</option>
+          <option value="webm">WebM (VP9) &mdash; open format</option>
+        </select>
+      </div>
       <div style="font-size:11px;color:#8b949e;background:rgba(88,166,255,0.07);border:1px solid rgba(88,166,255,0.15);border-radius:6px;padding:8px 10px;margin-bottom:18px">
-        Export includes all video, audio tracks, overlays, effects, and frame holds.
+        Export includes all video, audio, overlays and effects from your timeline.
       </div>
       <div style="display:flex;justify-content:flex-end;gap:8px">
-        <button onclick="document.getElementById('export-modal').remove();window._exportCancelled=true;" style="padding:9px 20px;border-radius:8px;font-size:13px;font-weight:600;font-family:DM Sans,sans-serif;cursor:pointer;background:transparent;border:1px solid rgba(255,255,255,0.15);color:#8b949e">Cancel</button>
+        <button onclick="document.getElementById('export-modal').remove()" style="padding:9px 20px;border-radius:8px;font-size:13px;font-weight:600;font-family:DM Sans,sans-serif;cursor:pointer;background:transparent;border:1px solid rgba(255,255,255,0.15);color:#8b949e">Cancel</button>
         <button id="exp-btn" onclick="startExport()" style="padding:9px 20px;border-radius:8px;font-size:13px;font-weight:700;font-family:DM Sans,sans-serif;cursor:pointer;background:#E31837;border:none;color:#fff">&#x25B6; Export</button>
       </div>
     </div>`;
@@ -1173,255 +920,272 @@ function showExportModal(){
 }
 
 async function startExport(){
-  // ── UI setup ──────────────────────────────────────────────────────────────
-  const fname   = (document.getElementById('exp-filename')?.value||'export').trim().replace(/[^\w\s-]/g,'').replace(/\s+/g,'_')||'export';
-  const qParts  = (document.getElementById('exp-quality')?.value||'1920,1080,8000000').split(',');
-  const W       = parseInt(qParts[0])||1920;
-  const H       = parseInt(qParts[1])||1080;
-  const BR      = parseInt(qParts[2])||8000000;
-  const fps     = parseInt(document.getElementById('exp-fps')?.value)||30;
-  const btn     = document.getElementById('exp-btn');
-  const bar     = document.getElementById('exp-bar');
-  const status  = document.getElementById('exp-status');
-  const phaseEl = document.getElementById('exp-phase');
-  const etaEl   = document.getElementById('exp-eta');
-  const progDiv = document.getElementById('exp-progress');
-
+  window._exportFileName = (document.getElementById('exp-filename')?.value||'export').trim().replace(/[^\w\s-]/g,'').replace(/\s+/g,'_')||'export';
+  const qParts=(document.getElementById('exp-quality').value||'1920,1080,4000000').split(',');
+  const W=parseInt(qParts[0])||1920, H=parseInt(qParts[1])||1080, BR=parseInt(qParts[2])||4000000;
+  const fps=parseInt(document.getElementById('exp-fps').value)||30;
+  const btn=document.getElementById('exp-btn');
+  const progressDiv=document.getElementById('exp-progress');
+  const bar=document.getElementById('exp-bar');
+  const status=document.getElementById('exp-status');
+  const eta=document.getElementById('exp-eta');
   btn.disabled=true; btn.textContent='Exporting...';
-  progDiv.style.display='block';
+  progressDiv.style.display='block';
 
-  // Kill any previous export loop
-  window._exportCancelled=true;
-  await new Promise(r=>setTimeout(r,80));
-  window._exportCancelled=false;
-  const _tok=Symbol(); window._exportTok=_tok;
-  const _alive=()=>!window._exportCancelled && window._exportTok===_tok;
-
-  const _set=(msg,pct,ph,eta)=>{
-    if(!_alive())return;
-    if(status)  status.textContent =msg;
-    if(bar)     bar.style.width    =(pct||0)+'%';
-    if(phaseEl) phaseEl.textContent=ph||'';
-    if(etaEl)   etaEl.textContent  =eta||'';
-  };
-  const _fail=(msg)=>{
-    if(status)  status.textContent ='✖ '+msg;
-    if(phaseEl) phaseEl.textContent='';
-    if(etaEl)   etaEl.textContent  ='';
-    if(bar)     bar.style.width    ='0%';
-    if(btn){btn.disabled=false;btn.textContent='↺ Retry';btn.onclick=startExport;}
-  };
-
-  // ── Timeline data ─────────────────────────────────────────────────────────
   const videoClips=S.cut.clips.filter(c=>c.type==='video').sort((a,b)=>a.start-b.start);
-  if(!videoClips.length){_fail('No video clips on timeline');return;}
-  const totalDur=Math.max(0.1,...S.cut.clips.map(c=>c.start+c.dur),...(window._overlays||[]).map(o=>o.endTime||0));
+  if(!videoClips.length){notify('No video clips on timeline','#E31837');btn.disabled=false;btn.textContent='▶ Export';return;}
+  // Hard cap at last asset out-point (S.proj.dur is workspace size, not content)
+  const _allEnds=S.cut.clips.map(c=>c.start+c.dur);
+  const _ovEnds=(window._overlays||[]).map(o=>o.endTime||0);
+  const totalDur=Math.max(0.1,..._allEnds,..._ovEnds);
 
-  // Audio = ONLY type==='audio' clips (never video native audio)
-  const audioClips=S.cut.clips.filter(c=>c.type==='audio'&&!S.cut.mutedTracks?.[c.track]).sort((a,b)=>a.start-b.start);
-
-  // ── Canvas — MUST be in DOM so captureStream captures draws ──────────────
+  // Offscreen canvas for video frames
   const canvas=document.createElement('canvas');
   canvas.width=W; canvas.height=H;
-  canvas.style.cssText='position:fixed;left:0;top:0;width:1px;height:1px;opacity:0.001;pointer-events:none;z-index:1;';
-  document.body.appendChild(canvas);
   const ctx=canvas.getContext('2d');
 
-  // ── PHASE 1: Pre-load video elements ─────────────────────────────────────
-  _set('Loading video files...',3,'Phase 1/4 — Loading','');
-  const drawEls={};
-  await Promise.all([...new Set(videoClips.map(c=>c.mediaIdx))].map(mIdx=>{
-    const item=S.cut.media[mIdx];
-    if(!item?.url)return Promise.resolve();
-    const v=document.createElement('video');
-    v.muted=true;v.volume=0;v.preload='auto';v.playsInline=true;
-    // Must be visible in viewport for Chrome to decode blob URLs
-    v.style.cssText='position:fixed;left:0;top:0;width:2px;height:2px;opacity:0.001;pointer-events:none;z-index:2;';
-    v.src=item.url; document.body.appendChild(v); drawEls[mIdx]=v;
-    return new Promise(r=>{
-      if(v.readyState>=2){r();return;}
-      let ok=false;
-      const done=()=>{if(ok)return;ok=true;['loadeddata','canplay','error'].forEach(e=>v.removeEventListener(e,done));r();};
-      ['loadeddata','canplay','error'].forEach(e=>v.addEventListener(e,done));
-      setTimeout(done,12000); v.load();
-    });
-  }));
-  if(!_alive()){canvas.remove();return;}
 
-  // ── PHASE 2: Decode audio tracks offline ─────────────────────────────────
-  _set('Decoding audio...',8,'Phase 2/4 — Audio','');
-  let _mixedAudio=null;
-  if(audioClips.length){
-    try{
-      const offCtx=new OfflineAudioContext(2,Math.ceil(totalDur*48000)+48000,48000);
-      await Promise.all(audioClips.map(async ac=>{
-        const item=S.cut.media[ac.mediaIdx]; if(!item?.url)return;
-        try{
-          const buf=await offCtx.decodeAudioData(await(await fetch(item.url)).arrayBuffer());
-          const src=offCtx.createBufferSource();
-          const gn=offCtx.createGain();
-          src.buffer=buf; gn.gain.value=ac.volume!==undefined?Math.min(1,ac.volume):1;
-          src.connect(gn); gn.connect(offCtx.destination);
-          src.start(Math.max(0,ac.start),ac.fileStart||0,ac.dur);
-        }catch(e){console.warn('[Export] audio:',e.message);}
-      }));
-      _mixedAudio=await offCtx.startRendering();
-      console.log('[Export] audio rendered:',_mixedAudio.duration.toFixed(1)+'s');
-    }catch(e){console.warn('[Export] OfflineAudio:',e);}
+  // EXPORT AUDIO v3: single video element approach
+  // One element = one captureStream() = continuous audio in MediaRecorder
+  // No AudioContext, no suspended state issues, no multi-track mixing problems
+  status.textContent='Loading video files...';
+
+  // Persistent per-media video elements - stay loaded, each connected to AudioContext
+  // No src changes during rendering = AudioContext connections never break
+  const drawEls = {}; // mediaIdx -> <video> element
+  status.textContent='Pre-loading media...';
+  const _uniqueIdxs = [...new Set(videoClips.map(c=>c.mediaIdx))];
+  const _actxPre = window._exportAudioCtx;
+  const _mbusPre = window._exportMasterGain;
+  for(const mIdx of _uniqueIdxs){
+    const item = S.cut.media[mIdx];
+    if(!item?.url) continue;
+    const v = document.createElement('video');
+    v.src = item.url; v.preload='auto'; v.muted=false; v.volume=1.0;
+    v.style.display='none'; v.playsInline=true;
+    document.body.appendChild(v);
+    await new Promise(r=>{ if(v.readyState>=3){r();return;} v.oncanplaythrough=r; v.onerror=r; setTimeout(r,15000); });
+    // Connect to AudioContext master bus - persistent connection for this media file
+    if(_actxPre && _mbusPre){
+      try{ const _s=_actxPre.createMediaElementSource(v); _s.connect(_mbusPre); v._audSrc=_s; }
+      catch(e){ console.warn('audio connect mIdx='+mIdx+':', e.message); }
+    }
+    drawEls[mIdx] = v;
+    status.textContent='Pre-loading: '+(Object.keys(drawEls).length)+'/'+_uniqueIdxs.length;
   }
-  if(!_alive()){canvas.remove();return;}
 
-  // ── PHASE 3: Set up MediaRecorder + AudioContext ──────────────────────────
-  _set('Setting up recorder...',12,'Phase 3/4 — Setup','');
+  // masterVid is from showExportModal (already muted, only used for AudioContext unlock)
+  // drawEls handle all video+audio during rendering
+  const masterVid = window._exportMasterVid; // reference only, not used in renderFrame
 
-  // Fresh AudioContext for recording — created right before recorder.start()
-  let recCtx=null, recGain=null, recDest=null;
-  try{
-    recCtx=new(window.AudioContext||window.webkitAudioContext)({sampleRate:48000});
-    await Promise.race([recCtx.resume(),new Promise(r=>setTimeout(r,500))]);
-    recGain=recCtx.createGain(); recGain.gain.value=1;
-    recDest=recCtx.createMediaStreamDestination();
-    recGain.connect(recDest);
-  }catch(e){console.warn('[Export] recCtx:',e);}
+  // Use AudioContext stream from showExportModal gesture
+  // AudioContext was created AND resumed synchronously in the Export button click
+  const _audioCtx    = window._exportAudioCtx;
+  const _masterGain  = window._exportMasterGain;
+  const _audioDest   = window._exportAudioDest;
+  const masterAudioTracks = _audioDest ? _audioDest.stream.getAudioTracks() : (window._exportMasterAudioTracks||[]);
+  console.log('Export audio: ctx='+(_audioCtx?.state||'null'), 'tracks='+masterAudioTracks.length,
+    masterAudioTracks.map(t=>t.readyState+'/'+t.enabled).join(','));
+  // Resume AudioContext again in case browser suspended between modal open and export click
+  if(_audioCtx && _audioCtx.state==='suspended') _audioCtx.resume();
 
-  const videoStream=canvas.captureStream(fps);
-  const audioTracks=recDest?.stream.getAudioTracks().filter(t=>t.readyState==='live')||[];
-  const finalStream=audioTracks.length
-    ?new MediaStream([...videoStream.getVideoTracks(),...audioTracks])
-    :videoStream;
+  // drawEls[firstClip.mediaIdx] is already loaded and connected to AudioContext
+  // No need to load masterVid separately
 
-  // Best supported WebM codec
-  const mimeType=['video/webm;codecs=vp9,opus','video/webm;codecs=vp8,opus','video/webm'].find(m=>MediaRecorder.isTypeSupported(m))||'video/webm';
+  // Preload standalone audio-only clips
+  const audioOnlyClips = S.cut.clips
+    .filter(c=>c.type==='audio'&&!c.linkedToVideo)
+    .sort((a,b)=>a.start-b.start);
+  const audioEls = {};
+  for(const clip of audioOnlyClips){
+    const item = S.cut.media[clip.mediaIdx];
+    if(!item?.url || audioEls[clip.mediaIdx]) continue;
+    if(S.cut.mutedTracks?.[clip.track]) continue;
+    const a = document.createElement('audio');
+    a.src=item.url; a.preload='auto';
+    a.muted=false; a.volume=1.0; a.style.display='none';
+    document.body.appendChild(a);
+    await new Promise(r=>{a.oncanplaythrough=r;a.onerror=r;setTimeout(r,8000);});
+    audioEls[clip.mediaIdx] = a;
+  }
+
+  // Standalone audio clips are connected via AudioContext (below) - no captureStream needed
+
+  // Also connect standalone audio elements to the AudioContext master bus
+  if(_audioCtx && _masterGain){
+    for(const a of Object.values(audioEls)){
+      try{ const _as=_audioCtx.createMediaElementSource(a); _as.connect(_masterGain); }catch(e){}
+    }
+  }
+  // Build final stream: canvas video + AudioContext master bus output
+  // Single clean audio stream from AudioContext - no duplicates
+  const videoStream = canvas.captureStream(fps);
+  const _audioTracks = _audioDest ? _audioDest.stream.getAudioTracks() : [];
+  console.log('Final export: videoTracks='+videoStream.getVideoTracks().length+' audioTracks='+_audioTracks.length);
+  const finalStream = _audioTracks.length > 0
+    ? new MediaStream([...videoStream.getVideoTracks(), ..._audioTracks])
+    : videoStream;
+
+  // drawEls is now the primary source for both video drawing and audio
+  // masterVid is kept for backward compat but drawEls are used in renderFrame
+  window._exportMasterGain = _mbusPre || null;
+
+
+    // Choose codec: prefer H264/AAC (MP4-compatible) if browser supports it
+  const fmt = document.getElementById('exp-format')?.value || 'webm';
+  let mimeType;
+  if(fmt === 'mp4'){
+    // Try H264+AAC for true MP4 content — supported in Chrome
+    const mp4Types = ['video/mp4;codecs=avc1.42E01E,mp4a.40.2','video/mp4;codecs=h264,aac','video/mp4'];
+    mimeType = mp4Types.find(m=>MediaRecorder.isTypeSupported(m));
+  }
+  if(!mimeType){
+    // Fallback: VP9+Opus WebM
+    const webmTypes = ['video/webm;codecs=vp9,opus','video/webm;codecs=vp8,opus','video/webm'];
+    mimeType = webmTypes.find(m=>MediaRecorder.isTypeSupported(m)) || 'video/webm';
+  }
+  const recorder=new MediaRecorder(finalStream,{mimeType,videoBitsPerSecond:BR,audioBitsPerSecond:320000});
   const chunks=[];
-  const recorder=new MediaRecorder(finalStream,{mimeType,videoBitsPerSecond:BR,audioBitsPerSecond:192000});
-  recorder.ondataavailable=e=>{if(e.data?.size>0)chunks.push(e.data);};
+  recorder.ondataavailable=e=>{if(e.data&&e.data.size>0)chunks.push(e.data);};
 
   recorder.onstop=async()=>{
-    if(!_alive()){canvas.remove();return;}
-    _set('Packaging...',99,'Packaging','');
-    await new Promise(r=>setTimeout(r,200));
+    status.textContent='Packaging download...';
+    bar.style.width='100%';
+    // Cleanup video and audio elements
+    if(window._exportMasterVid){try{window._exportMasterVid.pause();window._exportMasterVid.src='';if(document.body.contains(window._exportMasterVid))document.body.removeChild(window._exportMasterVid);}catch(e){}window._exportMasterVid=null;}
+    Object.values(audioEls).forEach(a=>{try{a.pause();a.src='';document.body.contains(a)&&document.body.removeChild(a);}catch(e){}});
+    window._exportMasterGain=null;
+    if(window._exportAudioCtx){try{window._exportAudioCtx.close();}catch(e){} window._exportAudioCtx=null;}
+    window._exportAudioDest=null; window._exportAudioStream=null;
+    await new Promise(r=>setTimeout(r,300));
     const blob=new Blob(chunks,{type:mimeType});
     const url=URL.createObjectURL(blob);
     const a=document.createElement('a');
-    a.href=url; a.download=`${fname}_${W}x${H}_${fps}fps.webm`;
+    a.href=url;
+    const fname=(S.currentProject?.name||'export').replace(/[^\w\s-]/g,'').trim().replace(/\s+/g,'_');
+    const ext = mimeType.includes('mp4') ? 'mp4' : 'webm';
+    a.download = fname+'_'+W+'x'+H+'_'+fps+'fps.'+ext;
     document.body.appendChild(a); a.click(); document.body.removeChild(a);
-    setTimeout(()=>URL.revokeObjectURL(url),60000);
-    canvas.remove();
-    Object.values(drawEls).forEach(v=>{try{v.pause();if(document.body.contains(v))v.remove();}catch(e){}});
-    try{if(recCtx)recCtx.close();}catch(e){}
-    try{if(window._exportAudioCtx){window._exportAudioCtx.close();window._exportAudioCtx=null;}}catch(e){}
-    _set('Done!',100,'','');
+    setTimeout(()=>URL.revokeObjectURL(url),30000);
     document.getElementById('export-modal')?.remove();
-    notify(`✓ Export — ${fname}.webm  (${(blob.size/1024/1024).toFixed(1)} MB · ${totalDur.toFixed(0)}s)`,'#3fb950');
+    notify('✓ Export downloaded — '+fname+' ('+(mimeType.includes('mp4')?'MP4':'WebM')+')','#3fb950');
   };
 
-  // ── PHASE 4: Real-time render loop ────────────────────────────────────────
-  // setInterval draws frames at real-time pace.
-  // captureStream records wall-clock time → file duration = totalDur seconds.
-  // Audio PCM scheduled on recCtx AFTER recorder.start() so it plays during recording.
+  recorder.start(500); // collect every 500ms for stable chunks
+  status.textContent='Rendering with audio...';
 
-  recorder.start(500); // 500ms chunks
+  const dt=1/fps;
+  let t=0;
+  let lastActiveVid=null;
+  const startTs=Date.now();
 
-  // Schedule decoded audio to start with recording
-  if(_mixedAudio&&recCtx&&recGain){
-    try{
-      const audioT0=recCtx.currentTime+0.05;
-      const src=recCtx.createBufferSource();
-      src.buffer=_mixedAudio; src.connect(recGain);
-      src.start(audioT0,0,_mixedAudio.duration);
-    }catch(e){console.warn('[Export] audio schedule:',e);}
-  }
+  // ── Smooth render: let video play naturally, capture frames at real-time rate ──
+  // Seek once to start, then just drawImage() each frame — no per-frame seeks
+  let lastClipIdx = -1;
 
-  const renderStartMs=Date.now();
-  const msPerFrame=Math.round(1000/fps);
-  let lastClipIdx=-1, lastVid=null;
+  async function renderFrame(){
+    if(t >= totalDur){  // exact stop at last asset
+      if(lastActiveVid && !lastActiveVid.paused){ lastActiveVid.pause(); }
+      Object.values(audioEls).forEach(a=>{ try{a.pause();}catch(e){} });
+      if(recorder.state!=='inactive') recorder.stop();
+      return;
+    }
 
-  // Pre-seek first clip so first frame isn't black
-  const fc=videoClips[0];
-  if(fc&&drawEls[fc.mediaIdx]){
-    const v=drawEls[fc.mediaIdx];
-    v.currentTime=fc.fileStart||0; v.playbackRate=fc.speed||1;
-    await new Promise(r=>{const h=()=>{v.removeEventListener('seeked',h);r();};v.addEventListener('seeked',h);setTimeout(r,2000);});
-    try{await v.play();}catch(e){}
-    lastVid=v; lastClipIdx=0;
-  }
-
-  _set('Rendering...',14,'Phase 4/4 — Rendering','Calculating...');
-
-  await new Promise(resolve=>{
-    const intervalId=setInterval(()=>{
-      if(!_alive()){
-        clearInterval(intervalId);
-        if(recorder.state!=='inactive')recorder.stop();
-        resolve(); return;
+    // Frame hold: draw frozen frame independently of source clip
+    const fhNow = S.cut.clips.find(c => c.type==='frame_hold' && t>=c.start && t<c.start+c.dur);
+    if(fhNow){
+      if(fhNow._imgData && (!fhNow._img || !fhNow._img.complete)){
+        fhNow._img = new Image(); fhNow._img.src = fhNow._imgData;
       }
-      const elapsed=(Date.now()-renderStartMs)/1000;
-      if(elapsed>=totalDur){
-        clearInterval(intervalId);
-        if(lastVid&&!lastVid.paused)lastVid.pause();
-        if(recorder.state!=='inactive')recorder.stop();
-        resolve(); return;
+      ctx.fillStyle='#000'; ctx.fillRect(0,0,W,H);
+      // 1. Draw frozen frame
+      if(fhNow._img && fhNow._img.complete) ctx.drawImage(fhNow._img,0,0,W,H);
+      if(lastActiveVid && !lastActiveVid.paused) lastActiveVid.pause();
+      // 2. Render overlays on top of frozen frame during export
+      const fhActiveOvs = (window._overlays||[]).filter(o => t>=o.startTime && t<o.endTime);
+      if(fhActiveOvs.length && window.renderOverlaysOnCanvas){
+        window.renderOverlaysOnCanvas(ctx, W, H, t, new Set());
       }
+      const pct2=Math.min(98,Math.round((t/totalDur)*100));
+      bar.style.width=pct2+'%';
+      status.textContent='Rendering: '+pct2+'% (Frame Hold)';
+      t+=dt;
+      const wt2=startTs+t*1000; const d2=Math.max(0,wt2-Date.now());
+      setTimeout(renderFrame,d2); return;
+    }
 
-      // Draw scene at current elapsed time
-      const t=elapsed;
-      const fh=S.cut.clips.find(c=>c.type==='frame_hold'&&t>=c.start&&t<c.start+c.dur);
-      if(fh){
-        if(fh._imgData&&(!fh._img||!fh._img.complete)){fh._img=new Image();fh._img.src=fh._imgData;}
-        ctx.fillStyle='#000';ctx.fillRect(0,0,W,H);
-        if(fh._img?.complete){
-          const ci=S.cut.clips.indexOf(fh),p=[];
-          (S.cut.effects[ci]||[]).forEach(ef=>{if(ef.visible===false)return;const e=CUT_EFFECTS[ef.i];if(!e||e.type==='transition')return;const es=fh.start+(ef.startOffset||0),ee=es+(ef.effectDur??fh.dur);if(t<es||t>=ee)return;if(e.type==='range')p.push(e.prop+'('+ef.v+e.unit+')');else if(e.type==='toggle')p.push(e.filter);});
-          ctx.save();if(p.length)ctx.filter=p.join(' ');ctx.drawImage(fh._img,0,0,W,H);ctx.filter='none';ctx.restore();
-        }
-        if(lastVid&&!lastVid.paused)lastVid.pause();
-      } else {
-        const clip=videoClips.find(c=>t>=c.start&&t<c.start+c.dur);
-        if(clip){
-          const vid=drawEls[clip.mediaIdx];
-          const ci=videoClips.indexOf(clip);
-          if(ci!==lastClipIdx){
-            if(lastVid&&lastVid!==vid&&!lastVid.paused)lastVid.pause();
-            lastClipIdx=ci; lastVid=vid;
-            if(vid){
-              const ft=(clip.fileStart||0)+Math.max(0,(t-clip.start)*(clip.speed||1));
-              vid.muted=true;vid.volume=0;vid.playbackRate=clip.speed||1;
-              vid.currentTime=ft;
-              vid.play().catch(()=>{});
-            }
-          }
-          ctx.fillStyle='#000';ctx.fillRect(0,0,W,H);
-          if(vid&&vid.readyState>=2){
-            const ci2=S.cut.clips.indexOf(clip),vp=[];
-            (S.cut.effects[ci2]||[]).forEach(ef=>{if(ef.visible===false)return;const e=CUT_EFFECTS[ef.i];if(!e||e.type==='transition')return;const es=clip.start+(ef.startOffset||0),ee=es+(ef.effectDur??clip.dur);if(t<es||t>=ee)return;if(e.type==='range')vp.push(e.prop+'('+ef.v+e.unit+')');else if(e.type==='toggle')vp.push(e.filter);});
-            ctx.save();if(vp.length)ctx.filter=vp.join(' ');
-            try{ctx.drawImage(vid,0,0,W,H);}catch(e){}
-            ctx.filter='none';ctx.restore();
-          }
-        } else {
-          ctx.fillStyle='#000';ctx.fillRect(0,0,W,H);
-          if(lastVid&&!lastVid.paused){lastVid.pause();lastVid=null;}lastClipIdx=-1;
+    const clip = videoClips.find(c => t >= c.start && t < c.start + c.dur);
+
+    if(clip){
+      // Use drawEls[mediaIdx] - pre-loaded, pre-connected to AudioContext
+      // No src changes during rendering = AudioContext connection stays alive
+      const vid = drawEls[clip.mediaIdx];
+      const clipIdx = videoClips.indexOf(clip);
+
+      if(clipIdx !== lastClipIdx){
+        // Pause previous clip's element
+        if(lastActiveVid && lastActiveVid !== vid && !lastActiveVid.paused) lastActiveVid.pause();
+        lastActiveVid = vid;
+        lastClipIdx = clipIdx;
+
+        if(vid){
+          const _spd = clip.speed || 1;
+          const fileTime = (clip.fileStart||0) + Math.max(0,(t - clip.start)*_spd);
+          vid.volume = clip.volume !== undefined ? Math.min(1, clip.volume/100) : 1.0;
+          vid.playbackRate = _spd;
+          vid.currentTime = fileTime;
+          await new Promise(r=>{
+            const h=()=>{ vid.removeEventListener('seeked',h); r(); };
+            vid.addEventListener('seeked', h);
+            setTimeout(r, 3000);
+          });
+          try{ await vid.play(); }catch(e){}
         }
       }
-      // Overlays on top
+
+      // Draw frame
+      ctx.fillStyle='#000'; ctx.fillRect(0,0,W,H);
+      if(vid && vid.readyState>=2) try{ ctx.drawImage(vid,0,0,W,H); }catch(e){}
       if((window._overlays||[]).some(o=>t>=o.startTime&&t<o.endTime)&&window.renderOverlaysOnCanvas)
         window.renderOverlaysOnCanvas(ctx,W,H,t,new Set());
 
-      // Progress
-      const pct=Math.min(98,Math.round((elapsed/totalDur)*84)+14);
-      const remSec=Math.max(0,totalDur-elapsed);
-      const remStr=remSec>1?`~${Math.ceil(remSec)}s remaining`:'Almost done...';
-      _set(`Rendering: ${pct}%`,pct,`Phase 4/4 — ${elapsed.toFixed(1)}s / ${totalDur.toFixed(1)}s`,remStr);
-    }, msPerFrame);
-  });
+    } else {
+      ctx.fillStyle = '#000';
+      ctx.fillRect(0, 0, W, H);
+      if(lastActiveVid && !lastActiveVid.paused){ lastActiveVid.pause(); lastActiveVid = null; }
+      lastClipIdx = -1;
+    }
+
+    // ── Standalone audio clips ──
+    for(const ac of audioOnlyClips){
+      if(S.cut.mutedTracks?.[ac.track]) continue;
+      const a = audioEls[ac.mediaIdx]; if(!a) continue;
+      if(t >= ac.start && t < ac.start + ac.dur){
+        const aT = (ac.fileStart||0) + Math.max(0, t - ac.start);
+        a.muted = false;
+        if(a.paused){ a.currentTime = aT; try{ a.play(); }catch(e){} }
+        else if(Math.abs(a.currentTime - aT) > 0.5) a.currentTime = aT;
+      } else if(!a.paused){ a.pause(); }
+    }
+
+    // ── Progress ──
+    const pct = Math.min(98, Math.round((t / totalDur) * 100));
+    bar.style.width = pct + '%';
+    const elapsed = (Date.now() - startTs) / 1000;
+    const rate = elapsed > 0.5 ? t / elapsed : 1;
+    const rem = rate > 0 ? (totalDur - t) / rate : 0;
+    status.textContent = `Rendering: ${pct}% · ${t.toFixed(1)}s / ${totalDur.toFixed(1)}s`;
+    if(rem > 1) eta.textContent = `~${Math.ceil(rem)}s remaining`;
+
+    t += dt;
+    // Schedule next frame at exact wall-clock target
+    const wallTarget = startTs + t * 1000;
+    const delay = Math.max(0, wallTarget - Date.now());
+    setTimeout(renderFrame, delay);
+  }
+
+  await renderFrame();
 }
-
-
-
-
-
-
-
 
 
 // ═══════════════════════════════════════
@@ -1968,15 +1732,6 @@ function buildCut() {
           </div>
           <div class="pv-timecode" id="cut-pv-tc">00:00:00:00</div>
         </div>
-        <!-- Scrub bar below viewport -->
-        <div id="cut-scrub-bar" style="flex-shrink:0;height:28px;background:#0a0a0a;border-top:0.5px solid rgba(255,255,255,0.07);display:flex;align-items:center;padding:0 12px;gap:8px;user-select:none;">
-          <span id="cut-scrub-tc" style="font-family:'DM Mono',monospace;font-size:10px;color:rgba(255,255,255,0.45);min-width:58px;flex-shrink:0">00:00:00</span>
-          <div id="cut-scrub-track" style="flex:1;height:4px;background:rgba(255,255,255,0.08);border-radius:2px;position:relative;cursor:pointer;">
-            <div id="cut-scrub-fill"  style="position:absolute;left:0;top:0;height:100%;background:rgba(232,89,12,0.6);border-radius:2px;pointer-events:none;"></div>
-            <div id="cut-scrub-knob"  style="position:absolute;top:50%;width:12px;height:12px;border-radius:50%;background:#E8590C;border:2px solid #fff;transform:translate(-50%,-50%);cursor:grab;box-shadow:0 1px 4px rgba(0,0,0,0.5);transition:transform .1s;"></div>
-          </div>
-          <span id="cut-scrub-dur" style="font-family:'DM Mono',monospace;font-size:10px;color:rgba(255,255,255,0.3);min-width:40px;text-align:right;flex-shrink:0">0:00</span>
-        </div>
       </div>
       <div class="cut-rpanel">
         <div class="panel-tabs">
@@ -2028,7 +1783,6 @@ function buildCut() {
   setupCutDrop(); setupCutFileInput(); renderCutTimeline(); buildBinList();
   setupTimelineScrollSync();
   setTimeout(setupMarqueeSelection, 200);
-  setTimeout(setupScrubBar, 300);
   // Apply canvas aspect ratio + init pen tool
   setTimeout(()=>{
     applyCanvasAspectRatio(S.proj.w||1920, S.proj.h||1080);
@@ -2245,6 +1999,7 @@ function cutToggleEffect(i){
     const eff=CUT_EFFECTS[i];
     if(ov && eff && eff.type==='transition'){
       cutSaveHistory('overlay_transition');
+      // Determine in vs out based on current setting (toggle in → out → both → off)
       const mode = eff.mode;
       const outMode = mode==='fadein'?'fadeout':mode==='zoomin'?'zoomout':mode;
       if(!ov.inTransition || ov.inTransition==='none'){
@@ -2263,53 +2018,38 @@ function cutToggleEffect(i){
       return;
     }
   }
-
   const ci=S.cut.sel;
   if(ci===null||ci===undefined){notify('Select a clip or overlay first','#E31837');return;}
   cutSaveHistory('effect_toggle');
-
-  // ── Helper: toggle effect on a single clip index ──
-  function _applyEffectToClip(tci){
-    if(!S.cut.effects[tci]) S.cut.effects[tci]=[];
-    const existing=S.cut.effects[tci].findIndex(e=>e.i===i);
-    const eff=CUT_EFFECTS[i];
-    if(existing>=0){
-      S.cut.effects[tci].splice(existing,1);
-    } else {
-      const clip=S.cut.clips[tci];
-      const clipDur = clip?.dur || 2;
-      const defaultStartOffset = eff.type==='transition'
-        ? Math.max(0, S.cut.ph - clip.start)
-        : 0;
-      S.cut.effects[tci].push({
-        i,
-        v: eff.default||0,
-        startOffset: defaultStartOffset,
-        effectDur: eff.type==='transition' ? Math.min(eff.dur||1, clipDur*0.5) : clipDur,
-        visible: true,
-      });
-    }
-  }
-
-  // Apply to all selected clips if multi-select active
-  if(window._selectedClips?.size > 1){
-    window._selectedClips.forEach(tci => _applyEffectToClip(tci));
-    notify(CUT_EFFECTS[i].name + ' applied to ' + window._selectedClips.size + ' clips', '#3fb950');
+  if(!S.cut.effects[ci]) S.cut.effects[ci]=[];
+  const idx=S.cut.effects[ci].findIndex(e=>e.i===i);
+  const eff=CUT_EFFECTS[i];
+  if(idx>=0){
+    S.cut.effects[ci].splice(idx,1);
+    notify(eff.name+' removed');
   } else {
-    _applyEffectToClip(ci);
-    const eff=CUT_EFFECTS[i];
+    // Apply from current playhead position within clip
     const clip=S.cut.clips[ci];
     const offsetInClip=Math.max(0,S.cut.ph-clip.start);
-    const hasNow = (S.cut.effects[ci]||[]).some(e=>e.i===i);
-    notify(hasNow ? eff.name+' applied at '+fmtTC(offsetInClip)+' into clip' : eff.name+' removed', hasNow?'#3fb950':undefined);
+    const clipDur = S.cut.clips[ci]?.dur || 2;
+    const defaultStartOffset = eff.type==='transition'
+      ? Math.max(0, S.cut.ph - clip.start)  // transition starts at current playhead
+      : 0;                                   // filters start at clip beginning
+    S.cut.effects[ci].push({
+      i,
+      v: eff.default||0,
+      startOffset: defaultStartOffset,
+      effectDur: eff.type==='transition' ? Math.min(eff.dur||1, clipDur*0.5) : clipDur,
+      visible: true,
+    });
+    notify(eff.name+' applied at '+fmtTC(offsetInClip)+' into clip','#3fb950');
   }
-
   applyVideoEffects();
-  showEffectIndicator(i, !!(S.cut.effects[ci]||[]).some(e=>e.i===i));
+  showEffectIndicator(i,idx<0);
   const p=$('cut-p-effects'); if(p) p.innerHTML=cutEffectsHTML();
-  renderCutTimeline();
-  syncCutVid();
-  if(ci !== null && ci !== undefined) updatePropsPanel(ci);
+  renderCutTimeline(); // redraw timeline to show effect bars
+  syncCutVid();        // update canvas with new effect immediately
+  if(ci !== null && ci !== undefined) updatePropsPanel(ci); // refresh props so transition sliders appear
   scheduleSave();
 }
 
@@ -2591,23 +2331,7 @@ function handleCutFiles(files) {
       const v = document.createElement('video'); v.src = url;
       v.onloadedmetadata = () => {
         item.duration = v.duration;
-        item.width    = v.videoWidth;
-        item.height   = v.videoHeight;
-        // Auto-inherit resolution from first video if project was created with "Auto" preset
-        if(S.proj.autoRes && v.videoWidth > 0 && v.videoHeight > 0){
-          const _isFirstVid = S.cut.media.filter(m => m.type==='video' && m.width).length <= 1;
-          if(_isFirstVid){
-            S.proj.w = v.videoWidth;
-            S.proj.h = v.videoHeight;
-            S.proj.autoRes = false; // only inherit once
-            applyCanvasAspectRatio(S.proj.w, S.proj.h);
-            // Persist updated resolution
-            if(S.currentProject){ S.currentProject.width=S.proj.w; S.currentProject.height=S.proj.h; }
-            if(typeof scheduleSave==='function') scheduleSave();
-            notify(`Canvas set to ${S.proj.w}×${S.proj.h} from video`, '#3fb950');
-          }
-        }
-        item.hasAudio = true;
+        item.hasAudio = true; // assume video has audio by default
         v.currentTime = 0.5;
         v.onseeked = () => {
           const tc=document.createElement('canvas');tc.width=64;tc.height=36;
@@ -2794,7 +2518,7 @@ function updatePropsPanel(ci){
 
     <div class="prop-row"><span class="prop-label">Volume</span>
       <input type="range" id="vol-val-${ci}-input" min="0" max="200" value="${Math.round(vol*100)}" style="flex:1;accent-color:#E8590C"
-        oninput="S.cut.clips[${ci}].volume=this.value/100;if(!S.cut.clips[${ci}].audioFx)S.cut.clips[${ci}].audioFx={};S.cut.clips[${ci}].audioFx.volume=parseInt(this.value);document.getElementById('vol-pct-${ci}').textContent=this.value+'%';_applyPropToSelected('volume',this.value/100,${ci})">
+        oninput="S.cut.clips[${ci}].volume=this.value/100;if(!S.cut.clips[${ci}].audioFx)S.cut.clips[${ci}].audioFx={};S.cut.clips[${ci}].audioFx.volume=parseInt(this.value);document.getElementById('vol-pct-${ci}').textContent=this.value+'%'">
       <span id="vol-pct-${ci}" style="font-size:10px;color:var(--mu);min-width:32px;text-align:right">${Math.round(vol*100)}%</span>
     </div>
     <div class="prop-section" style="padding-top:6px" style="color:rgba(255,220,80,0.9)">🎚 Fade</div>
@@ -2833,11 +2557,11 @@ function updatePropsPanel(ci){
   body.innerHTML=`
     <div style="padding:6px 8px 2px;display:flex;align-items:center;gap:6px">
       <div style="width:3px;height:18px;border-radius:2px;background:linear-gradient(180deg,#E8590C,#ff8c42)"></div>
-      <span style="font-size:11px;font-weight:700;color:rgba(255,255,255,0.85)">${c.type==='video'?'Video Clip':c.type==='image'?'Image Clip':c.type==='audio'?'Audio Clip':'Clip'}</span>
+      <span style="font-size:11px;font-weight:700;color:rgba(255,255,255,0.85)">${c.type==='video'?'Video Clip':c.type==='audio'?'Audio Clip':'Clip'}</span>
       <span style="font-size:10px;color:rgba(255,255,255,0.25);flex:1;text-align:right;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${item.name||''}</span>
     </div>
 
-    ${(c.type==='video'||c.type==='image') ? `
+    ${c.type==='video' ? `
     <div style="border:0.5px solid rgba(232,89,12,0.25);border-radius:8px;margin:4px 0;overflow:hidden;background:rgba(232,89,12,0.04)">
       <div style="display:flex;align-items:center;padding:8px 10px;cursor:pointer;user-select:none;gap:8px"
         onclick="const el=document.getElementById('acc-tf-${ci}');el.hidden=!el.hidden;this.querySelector('.acc-chv').style.transform=el.hidden?'rotate(-90deg)':'rotate(0deg)'">
@@ -2860,12 +2584,12 @@ function updatePropsPanel(ci){
           <span style="font-size:10px;color:var(--mu);min-width:36px;text-align:right">${(tf.y||0).toFixed(1)}%</span>
         </div>
         <div class="prop-row"><span class="prop-label">Scale X</span>
-          <input type="range" min="0" max="500" step="1" value="${tf.scaleX||100}" style="flex:1;accent-color:#E8590C"
+          <input type="range" min="10" max="300" step="1" value="${tf.scaleX||100}" style="flex:1;accent-color:#E8590C"
             oninput="const c2=S.cut.clips[${ci}];if(!c2.transform)c2.transform={x:0,y:0,scaleX:100,scaleY:100,rotation:0};c2.transform.scaleX=parseInt(this.value);this.nextElementSibling.textContent=this.value+'%';syncCutVid();renderBoundingBox(${ci});">
           <span style="font-size:10px;color:var(--mu);min-width:36px;text-align:right">${tf.scaleX||100}%</span>
         </div>
         <div class="prop-row"><span class="prop-label">Scale Y</span>
-          <input type="range" min="0" max="500" step="1" value="${tf.scaleY||100}" style="flex:1;accent-color:#E8590C"
+          <input type="range" min="10" max="300" step="1" value="${tf.scaleY||100}" style="flex:1;accent-color:#E8590C"
             oninput="const c2=S.cut.clips[${ci}];if(!c2.transform)c2.transform={x:0,y:0,scaleX:100,scaleY:100,rotation:0};c2.transform.scaleY=parseInt(this.value);this.nextElementSibling.textContent=this.value+'%';syncCutVid();renderBoundingBox(${ci});">
           <span style="font-size:10px;color:var(--mu);min-width:36px;text-align:right">${tf.scaleY||100}%</span>
         </div>
@@ -3111,26 +2835,7 @@ function applyClipSpeed(ci, newSpeedPct, ripple){
 }
 window.applyClipSpeed = applyClipSpeed;
 
-// ── Apply a property change to ALL selected clips ──────────────────────────
-// Called after any single-clip property change when multi-select is active.
-// prop: string key (e.g. 'volume', 'speed'), val: new value
-function _applyPropToSelected(prop, val, sourceCi){
-  if(!window._selectedClips || window._selectedClips.size <= 1) return;
-  window._selectedClips.forEach(ci => {
-    if(ci === sourceCi) return; // already applied to source
-    const c = S.cut.clips[ci];
-    if(!c) return;
-    if(prop === 'speed'){
-      applyClipSpeed(ci, val * 100, false);
-    } else {
-      c[prop] = val;
-    }
-  });
-  renderCutTimeline();
-}
-window._applyPropToSelected = _applyPropToSelected;
-
-
+// Show speed dialog (from context menu)
 function showSpeedDialog(ci){
   const c = S.cut.clips[ci];
   if(!c) return;
@@ -3701,9 +3406,7 @@ function cutAddToTL(i) {
     }
     window._lastActiveVideoTrack = track;
   }
-  S.cut.clips.push({mediaIdx:i,name:item.name,type:item.type,track,start:startSec,dur:Math.max(item.duration||5,0.5),fileStart:0,
-    transform:{x:0,y:0,scaleX:100,scaleY:100,rotation:0},
-    color:item.type==='video'?'rgba(88,166,255,0.8)':item.type==='audio'?'rgba(210,153,34,0.8)':'rgba(63,185,80,0.8)'});
+  S.cut.clips.push({mediaIdx:i,name:item.name,type:item.type,track,start:startSec,dur:Math.max(item.duration||5,0.5),fileStart:0,color:item.type==='video'?'rgba(88,166,255,0.8)':item.type==='audio'?'rgba(210,153,34,0.8)':'rgba(63,185,80,0.8)'});
   // If video file, also add linked audio clip on first audio track
   if(item.type==='video'&&item.hasAudio!==false){
     const audioTrackIdx=S.cut.videoTracks; // first audio track
@@ -3735,24 +3438,13 @@ function cutAddToTL(i) {
     // Also move playhead to start of new clip
     S.cut.ph = startSec;
     updateCutPH();
-    // Re-sync audio after playhead moved — keeps voiceover playing at new position if applicable
-    if(S.cut.playing) startAudioPlayback();
-    else syncAudioPlayback();
   }, 80);
   // Ensure viewport frame has correct dimensions, then initialize video
   applyCanvasAspectRatio(S.proj.w||1920, S.proj.h||1080);
-  // Ensure placeholder canvas is visible immediately (CSS default is block, but be explicit)
-  const _placeholderCvs = document.getElementById('cut-cvs');
-  if(_placeholderCvs) _placeholderCvs.style.display = 'block';
   const _startInit = (attempts) => {
     const delay = attempts === 5 ? 80 : 250;
     setTimeout(() => {
       setupPlayheadDrag();
-      // Ensure canvas is visible before syncCutVid runs
-      const _cvs = document.getElementById('cut-trans-cvs');
-      const _fr  = document.getElementById('cut-viewport-frame');
-      if(_cvs){ _cvs.style.display = 'block'; _cvs.style.zIndex = '2'; }
-      if(_fr)  applyCanvasAspectRatio(S.proj.w||1920, S.proj.h||1080);
       syncCutVid();
       const mv2 = document.getElementById('cut-main-vid');
       if(mv2 && mv2.readyState < 2 && attempts > 0){
@@ -3761,9 +3453,6 @@ function cutAddToTL(i) {
     }, delay);
   };
   _startInit(5);
-  // Extra sync calls at longer delays to handle slow video decode / cold loads
-  setTimeout(() => { if(!S.cut.playing) syncCutVid(); }, 600);
-  setTimeout(() => { if(!S.cut.playing) syncCutVid(); }, 1500);
 }
 
 function renderCutTimeline() {
@@ -3800,24 +3489,12 @@ function renderCutTimeline() {
   if(rows){
     const ph=document.getElementById('cut-ph');
     rows.querySelectorAll('.clip-track-row').forEach(r=>r.remove());
-    // Video rows: descending (highest trackIdx first = visually on top)
-    for(let v=S.cut.videoTracks; v>=1; v--){
-      const t = v-1;
+    for(let t=0;t<totalTk;t++){
       const row=document.createElement('div');
       row.id='tl-row-'+t;
-      row.className='clip-track-row video-row';
+      row.className='clip-track-row '+(t<S.cut.videoTracks?'video-row':'audio-row');
       row.setAttribute('data-track',t);
-      row.style.width = _tlW + 'px';
-      if(ph) rows.insertBefore(row,ph); else rows.appendChild(row);
-    }
-    // Audio rows: ascending
-    for(let a=1; a<=S.cut.audioTracks; a++){
-      const t = S.cut.videoTracks+(a-1);
-      const row=document.createElement('div');
-      row.id='tl-row-'+t;
-      row.className='clip-track-row audio-row';
-      row.setAttribute('data-track',t);
-      row.style.width = _tlW + 'px';
+      row.style.width = _tlW + 'px'; // all rows same elastic width
       if(ph) rows.insertBefore(row,ph); else rows.appendChild(row);
     }
   }
@@ -3843,9 +3520,7 @@ function renderCutTimeline() {
       if(isAudioTrack && isVisualAsset){ notify('Video/image assets must go on Video tracks (V1, V2...)','#E31837'); return; }
       const rect=row.getBoundingClientRect();
       const start=Math.max(0,(e.clientX-rect.left+document.getElementById('tl-scroll')?.scrollLeft||0)/PPS);
-      S.cut.clips.push({mediaIdx:i,name:item.name,type:item.type,track:t,start,dur:Math.max(item.duration||5,0.5),fileStart:0,
-        transform:{x:0,y:0,scaleX:100,scaleY:100,rotation:0},
-        color:item.type==='video'?'rgba(88,166,255,0.8)':item.type==='audio'?'rgba(210,153,34,0.8)':'rgba(63,185,80,0.8)'});
+      S.cut.clips.push({mediaIdx:i,name:item.name,type:item.type,track:t,start,dur:Math.max(item.duration||5,0.5),fileStart:0,color:item.type==='video'?'rgba(88,166,255,0.8)':item.type==='audio'?'rgba(210,153,34,0.8)':'rgba(63,185,80,0.8)'});
       // Auto-add audio track for video clips
       if(item.type==='video'&&item.hasAudio!==false){
         const audioTrackIdx=S.cut.videoTracks;
@@ -3858,7 +3533,7 @@ function renderCutTimeline() {
     S.cut.clips.filter(c=>c.track===t).forEach((c,_,arr)=>{
       const ci=S.cut.clips.indexOf(c);
       const el=document.createElement('div');
-      el.className='tl-clip'+((S.cut.sel===ci || window._selectedClips?.has(ci))?' selected':'');
+      el.className='tl-clip'+(S.cut.sel===ci?' selected':'');
       // Width = duration * pixels-per-second (strict 1:1 with ruler)
       const clipW = Math.max(8, Math.round(c.dur * PPS));
       const clipL = Math.round(c.start * PPS);
@@ -4008,34 +3683,9 @@ function renderCutTimeline() {
         if(e.target.classList.contains('clip-resize-r')) return;
         if(e._effectBarHandled) return; // effect bar already handled
         e.stopPropagation();
-        // Ignore single click if it's the second click of a dblclick (within 300ms)
-        const _now = Date.now();
-        if(el._lastClickTime && _now - el._lastClickTime < 300){ el._lastClickTime = 0; return; }
-        el._lastClickTime = _now;
         _selectClip(ci);
       }, true); // capture:true — fires before children
       el.addEventListener('contextmenu',e=>{e.stopPropagation();clipContextMenu(e,ci);});
-      // Double-click → jump playhead to first frame of this clip
-      // Use mousedown-based detection (capture) to avoid click handler interference
-      el.addEventListener('mousedown', e => {
-        if(e.button !== 0) return;
-        if(e.target.classList.contains('clip-resize-l')) return;
-        if(e.target.classList.contains('clip-resize-r')) return;
-        const _now2 = Date.now();
-        if(el._lastMdTime && _now2 - el._lastMdTime < 300){
-          // Double mousedown = double-click
-          e.stopPropagation();
-          el._lastMdTime = 0;
-          el._lastClickTime = 0;
-          const c2 = S.cut.clips[ci];
-          if(!c2) return;
-          S.cut.ph = c2.start;
-          updateCutPH();
-          syncCutVid();
-          return;
-        }
-        el._lastMdTime = _now2;
-      }, true);
       el.addEventListener('mousedown', e => {
         if(e.target.classList.contains('clip-resize-l')||e.target.classList.contains('clip-resize-r')) return;
         // Select immediately on mousedown (before any drag), capture phase
@@ -4151,13 +3801,6 @@ function clipMoveStart(e,ci){
     });
   }
   window._snapCache = null;
-  // Store origins for all selected overlays at drag start (for cross-type group move)
-  const _multiOverlayOrigins = {};
-  if(window._selectedOverlays?.size > 0){
-    (window._overlays||[]).forEach(o => {
-      if(window._selectedOverlays.has(o.id)) _multiOverlayOrigins[o.id] = o.startTime;
-    });
-  }
   _mv = {
     ci,
     sx:       e.clientX,
@@ -4167,7 +3810,6 @@ function clipMoveStart(e,ci){
     el:       el,
     _multiOrigins,
     _multiOriginTracks,
-    _multiOverlayOrigins,
   };
   if(el){ el.style.opacity='0.7'; el.style.zIndex='100'; }
   document.addEventListener('mousemove', clipMoveMove);
@@ -4225,24 +3867,6 @@ function clipMoveMove(e){
   }
   renderCutTimeline();
   if(window._selectedClips?.size > 1) _highlightSelected();
-
-  // Cross-type group move: also move any selected overlays by the same horizontal delta
-  if(window._selectedOverlays?.size > 0 && _mv._multiOverlayOrigins){
-    const _hDelta = newStart - (_mv._multiOrigins?.[_mv.ci] ?? _mv.origStart);
-    (window._overlays||[]).forEach(o => {
-      if(!window._selectedOverlays.has(o.id)) return;
-      if(_mv._multiOverlayOrigins[o.id] === undefined) return;
-      const _oDur = o.endTime - o.startTime;
-      o.startTime = Math.max(0, _mv._multiOverlayOrigins[o.id] + _hDelta);
-      o.endTime   = o.startTime + _oDur;
-      // Update DOM position directly — no renderOverlayTimeline to avoid listener rebuild
-      const _ovEl = document.querySelector('[data-ov-id="'+o.id+'"]');
-      if(_ovEl){
-        _ovEl.style.left  = Math.round(o.startTime * PPS) + 'px';
-        _ovEl.style.width = Math.max(4, Math.round((o.endTime - o.startTime) * PPS)) + 'px';
-      }
-    });
-  }
 }
 function clipMoveUp(){
   if(!_mv) return;
@@ -4344,52 +3968,34 @@ function refreshEffectsPanel(){
 }
 
 function cutSplit(){
-  const ph=S.cut.ph;
+  const ph=S.cut.ph; // current playhead position in seconds
 
-  // ── Multi-select: split all selected clips that span the playhead ──
-  if(window._selectedClips?.size > 1){
-    const toSplit = [...window._selectedClips].filter(ci=>{
-      const c = S.cut.clips[ci];
-      return c && ph > c.start && ph < c.start + c.dur;
-    });
-    if(!toSplit.length){notify('Playhead not on any selected clip','#E31837');return;}
-    cutSaveHistory('split_multi');
-    toSplit.forEach(ci=>{
-      const c = S.cut.clips[ci];
-      const origEnd = c.start + c.dur;
-      const splitOffset = ph - c.start;
-      const c2 = {...c, start:ph, dur:origEnd-ph, fileStart:(c.fileStart||0)+splitOffset, effects:{}};
-      c.dur = ph - c.start;
-      S.cut.clips.push(c2);
-    });
-    window._selectedClips = new Set();
-    S.cut.sel = null;
-    rebuildTrackLabels(); renderCutTimeline(); setupPlayheadDrag();
-    notify('Split ' + toSplit.length + ' clips at '+fmtTC(ph),'#3fb950');
-    return;
-  }
-
-  // ── Single clip split ──
+  // Find clip under playhead — check ALL clips, prefer selected one
   let ci=S.cut.sel;
   const clipAtPH=S.cut.clips.findIndex(c=>ph>c.start&&ph<c.start+c.dur);
 
   if(clipAtPH<0){notify('Place playhead on a clip to split','#E31837');return;}
 
+  // If selected clip is under playhead use it, otherwise use clip at playhead
   if(ci===null||ci===undefined||!(ph>S.cut.clips[ci]?.start&&ph<S.cut.clips[ci]?.start+S.cut.clips[ci]?.dur)){
     ci=clipAtPH;
     S.cut.sel=ci;
   }
 
   const c=S.cut.clips[ci];
+  // Double check
   if(!c||ph<=c.start||ph>=c.start+c.dur){notify('Playhead must be on a clip','#E31837');return;}
-  cutSaveHistory('split');
+  cutSaveHistory('split'); // snapshot before split
 
+  // Split: both halves stay on the SAME track
   const origStart = c.start;
   const origEnd   = origStart + c.dur;
   const splitFileOffset = ph - origStart;
 
+  // Left part: shorten original in place
   c.dur = ph - origStart;
 
+  // Right part: same track, starts at split point
   const c2 = {
     ...c,
     start: ph,
@@ -4398,6 +4004,9 @@ function cutSplit(){
     effects: {}
   };
   S.cut.clips.push(c2);
+
+  // Only split the selected clip — don't auto-split linked audio
+  // User can select audio clip separately to split it
 
   rebuildTrackLabels();
   renderCutTimeline();
@@ -4580,30 +4189,7 @@ function cutRedo(){
 }
 
 function cutDuplicate(ciOverride){
-  // ── Multi-select: duplicate all selected clips ──
-  if(ciOverride === undefined && window._selectedClips?.size > 1){
-    cutSaveHistory('duplicate_multi');
-    const indices = [...window._selectedClips].sort((a,b)=>a-b);
-    indices.forEach(ci => {
-      const c = S.cut.clips[ci];
-      if(!c) return;
-      const dup = JSON.parse(JSON.stringify(c));
-      dup.start = c.start + c.dur;
-      const newCi = S.cut.clips.length;
-      if(S.cut.effects[ci]?.length > 0){
-        S.cut.effects[newCi] = JSON.parse(JSON.stringify(S.cut.effects[ci]));
-      }
-      S.cut.clips.push(dup);
-    });
-    window._selectedClips = new Set();
-    S.cut.sel = null;
-    renderCutTimeline();
-    notify('Duplicated ' + indices.length + ' clips', '#3fb950');
-    scheduleSave();
-    return;
-  }
-
-  // ── Single clip duplicate ──
+  // Accept explicit clip index (from props panel button) or use current selection
   const ci = (ciOverride !== undefined && ciOverride !== null) ? ciOverride : S.cut.sel;
   if(ci === null || ci === undefined || !S.cut.clips[ci]){
     notify('Select a clip first', '#E31837');
@@ -4611,15 +4197,24 @@ function cutDuplicate(ciOverride){
   }
   cutSaveHistory('duplicate');
   const c = S.cut.clips[ci];
+
+  // ── Deep-clone all clip properties ──
   const dup = JSON.parse(JSON.stringify(c));
+
+  // Place immediately after original on the same track
   dup.start = c.start + c.dur;
+
+  // ── Clone effects (stored by clip index, not on clip object) ──
   const newCi = S.cut.clips.length;
   if(S.cut.effects[ci] && S.cut.effects[ci].length > 0){
     S.cut.effects[newCi] = JSON.parse(JSON.stringify(S.cut.effects[ci]));
   }
+
   S.cut.clips.push(dup);
   S.cut.sel = newCi;
+
   renderCutTimeline();
+  // Also update props panel to show new clip
   setTimeout(() => updatePropsPanel(newCi), 50);
   notify('Clip duplicated (Ctrl+Z to undo)', '#3fb950');
   scheduleSave();
@@ -4643,11 +4238,8 @@ function deleteSelected(){
   if(window._activeEditId){
     // Overlay is selected — delete it
     deleteOverlay(window._activeEditId);
-  } else if(window._selectedClips?.size > 1){
-    // Multi-select — delegate to cutDelete which handles it
-    cutDelete();
   } else if(S.cut.sel !== null && S.cut.sel !== undefined){
-    // Single clip selected — delete it
+    // Clip is selected — delete it
     cutDelete();
   } else {
     notify('Select a clip or overlay first', '#E31837');
@@ -4656,66 +4248,21 @@ function deleteSelected(){
 window.deleteSelected = deleteSelected;
 
 function cutDelete(){
-  // ── Multi-select: delete all selected clips ──
-  if(window._selectedClips?.size > 1){
-    cutSaveHistory('delete_clips');
-    const indices = [...window._selectedClips].sort((a,b)=>b-a); // descending so splice doesn't shift
-    indices.forEach(ci => {
-      const c = S.cut.clips[ci];
-      if(!c) return;
-      if(c.type==='video'){
-        const li = S.cut.clips.findIndex((a,i)=>i!==ci&&a.linkedToVideo&&a.mediaIdx===c.mediaIdx&&Math.abs(a.start-c.start)<0.5);
-        if(li>=0){ S.cut.clips[li].linkedToVideo=false; S.cut.clips[li].name=S.cut.clips[li].name.replace(' [Audio]','')+' (Audio)'; }
-      } else if(c.linkedToVideo || c.type==='audio'){
-        const pv = S.cut.clips.find((v,i)=>i!==ci&&v.type==='video'&&v.mediaIdx===c.mediaIdx&&Math.abs(v.start-c.start)<1.0);
-        if(pv) pv.nativeAudioMuted = true;
-      }
-      S.cut.clips.splice(ci,1);
-    });
-    window._selectedClips = new Set();
-    S.cut.sel = null;
-    stopAudioPlayback();
-    renderCutTimeline();
-    setTimeout(()=>{ _syncVideoMute(); if(S.cut.playing) startAudioPlayback(); else syncAudioPlayback(); }, 60);
-    notify('Deleted ' + indices.length + ' clips');
-    scheduleSave();
-    return;
-  }
-  // ── Single clip delete ──
   const ci=S.cut.sel;
   if(ci===null||ci===undefined){notify('Select a clip first','#E31837');return;}
   const c=S.cut.clips[ci];
   cutSaveHistory('delete_clip'); // snapshot before delete
   S.cut.clips.splice(ci,1);
-  // Handle linked audio relationships
+  // Also delete linked audio
   if(c.type==='video'){
-    // Video deleted — unlink any linked audio clip (keep audio, detach from video)
     const li=S.cut.clips.findIndex(a=>a.linkedToVideo&&a.mediaIdx===c.mediaIdx&&Math.abs(a.start-c.start)<0.5);
-    if(li>=0){
-      const linkedAudio = S.cut.clips[li];
-      const isSamePosition = Math.abs(linkedAudio.start - c.start) < 0.1 && Math.abs(linkedAudio.dur - c.dur) < 0.1;
-      if(isSamePosition){
-        linkedAudio.linkedToVideo = false;
-        linkedAudio.name = linkedAudio.name.replace(' [Audio]','') + ' (Audio)';
-      }
-    }
-  } else if(c.linkedToVideo || c.type==='audio'){
-    // Audio clip deleted — find its parent video and mark native audio as muted
-    // so video tag doesn't suddenly play raw audio
-    const parentVideo = S.cut.clips.find(
-      v => v.type==='video' && v.mediaIdx===c.mediaIdx && Math.abs(v.start-c.start)<1.0
-    );
-    if(parentVideo) parentVideo.nativeAudioMuted = true;
+    if(li>=0) S.cut.clips.splice(li,1);
   }
   S.cut.sel=null;
   stopAudioPlayback();
   renderCutTimeline();
-  // Re-sync mute state and audio after deletion
-  setTimeout(()=>{
-    _syncVideoMute();
-    if(S.cut.playing) startAudioPlayback();
-    else syncAudioPlayback();
-  }, 60);
+  // Re-sync mute state after deletion (un-mute video if no standalone audio left)
+  setTimeout(()=>{ _syncVideoMute(); },50);
   notify('Clip deleted');
   scheduleSave();
 }
@@ -4788,8 +4335,6 @@ function updateCutPH(){
   if(!ph) return;
   const leftPx = Math.round(S.cut.ph * PPS);
   ph.style.left = leftPx + 'px';
-  // Sync scrub bar
-  if(window.updateScrubBar) updateScrubBar();
   // Auto-scroll timeline to keep playhead visible during playback
   const scroll = $('tl-scroll');
   if(scroll && S.cut.playing){
@@ -4847,9 +4392,8 @@ function cutTogglePlay(){
     window._fhLastTime = null; // always reset frame_hold clock on play start
     // Start playback: video element is master clock
     const startPh=S.cut.ph;
-    // Find the clip at or nearest-after the current playhead
-    const activeClip = S.cut.clips.find(c=>c.type==='video'&&startPh>=c.start&&startPh<c.start+c.dur)
-      || S.cut.clips.filter(c=>c.type==='video'&&c.start>=startPh).sort((a,b)=>a.start-b.start)[0];
+    // Find the clip that contains the current playhead position
+    const activeClip=S.cut.clips.find(c=>c.type==='video'&&startPh>=c.start&&startPh<c.start+c.dur);
     const mv=$('cut-main-vid')||document.querySelector('#cut-screen video');
 
     if(activeClip&&mv){
@@ -4861,12 +4405,16 @@ function cutTogglePlay(){
           mv.src=item.url;
         }
         mv.dataset.clipIdx=String(clipIdx);
-        // Seek to correct file position: if ph is before clip.start, start from clip's beginning
-        const fileOffset = (activeClip.fileStart||0) + Math.max(0, startPh - activeClip.start);
-        mv.currentTime = fileOffset;
+        // CRITICAL: seek to the correct offset WITHIN the file
+        // If clip starts at 5s in timeline and video file offset is also from 0,
+        // we need to seek to (S.cut.ph - clip.start) seconds into the file
+        // fileStart = where in the actual file this clip begins
+        const fileOffset=(activeClip.fileStart||0) + Math.max(0, startPh - activeClip.start);
+        mv.currentTime=fileOffset;
         mv.play().catch(e=>console.log('play err',e));
         mv.style.display='block';
-        // Keep canvas visible if overlays present (syncCutVid manages this per-frame)
+        const canvas=$('cut-trans-cvs');
+        if(canvas) canvas.style.display='none';
         const placeholder=$('cut-cvs');
         if(placeholder) placeholder.style.display='none';
       }
@@ -4930,9 +4478,8 @@ function cutTogglePlay(){
               if(_mvFinal){
                 _mvFinal.dataset.clipIdx = String(S.cut.clips.indexOf(_nextVidClip));
                 _mvFinal.currentTime = Math.max(0, _resumeFileT);
-                _mvFinal.muted = false; // will be corrected by _syncVideoMute below
+                _mvFinal.muted = false;
                 _mvFinal.play().catch(()=>{});
-                setTimeout(_syncVideoMute, 30);
               }
               if(S.cut.playing) startAudioPlayback();
             } else {
@@ -5007,7 +4554,7 @@ function cutTogglePlay(){
             const _p=()=>{if(!S.cut.playing||_a>3)return;_a++;mv2.play().catch(e=>{if(e.name==='AbortError'&&_a<=3)setTimeout(_p,150*_a);});};
             setTimeout(_p,80);
           }
-        } else if(trActive||hasEffNow||hasOverlays||_needsCanvas){
+        } else if(trActive||hasEffNow||hasOverlays){
           // Throttle overlay/effect canvas to 30fps during playback
           const _now4=performance.now();
           if(_now4-_lastCanvasTime>=33){
@@ -5130,23 +4677,24 @@ function cutTogglePlay(){
       _syncVideoMute();
       _cutTick=requestAnimationFrame(playFrame);
     }
-    // Ensure mv exists with correct src/clipIdx before RAF loop starts
-    syncCutVid();
     _cutTick=requestAnimationFrame(playFrame);
     startAudioPlayback();
     _syncVideoMute();
   } else stopCutPlay();
 }
-// Mute/unmute the main video — only mute if user explicitly muted the track
-// or if nativeAudioMuted is set. Never mute just because a linked audio clip exists.
+// Mute/unmute the main video based on whether standalone audio is active at this position
 function _syncVideoMute(){
   const mv = document.getElementById('cut-main-vid');
   if (!mv) return;
-  const ci = parseInt(mv.dataset.clipIdx);
-  const clip = !isNaN(ci) ? S.cut.clips[ci] : null;
-  const trackMuted = clip ? !!(S.cut.mutedTracks?.[clip.track]) : false;
-  const nativeMuted = clip ? !!(clip.nativeAudioMuted) : false;
-  mv.muted = trackMuted || nativeMuted;
+  const ph = S.cut.ph;
+  // If any standalone audio clip is playing at this position, mute the video
+  // to prevent the video audio from mixing with the standalone audio track
+  const standaloneAudioActive = S.cut.clips.some(c =>
+    c.type === 'audio' && !c.linkedToVideo &&
+    ph >= c.start && ph < c.start + c.dur &&
+    S.cut.media[c.mediaIdx]?.url
+  );
+  mv.muted = standaloneAudioActive;
 }
 
 function stopCutPlay(){
@@ -5375,10 +4923,12 @@ function syncCutVid(){
   // Find ALL active video/image clips at playhead, sorted by track index (V1=0 bottom, V(n) top)
   const videoClips = S.cut.clips.filter(c => c.type === 'video' || c.type === 'frame_hold' || c.type === 'image');
   const _allAtPh = videoClips
-    .filter(c => ph >= c.start && ph < c.start + Math.max(c.dur, 0.1) && !S.cut.hiddenTracks?.[c.track])
+    .filter(c => ph >= c.start && ph < c.start + c.dur && !S.cut.hiddenTracks?.[c.track])
     .sort((a,b) => (a.track||0) - (b.track||0)); // lower track index = drawn first (underneath)
+  // Primary active clip for audio/seek: highest track with video (frame_hold takes priority)
+  // For AUDIO: use highest track. For BASE DRAW: use lowest track (V1 = background).
   const active = _allAtPh.find(c => c.type === 'frame_hold') ||
-                 _allAtPh[0] || null;
+                 _allAtPh[0] || null; // lowest track = drawn first as base layer
 
   // Ensure pool elements exist for all clips
   videoClips.forEach(c => {
@@ -5415,13 +4965,6 @@ function syncCutVid(){
       updateCutPH();
     });
     frame.appendChild(mv);
-    // When video becomes ready, trigger a canvas update (handles initial load)
-    mv.addEventListener('canplay', () => {
-      if(!S.cut.playing) setTimeout(syncCutVid, 16);
-    });
-    mv.addEventListener('loadeddata', () => {
-      if(!S.cut.playing) setTimeout(syncCutVid, 16);
-    });
   }
 
   // Get or create canvas for transitions/effects — also in frame
@@ -5443,29 +4986,10 @@ function syncCutVid(){
 
   if(!active){
     if(mv && !mv.paused) mv.pause();
-
-    // No clip at exact playhead — try to show nearest video clip as poster frame
-    const _nearestVid = S.cut.clips
-      .filter(c => (c.type==='video'||c.type==='image') && S.cut.media[c.mediaIdx]?.url)
-      .sort((a,b) => Math.abs(a.start+a.dur/2-ph) - Math.abs(b.start+b.dur/2-ph))[0];
-
-    if(_nearestVid && !hasActiveOverlays){
-      // Show nearest clip via mv so user sees something instead of black
-      const _ni = S.cut.media[_nearestVid.mediaIdx];
-      if(_nearestVid.type==='video' && _ni?.url){
-        if(mv.dataset.mediaIdx !== String(_nearestVid.mediaIdx)){
-          mv.dataset.mediaIdx = String(_nearestVid.mediaIdx);
-          mv.src = _ni.url;
-        }
-        mv.style.opacity='1'; mv.style.display='block';
-        canvas.style.display='none';
-        if(placeholder) placeholder.style.display='none';
-        return;
-      }
-    }
-
     mv.style.opacity = '0';
+
     if(hasActiveOverlays){
+      // Show canvas with just overlays on black background
       canvas.style.display = 'block';
       if(placeholder) placeholder.style.display = 'none';
       if(canvas.width !== (S.proj.w||1280)){
@@ -5474,6 +4998,8 @@ function syncCutVid(){
       }
       const ctx0 = canvas.getContext('2d');
       ctx0.clearRect(0,0,canvas.width,canvas.height);
+      ctx0.fillStyle = '#000';
+      ctx0.fillRect(0,0,canvas.width,canvas.height);
       if(window.renderOverlaysOnCanvas)
         window.renderOverlaysOnCanvas(ctx0,canvas.width,canvas.height,ph,_playedFreezes);
     } else {
@@ -5506,26 +5032,7 @@ function syncCutVid(){
     if(active._img && active._img.complete){
       ctxFH.drawImage(active._img, 0, 0, canvas.width, canvas.height);
     } else {
-      // _imgData not yet regenerated — try to grab last frame from the video element
-      // (the video is paused at the correct position right before the frame_hold starts)
-      const _mvFallback = document.getElementById('cut-main-vid');
-      let _drewFallback = false;
-      if(_mvFallback && _mvFallback.readyState >= 2 && _mvFallback.videoWidth){
-        try{
-          ctxFH.drawImage(_mvFallback, 0, 0, canvas.width, canvas.height);
-          _drewFallback = true;
-          // Cache the result so we don't redraw every frame
-          if(!active._imgData){
-            active._imgData = canvas.toDataURL('image/jpeg', 0.85);
-            active._img = new Image(); active._img.src = active._imgData;
-          }
-        }catch(e){}
-      }
-      if(!_drewFallback){
-        ctxFH.fillStyle='#111'; ctxFH.fillRect(0,0,canvas.width,canvas.height);
-        // Trigger async regeneration if not already running
-        if(!window._fhRegenPending){ window._fhRegenPending=true; setTimeout(()=>{ window._fhRegenPending=false; if(window._regenerateFrameHolds) _regenerateFrameHolds(); }, 200); }
-      }
+      ctxFH.fillStyle='#000'; ctxFH.fillRect(0,0,canvas.width,canvas.height);
     }
     // 2. Apply effects (color grade, filters) on top of frozen frame
     const fhFilterStr = buildFilterStr(activeCI);
@@ -5592,42 +5099,31 @@ function syncCutVid(){
   //    - Everything else → canvas compositor
   const _onlyOneClip   = _masterList.length === 1 && _masterList[0].kind === 'clip';
   const _clipIsVideo   = _onlyOneClip && _masterList[0].clip.type === 'video';
-  const _singleVideoClip = (() => {
-    const _cv = _masterList.filter(e => e.kind==='clip' && e.clip.type==='video');
-    return _cv.length === 1 ? _cv[0].clip : null;
-  })();
-  const _hasTransition = _singleVideoClip && (()=>{
-    const _ci = S.cut.clips.indexOf(_singleVideoClip);
+  const _hasTransition = _clipIsVideo && (()=>{
+    const _ci = S.cut.clips.indexOf(_masterList[0].clip);
     const _tr = getClipTransition(_ci);
     if(!_tr) return false;
-    const _ts = _singleVideoClip.start + (_tr.startOffset||0);
+    const _ts = _masterList[0].clip.start + (_tr.startOffset||0);
     const _te = _ts + (_tr.effectDur||_tr.dur||1);
     return ph >= _ts && ph < _te;
   })();
-  const _hasEffects = _singleVideoClip && (()=>{
-    const _ci = S.cut.clips.indexOf(_singleVideoClip);
+  const _hasEffects = _clipIsVideo && (()=>{
+    const _ci = S.cut.clips.indexOf(_masterList[0].clip);
     return (S.cut.effects[_ci]||[]).filter(e => {
       if(CUT_EFFECTS[e.i]?.type === 'transition') return false;
       if(e.visible===false) return false;
-      const es = _singleVideoClip.start + (e.startOffset||0);
-      const ee = es + (e.effectDur||_singleVideoClip.dur);
+      const es = _masterList[0].clip.start + (e.startOffset||0);
+      const ee = es + (e.effectDur||_masterList[0].clip.dur);
       return ph >= es && ph < ee;
     }).length > 0;
   })();
 
-  // Use plain video path for single video clip (with or without overlays)
-  // mv shows the video; canvas draws overlays on top if any exist
-  const _hasActiveOverlaysNow = _masterList.some(e => e.kind === 'overlay');
-  // Count just the clip entries (not overlays)
-  const _clipEntries = _masterList.filter(e => e.kind === 'clip');
-  const _onlyOneVideoClip = _clipEntries.length === 1 && _clipEntries[0].clip.type === 'video';
-  // _usePlainVideo: single video clip, no transition/effects → mv shows video, canvas overlays on top
-  const _usePlainVideo = _onlyOneVideoClip && !_hasTransition && !_hasEffects &&
+  const _usePlainVideo = _clipIsVideo && !_hasTransition && !_hasEffects &&
                          (performance.now() - (_freezeExitTime||0)) > 500;
 
   if(_usePlainVideo){
-    // ── PLAIN VIDEO PATH — single video clip, overlays drawn on transparent canvas on top ──
-    const _c  = _singleVideoClip;
+    // ── PLAIN VIDEO PATH — single video, no effects, no overlays ──
+    const _c  = _masterList[0].clip;
     const _ci = S.cut.clips.indexOf(_c);
     const _it = S.cut.media[_c.mediaIdx];
     if(!_it?.url) return;
@@ -5645,6 +5141,7 @@ function syncCutVid(){
     }
     mv.style.opacity = '1';
     mv.style.display = 'block';
+    canvas.style.display = 'none';
     const _fs = buildFilterStr(_ci);
     mv.style.filter = _fs !== 'none' ? _fs : '';
     const _tr2 = _c.transform;
@@ -5655,29 +5152,10 @@ function syncCutVid(){
     } else { mv.style.transform=''; }
     S.cut._vid = mv;
 
-    // Draw overlays on top of video using canvas (canvas is transparent except for overlays)
-    if(_hasActiveOverlaysNow){
-      const projW2 = S.proj.w||1280, projH2 = S.proj.h||720;
-      if(canvas.width !== projW2 || canvas.height !== projH2){ canvas.width=projW2; canvas.height=projH2; }
-      const ctx2 = canvas.getContext('2d');
-      ctx2.clearRect(0, 0, canvas.width, canvas.height);
-      canvas.style.display = 'block';
-      canvas.style.zIndex  = '2';
-      if(placeholder) placeholder.style.display = 'none';
-      _masterList.filter(e=>e.kind==='overlay').forEach(entry => {
-        if(window.renderSingleOverlayOnCanvas)
-          window.renderSingleOverlayOnCanvas(ctx2, canvas.width, canvas.height, ph, entry.overlay, _playedFreezes);
-      });
-    } else {
-      canvas.style.display = 'none';
-      if(placeholder) placeholder.style.display = 'none';
-    }
-
   } else {
-    // ── CANVAS COMPOSITOR PATH: image clips, multi-video, transitions/effects ──
+    // ── CANVAS COMPOSITOR PATH — all other cases ──
     mv.style.opacity = '0';
     mv.style.filter  = '';
-    mv.style.transform = '';
     canvas.style.display = 'block';
     canvas.style.zIndex  = '2';
     if(placeholder) placeholder.style.display = 'none';
@@ -5688,13 +5166,12 @@ function syncCutVid(){
     }
     const ctx = canvas.getContext('2d');
 
-    // Set up mv for audio and seeking (even though we draw video via canvas)
+    // Set up the primary video element (for the first video clip found — drives audio)
     const _primaryClip = _masterList.find(e => e.kind==='clip' && e.clip.type==='video');
     if(_primaryClip){
       const _pc = _primaryClip.clip;
       const _pi = S.cut.media[_pc.mediaIdx];
       if(_pi?.url){
-        getPoolVid(_pi.url);
         if(mv.dataset.mediaIdx !== String(_pc.mediaIdx) || !mv.src || mv.src.includes('undefined')){
           mv.dataset.mediaIdx = String(_pc.mediaIdx);
           mv.src = _pi.url;
@@ -5706,8 +5183,6 @@ function syncCutVid(){
         if(!_freezeActive && S.cut.playing && mv.paused) mv.play().catch(()=>{});
       }
     }
-
-
 
     // Center-crop draw helper — works for both <video> and <img>
     function _drawFrame(src, ctx, cW, cH){
@@ -5724,9 +5199,8 @@ function syncCutVid(){
       try{ ctx.drawImage(src,sx,sy,sw,sh,0,0,cW,cH); return true; }catch(e){ return false; }
     }
 
-    // Clear canvas once — track if any visual content was actually drawn
+    // Clear canvas once
     ctx.clearRect(0, 0, canvas.width, canvas.height);
-    let _anythingDrawn = false;
 
     // Draw every item in track-sorted order
     _masterList.forEach(entry => {
@@ -5746,7 +5220,6 @@ function syncCutVid(){
             const _fhF = buildFilterStr(ci);
             if(_fhF !== 'none') ctx.filter = _fhF;
             ctx.drawImage(c._img, 0, 0, canvas.width, canvas.height);
-            _anythingDrawn = true;
             ctx.filter = 'none';
             ctx.restore();
           }
@@ -5754,32 +5227,15 @@ function syncCutVid(){
         }
 
         if(c.type === 'image'){
-          // Image clip — draw via pool <img> with full transform+opacity support
+          // Image clip — draw via pool <img>
           const imgSrc = getPoolImg(it.url);
           if(!imgSrc.complete) return;
           const flt = buildFilterStr(ci);
-          const tf = c.transform || {x:0, y:0, scaleX:100, scaleY:100, rotation:0};
-          const sx = (tf.scaleX||100)/100;
-          const sy = (tf.scaleY||100)/100;
-          const tx = ((tf.x||0)/100) * canvas.width;
-          const ty = ((tf.y||0)/100) * canvas.height;
-          const rot = (tf.rotation||0) * Math.PI / 180;
-          const opacity = (c.opacity !== undefined) ? Math.max(0,Math.min(1,c.opacity)) : 1;
-          // Fit image to canvas maintaining AR, then apply scale
-          const iW = imgSrc.naturalWidth  || canvas.width;
-          const iH = imgSrc.naturalHeight || canvas.height;
-          const iAR = iW/iH, cAR = canvas.width/canvas.height;
-          let dw, dh;
-          if(iAR > cAR){ dw = canvas.width * sx; dh = (canvas.width/iAR) * sy; }
-          else          { dh = canvas.height * sy; dw = (canvas.height*iAR) * sx; }
           ctx.save();
           if(flt !== 'none') ctx.filter = flt;
-          ctx.globalAlpha = opacity;
           ctx.globalCompositeOperation = 'source-over';
-          ctx.translate(canvas.width/2 + tx, canvas.height/2 + ty);
-          if(rot) ctx.rotate(rot);
-          try{ ctx.drawImage(imgSrc, -dw/2, -dh/2, dw, dh); _anythingDrawn = true; }catch(e){}
-          ctx.filter = 'none'; ctx.globalAlpha = 1; ctx.restore();
+          _drawFrame(imgSrc, ctx, canvas.width, canvas.height);
+          ctx.filter = 'none'; ctx.restore();
           return;
         }
 
@@ -5788,21 +5244,7 @@ function syncCutVid(){
           const isFirst = _primaryClip && c === _primaryClip.clip;
           let vSrc;
           if(isFirst){
-            // Primary: prefer mv; fall back to pool vid if mv not ready yet
-            if(mv.readyState >= 2){
-              vSrc = mv;
-            } else {
-              const _pvFb = getPoolVid(it.url);
-              if(_pvFb && _pvFb.readyState >= 2){
-                vSrc = _pvFb;
-              } else {
-                // Neither ready — retry on canplay
-                const _onRdy = () => { if(typeof syncCutVid==='function') syncCutVid(); };
-                mv.addEventListener('canplay', _onRdy, {once:true});
-                if(_pvFb) _pvFb.addEventListener('canplay', _onRdy, {once:true});
-                return;
-              }
-            }
+            vSrc = mv;
           } else {
             vSrc = getPoolVid(it.url);
             if(vSrc){
@@ -5811,8 +5253,8 @@ function syncCutVid(){
               if(!S.cut.playing && Math.abs(vSrc.currentTime-ft)>0.05) vSrc.currentTime=ft;
               if(S.cut.playing && vSrc.paused) vSrc.play().catch(()=>{});
             }
-            if(!vSrc || vSrc.readyState < 2) return;
           }
+          if(!vSrc || vSrc.readyState < 2) return;
 
           // Check for transition on this clip
           const tr3 = getClipTransition(ci);
@@ -5829,7 +5271,7 @@ function syncCutVid(){
           ctx.globalCompositeOperation = 'source-over';
 
           if(!trW3){
-            if(_drawFrame(vSrc, ctx, canvas.width, canvas.height)) _anythingDrawn = true;
+            _drawFrame(vSrc, ctx, canvas.width, canvas.height);
           } else {
             // Apply transition effect inline
             const elapsed3 = ph - c.start - (tr3.startOffset||0);
@@ -5852,12 +5294,6 @@ function syncCutVid(){
           window.renderSingleOverlayOnCanvas(ctx, canvas.width, canvas.height, ph, entry.overlay, _playedFreezes);
       }
     });
-    // If nothing was drawn this frame (video not ready), preserve last good frame
-    if(!_anythingDrawn && canvas._lastGoodFrame){
-      try{ ctx.putImageData(canvas._lastGoodFrame, 0, 0); }catch(e){}
-    } else if(_anythingDrawn){
-      try{ canvas._lastGoodFrame = ctx.getImageData(0, 0, Math.min(canvas.width,2560), Math.min(canvas.height,1440)); }catch(e){}
-    }
     S.cut._vid = mv;
   }
 
@@ -5870,66 +5306,6 @@ function syncCutVid(){
 
 
 // Make playhead draggable
-// ── SCRUB BAR ─────────────────────────────────────────────────
-function updateScrubBar(){
-  const track = document.getElementById('cut-scrub-track');
-  const fill  = document.getElementById('cut-scrub-fill');
-  const knob  = document.getElementById('cut-scrub-knob');
-  const tc    = document.getElementById('cut-scrub-tc');
-  const dur   = document.getElementById('cut-scrub-dur');
-  if(!track || !fill || !knob) return;
-  // Use actual content length (max clip end) as the scrub bar total duration
-  const _contentEnd = S.cut?.clips?.length
-    ? Math.max(...S.cut.clips.map(c => c.start + (c.dur||0)))
-    : 0;
-  const _ovEnd = (window._overlays||[]).length
-    ? Math.max(...(window._overlays||[]).map(o => o.endTime||0))
-    : 0;
-  const totalDur = Math.max(_contentEnd, _ovEnd, 10); // at least 10s
-  const ph = S.cut.ph || 0;
-  const pct = Math.max(0, Math.min(1, ph / totalDur)) * 100;
-  fill.style.width  = pct + '%';
-  knob.style.left   = pct + '%';
-  if(tc) tc.textContent = fmtTC(ph);
-  if(dur) dur.textContent = fmtTC(totalDur);
-}
-window.updateScrubBar = updateScrubBar;
-
-function setupScrubBar(){
-  const track = document.getElementById('cut-scrub-track');
-  if(!track || track._scrubAttached) return;
-  track._scrubAttached = true;
-
-  let _scrubbing = false;
-
-  const seek = (e) => {
-    const r = track.getBoundingClientRect();
-    const pct = Math.max(0, Math.min(1, (e.clientX - r.left) / r.width));
-    const _cEnd = S.cut?.clips?.length ? Math.max(...S.cut.clips.map(c=>c.start+(c.dur||0))) : 0;
-    const _oEnd = (window._overlays||[]).length ? Math.max(...(window._overlays||[]).map(o=>o.endTime||0)) : 0;
-    const totalDur = Math.max(_cEnd, _oEnd, 10);
-    S.cut.ph = pct * totalDur;
-    updateCutPH();
-    syncCutVid();
-  };
-
-  track.addEventListener('mousedown', e => {
-    _scrubbing = true;
-    seek(e);
-    const knob = document.getElementById('cut-scrub-knob');
-    if(knob) knob.style.transform = 'translate(-50%,-50%) scale(1.3)';
-  });
-  window.addEventListener('mousemove', e => { if(_scrubbing) seek(e); });
-  window.addEventListener('mouseup', () => {
-    if(_scrubbing){
-      _scrubbing = false;
-      const knob = document.getElementById('cut-scrub-knob');
-      if(knob) knob.style.transform = 'translate(-50%,-50%)';
-    }
-  });
-}
-window.setupScrubBar = setupScrubBar;
-
 function setupPlayheadDrag(){
   const ph=$('cut-ph'); const scroll=$('tl-scroll'); if(!ph||!scroll) return;
   let dragging=false;
@@ -6056,23 +5432,9 @@ function setupPlayheadDrag(){
     ruler._listenerAttached=true;
     function _getRulerTime(ev){ const _sr=scroll.getBoundingClientRect(); return (ev.clientX-_sr.left+scroll.scrollLeft)/PPS; }
     ruler.addEventListener('mousedown',function(e){
-      const _maxPh = Math.max(S.proj.dur, S.cut.clips.length?Math.max(...S.cut.clips.map(c=>c.start+c.dur)):0);
-      S.cut.ph = Math.max(0, Math.min(_maxPh, _getRulerTime(e)));
+      S.cut.ph=Math.max(0,Math.min(Math.max(S.proj.dur,S.cut.clips.length?Math.max(...S.cut.clips.map(c=>c.start+c.dur)):0),_getRulerTime(e)));
       window._seekLockUntil = Date.now() + 800;
-      // Direct seek with speed compensation — same formula as drag handler
-      const _mv_click = $('cut-main-vid');
-      if(_mv_click){
-        const nc = S.cut.clips.find(c => (c.type==='video'||c.type==='image') && S.cut.ph >= c.start && S.cut.ph < c.start + Math.max(c.dur, 0.1));
-        if(nc){
-          const _it = S.cut.media[nc.mediaIdx];
-          if(_it?.url){
-            if(_mv_click.dataset.mediaIdx !== String(nc.mediaIdx)){ _mv_click.dataset.mediaIdx = String(nc.mediaIdx); _mv_click.src = _it.url; }
-            _mv_click.dataset.clipIdx = String(S.cut.clips.indexOf(nc));
-            _mv_click.currentTime = (nc.fileStart||0) + Math.max(0, (S.cut.ph - nc.start) * (nc.speed||1));
-          }
-        }
-      }
-      updateCutPH(); syncCutVid();
+      updateCutPH();syncCutVid();
       dragging=true;
       S.cut._scrubbing=true;
       const mv2=$('cut-main-vid');
@@ -6087,7 +5449,7 @@ function setupPlayheadDrag(){
         const mv3=$('cut-main-vid');
         if(mv3){
           const nc=S.cut.clips.find(c=>c.type==='video'&&S.cut.ph>=c.start&&S.cut.ph<c.start+c.dur);
-          if(nc){const item3=S.cut.media[nc.mediaIdx];if(item3?.url){if(mv3.dataset.mediaIdx!==String(nc.mediaIdx)){mv3.dataset.mediaIdx=String(nc.mediaIdx);mv3.src=item3.url;}mv3.dataset.clipIdx=String(S.cut.clips.indexOf(nc));mv3.currentTime=(nc.fileStart||0)+Math.max(0,(S.cut.ph-nc.start)*(nc.speed||1));mv3.style.display='block';}}
+          if(nc){const item3=S.cut.media[nc.mediaIdx];if(item3?.url){if(mv3.dataset.mediaIdx!==String(nc.mediaIdx)){mv3.dataset.mediaIdx=String(nc.mediaIdx);mv3.src=item3.url;}mv3.dataset.clipIdx=String(S.cut.clips.indexOf(nc));mv3.currentTime=(nc.fileStart||0)+Math.max(0,S.cut.ph-nc.start);mv3.style.display='block';}}
         }
       });
       document.addEventListener('mouseup',function(){dragging=false;S.cut._scrubbing=false;},{once:true});
@@ -6499,44 +5861,21 @@ document.addEventListener('keydown', e => {
     // Arrow keys: move playhead frame by frame
     if (!e.ctrlKey&&!e.metaKey&&e.code==='ArrowRight'){e.preventDefault();const fps=S.proj.fps||30;S.cut.ph=Math.min(S.cut.ph+(e.shiftKey?1:1/fps),99999);updateCutPH();syncCutVid();}
     if (!e.ctrlKey&&!e.metaKey&&e.code==='ArrowLeft'){e.preventDefault();const fps=S.proj.fps||30;S.cut.ph=Math.max(0,S.cut.ph-(e.shiftKey?1:1/fps));updateCutPH();syncCutVid();}
-    // = / - keys: zoom viewport (if mouse over preview) or timeline (otherwise)
+    // = / - keys: zoom in/out anchored to playhead
     if(e.code==='Equal'||e.code==='NumpadAdd'){e.preventDefault();
-      if(window._mouseOverViewport){
-        window._vpZoom = Math.min(4, (window._vpZoom||1) * 1.2);
-        _applyVpZoom();
-      } else {
-        const sc=$('tl-scroll');if(sc){
-          const phPx=S.cut.ph*PPS-sc.scrollLeft;
-          PPS=Math.min(600,PPS*1.25); window.PPS=PPS;
-          window._snapCache=null;
-          sc.scrollLeft=Math.max(0,S.cut.ph*PPS-phPx);
-          renderCutTimeline();
-        }
+      const sc=$('tl-scroll');if(sc){
+        const phPx=S.cut.ph*PPS-sc.scrollLeft;
+        PPS=Math.min(600,PPS*1.25); window.PPS=PPS;
+        sc.scrollLeft=Math.max(0,S.cut.ph*PPS-phPx);
+        renderCutTimeline();
       }
     }
     if(e.code==='Minus'||e.code==='NumpadSubtract'){e.preventDefault();
-      if(window._mouseOverViewport){
-        window._vpZoom = Math.max(0.25, (window._vpZoom||1) / 1.2);
-        _applyVpZoom();
-      } else {
-        const sc=$('tl-scroll');if(sc){
-          const phPx=S.cut.ph*PPS-sc.scrollLeft;
-          PPS=Math.max(8,PPS*0.8); window.PPS=PPS;
-          window._snapCache=null;
-          sc.scrollLeft=Math.max(0,S.cut.ph*PPS-phPx);
-          renderCutTimeline();
-        }
-      }
-    }
-    // Ctrl+0: reset viewport zoom (hover=preview) or timeline zoom (hover=elsewhere)
-    if((e.ctrlKey||e.metaKey)&&(e.code==='Digit0'||e.code==='Numpad0')){e.preventDefault();
-      if(window._mouseOverViewport){
-        window._vpZoom=1; _applyVpZoom();
-      } else {
-        const _sc=$('tl-scroll'),_ph=S.cut.ph||0,_vw=_sc?_sc.clientWidth:800;
-        PPS=60; window.PPS=PPS; window._snapCache=null;
+      const sc=$('tl-scroll');if(sc){
+        const phPx=S.cut.ph*PPS-sc.scrollLeft;
+        PPS=Math.max(8,PPS*0.8); window.PPS=PPS;
+        sc.scrollLeft=Math.max(0,S.cut.ph*PPS-phPx);
         renderCutTimeline();
-        if(_sc) _sc.scrollLeft=Math.max(0,_ph*PPS-_vw*0.4);
       }
     }
   }
@@ -6740,201 +6079,158 @@ window.cutAddToTL = cutAddToTL;
 // Shows interactive handles on the selected clip in the preview
 
 function renderBoundingBox(ci){
-  // Cleanup previous bbox listeners before removing element
+  // Remove existing bounding box
   const old = document.getElementById('cut-bbox');
-  if(old){ if(old._cleanup) old._cleanup(); old._cleanup = null; old.remove(); }
+  if(old) old.remove();
 
   const frame = document.getElementById('cut-viewport-frame');
   if(!frame) return;
 
-  const clip = (ci !== null && ci !== undefined) ? S.cut.clips[ci] : null;
-  if(!clip || (clip.type !== 'video' && clip.type !== 'image')) return;
+  // Only show for video clips
+  const clip = ci !== null && ci !== undefined ? S.cut.clips[ci] : null;
+  if(!clip || clip.type !== 'video') return;
 
+  // Only show when clip is active at current ph
   const ph = S.cut.ph;
   if(ph < clip.start || ph >= clip.start + clip.dur) return;
 
-  if(!clip.transform) clip.transform = {x:0, y:0, scaleX:100, scaleY:100, rotation:0};
-  const tf = clip.transform;
+  const tf = clip.transform || {x:0, y:0, scaleX:100, scaleY:100, rotation:0};
   const fW = frame.offsetWidth;
   const fH = frame.offsetHeight;
 
-  // Compute actual rendered image base dimensions (contain-fit inside frame)
-  let baseW = fW, baseH = fH;
-  if(clip.type === 'image'){
-    const item = S.cut.media[clip.mediaIdx];
-    const imgEl = item && item.url ? getPoolImg(item.url) : null;
-    if(imgEl && imgEl.naturalWidth && imgEl.naturalHeight){
-      const iAR = imgEl.naturalWidth / imgEl.naturalHeight;
-      const cAR = fW / fH;
-      if(iAR > cAR){ baseW = fW; baseH = fW / iAR; }
-      else          { baseH = fH; baseW = fH * iAR; }
-    }
-  }
-
-  const sx  = (tf.scaleX||100) / 100;
-  const sy  = (tf.scaleY||100) / 100;
-  const rot = tf.rotation || 0;
-  const tx  = (tf.x||0) / 100 * fW;
-  const ty  = (tf.y||0) / 100 * fH;
-  const bW  = baseW * sx;
-  const bH  = baseH * sy;
-  const cx  = fW/2 + tx;
-  const cy  = fH/2 + ty;
-
+  // Bounding box overlay (sits on top of video in the frame)
   const box = document.createElement('div');
   box.id = 'cut-bbox';
-  box.style.cssText = 'position:absolute;inset:0;pointer-events:none;z-index:10;overflow:visible;';
+  box.style.cssText = `
+    position:absolute; inset:0;
+    pointer-events:none;
+    z-index:10;
+    overflow:visible;
+  `;
 
+  // Calculate box dimensions based on scale
+  const sx = (tf.scaleX||100)/100;
+  const sy = (tf.scaleY||100)/100;
+  const rot = tf.rotation||0;
+  const tx = (tf.x||0)/100 * fW;
+  const ty = (tf.y||0)/100 * fH;
+
+  // Box is centered in the frame, then scaled and translated
+  const bW = fW * sx;
+  const bH = fH * sy;
+  const bLeft = (fW - bW)/2 + tx;
+  const bTop  = (fH - bH)/2 + ty;
+
+  // SVG for the bounding box outline + handles
   const svg = document.createElementNS('http://www.w3.org/2000/svg','svg');
-  svg.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;overflow:visible;pointer-events:none;';
+  svg.style.cssText = `position:absolute;inset:0;width:100%;height:100%;overflow:visible;pointer-events:none;`;
 
-  // Dashed border
-  const borderRect = document.createElementNS('http://www.w3.org/2000/svg','rect');
-  borderRect.setAttribute('x', cx - bW/2);
-  borderRect.setAttribute('y', cy - bH/2);
-  borderRect.setAttribute('width',  bW);
-  borderRect.setAttribute('height', bH);
-  borderRect.setAttribute('fill',   'none');
-  borderRect.setAttribute('stroke', 'rgba(232,89,12,0.9)');
-  borderRect.setAttribute('stroke-width', '1.5');
-  borderRect.setAttribute('stroke-dasharray','6,3');
-  borderRect.setAttribute('transform', 'rotate('+rot+','+cx+','+cy+')');
-  svg.appendChild(borderRect);
+  // Ghost border (dashed white outline around the clip area)
+  const rect = document.createElementNS('http://www.w3.org/2000/svg','rect');
+  const cx = fW/2 + tx, cy = fH/2 + ty;
+  rect.setAttribute('x', cx - bW/2);
+  rect.setAttribute('y', cy - bH/2);
+  rect.setAttribute('width', bW);
+  rect.setAttribute('height', bH);
+  rect.setAttribute('fill','none');
+  rect.setAttribute('stroke','rgba(232,89,12,0.8)');
+  rect.setAttribute('stroke-width','1');
+  rect.setAttribute('stroke-dasharray','6,3');
+  rect.setAttribute('transform', `rotate(${rot},${cx},${cy})`);
+  svg.appendChild(rect);
 
-  // Corner handles — [x, y, cursor, name, scaleSignX]
-  // scaleSignX: +1 means drag-right grows width, -1 means drag-right shrinks width
+  // Corner handles
   const corners = [
-    [cx-bW/2, cy-bH/2, 'nw-resize', 'nw', -1],
-    [cx+bW/2, cy-bH/2, 'ne-resize', 'ne', +1],
-    [cx+bW/2, cy+bH/2, 'se-resize', 'se', +1],
-    [cx-bW/2, cy+bH/2, 'sw-resize', 'sw', -1],
+    [cx - bW/2, cy - bH/2],
+    [cx + bW/2, cy - bH/2],
+    [cx + bW/2, cy + bH/2],
+    [cx - bW/2, cy + bH/2],
   ];
-  corners.forEach(function(corner){
-    var hx=corner[0],hy=corner[1],cur=corner[2],name=corner[3];
-    var g = document.createElementNS('http://www.w3.org/2000/svg','g');
-    g.setAttribute('transform','rotate('+rot+','+cx+','+cy+')');
-    g.setAttribute('data-handle', name);
-    g.setAttribute('data-sign',   corner[4]);
-    g.style.cssText = 'cursor:'+cur+';pointer-events:all;';
-    var r = document.createElementNS('http://www.w3.org/2000/svg','rect');
-    r.setAttribute('x',hx-6); r.setAttribute('y',hy-6);
-    r.setAttribute('width',12); r.setAttribute('height',12);
-    r.setAttribute('rx',2);
+  // Midpoint handles
+  const mids = [
+    [cx, cy - bH/2],
+    [cx + bW/2, cy],
+    [cx, cy + bH/2],
+    [cx - bW/2, cy],
+  ];
+
+  // Draw corner handles (larger, square)
+  corners.forEach(([hx, hy]) => {
+    const g = document.createElementNS('http://www.w3.org/2000/svg','g');
+    g.setAttribute('transform', `rotate(${rot},${cx},${cy})`);
+    const r = document.createElementNS('http://www.w3.org/2000/svg','rect');
+    r.setAttribute('x', hx-4); r.setAttribute('y', hy-4);
+    r.setAttribute('width', 8); r.setAttribute('height', 8);
+    r.setAttribute('rx', 2);
     r.setAttribute('fill','#fff'); r.setAttribute('stroke','#E8590C'); r.setAttribute('stroke-width','1.5');
     g.appendChild(r); svg.appendChild(g);
   });
 
-  // Midpoint handles
-  [[cx,cy-bH/2],[cx+bW/2,cy],[cx,cy+bH/2],[cx-bW/2,cy]].forEach(function(m){
-    var g = document.createElementNS('http://www.w3.org/2000/svg','g');
-    g.setAttribute('transform','rotate('+rot+','+cx+','+cy+')');
-    var c2 = document.createElementNS('http://www.w3.org/2000/svg','circle');
-    c2.setAttribute('cx',m[0]); c2.setAttribute('cy',m[1]); c2.setAttribute('r',4);
+  // Draw midpoint handles (smaller, circle)
+  mids.forEach(([hx, hy]) => {
+    const g = document.createElementNS('http://www.w3.org/2000/svg','g');
+    g.setAttribute('transform', `rotate(${rot},${cx},${cy})`);
+    const c2 = document.createElementNS('http://www.w3.org/2000/svg','circle');
+    c2.setAttribute('cx', hx); c2.setAttribute('cy', hy);
+    c2.setAttribute('r', 4);
     c2.setAttribute('fill','#fff'); c2.setAttribute('stroke','#E8590C'); c2.setAttribute('stroke-width','1.5');
     g.appendChild(c2); svg.appendChild(g);
   });
 
   // Center crosshair
-  [[cx-8,cy,cx+8,cy],[cx,cy-8,cx,cy+8]].forEach(function(l){
-    var line = document.createElementNS('http://www.w3.org/2000/svg','line');
-    line.setAttribute('x1',l[0]); line.setAttribute('y1',l[1]);
-    line.setAttribute('x2',l[2]); line.setAttribute('y2',l[3]);
-    line.setAttribute('stroke','rgba(232,89,12,0.9)'); line.setAttribute('stroke-width','1.5');
-    svg.appendChild(line);
+  [[cx-6,cy,cx+6,cy],[cx,cy-6,cx,cy+6]].forEach(([x1,y1,x2,y2]) => {
+    const l = document.createElementNS('http://www.w3.org/2000/svg','line');
+    l.setAttribute('x1',x1); l.setAttribute('y1',y1);
+    l.setAttribute('x2',x2); l.setAttribute('y2',y2);
+    l.setAttribute('stroke','rgba(232,89,12,0.9)'); l.setAttribute('stroke-width','1.5');
+    svg.appendChild(l);
   });
-
-  // Transparent interior hit-rect for move
-  var hitRect = document.createElementNS('http://www.w3.org/2000/svg','rect');
-  hitRect.setAttribute('x', cx-bW/2+8); hitRect.setAttribute('y', cy-bH/2+8);
-  hitRect.setAttribute('width',  Math.max(0,bW-16));
-  hitRect.setAttribute('height', Math.max(0,bH-16));
-  hitRect.setAttribute('fill',   'rgba(0,0,0,0.001)');
-  hitRect.setAttribute('transform','rotate('+rot+','+cx+','+cy+')');
-  hitRect.style.cssText = 'cursor:move;pointer-events:all;';
-  svg.appendChild(hitRect);
 
   box.appendChild(svg);
   frame.appendChild(box);
 
-  // ── Interaction ───────────────────────────────────────────────────────────
-  var _mode=null, _startX=0, _startY=0;
-  var _origTX=0, _origTY=0, _origSX=100, _origSY=100, _scaleSign=1;
-  var _rafPending=false;
+  // ── Drag to move ────────────────────────────────────────────
+  // Make the viewport frame draggable for the selected clip
+  if(!frame._bboxDrag){
+    frame._bboxDrag = true;
+    let _dragging = false, _startX, _startY, _origTX, _origTY;
 
-  // Corner mousedown → scale
-  box.querySelectorAll('[data-handle]').forEach(function(h){
-    h.addEventListener('mousedown', function(e){
-      e.stopPropagation(); e.preventDefault();
-      var cl = S.cut.clips[S.cut.sel];
-      if(!cl) return;
-      if(!cl.transform) cl.transform={x:0,y:0,scaleX:100,scaleY:100,rotation:0};
-      _mode='scale';
-      _startX=e.clientX; _startY=e.clientY;
-      _origSX=cl.transform.scaleX||100;
-      _origSY=cl.transform.scaleY||100;
-      _scaleSign = parseInt(h.getAttribute('data-sign')||'1');
+    frame.addEventListener('mousedown', e => {
+      if(S.cut.sel === null || S.cut.sel === undefined) return;
+      const cl = S.cut.clips[S.cut.sel];
+      if(!cl || cl.type !== 'video') return;
+      // Only drag if not on a handle (handles have pointer-events:none but we check distance)
+      _dragging = true;
+      _startX = e.clientX; _startY = e.clientY;
+      if(!cl.transform) cl.transform = {x:0,y:0,scaleX:100,scaleY:100,rotation:0};
+      _origTX = cl.transform.x||0;
+      _origTY = cl.transform.y||0;
+      e.preventDefault();
     });
-  });
 
-  // Interior hit-rect mousedown → move
-  hitRect.addEventListener('mousedown', function(e){
-    e.stopPropagation(); e.preventDefault();
-    var cl = S.cut.clips[S.cut.sel];
-    if(!cl) return;
-    if(!cl.transform) cl.transform={x:0,y:0,scaleX:100,scaleY:100,rotation:0};
-    _mode='move';
-    _startX=e.clientX; _startY=e.clientY;
-    _origTX=cl.transform.x||0;
-    _origTY=cl.transform.y||0;
-  });
-
-  function _onMove(e){
-    if(!_mode || _rafPending) return;
-    _rafPending=true;
-    requestAnimationFrame(function(){
-      _rafPending=false;
-      var cl2=S.cut.clips[S.cut.sel];
-      if(!cl2||!cl2.transform) return;
-      var fr2=document.getElementById('cut-viewport-frame');
-      if(!fr2) return;
-      var dx=(e.clientX-_startX)/fr2.offsetWidth*100;
-      var dy=(e.clientY-_startY)/fr2.offsetHeight*100;
-      if(_mode==='move'){
-        cl2.transform.x=Math.max(-200,Math.min(200,_origTX+dx));
-        cl2.transform.y=Math.max(-200,Math.min(200,_origTY+dy));
-      } else {
-        var delta=(Math.abs(dx)>=Math.abs(dy)?dx:dy)*_scaleSign;
-        cl2.transform.scaleX=Math.max(1,Math.round(_origSX+delta));
-        cl2.transform.scaleY=Math.max(1,Math.round(_origSY+delta));
-      }
+    window.addEventListener('mousemove', e => {
+      if(!_dragging) return;
+      const ci2 = S.cut.sel;
+      if(ci2 === null || ci2 === undefined) return;
+      const cl = S.cut.clips[ci2];
+      if(!cl || !cl.transform) return;
+      const fr = document.getElementById('cut-viewport-frame');
+      if(!fr) return;
+      const dx = (e.clientX - _startX) / fr.offsetWidth  * 100;
+      const dy = (e.clientY - _startY) / fr.offsetHeight * 100;
+      cl.transform.x = Math.max(-100, Math.min(100, _origTX + dx));
+      cl.transform.y = Math.max(-100, Math.min(100, _origTY + dy));
       syncCutVid();
-      renderBoundingBox(S.cut.sel);
-      var xSl=document.querySelector('#cut-props-body input[oninput*=".x="]');
-      var ySl=document.querySelector('#cut-props-body input[oninput*=".y="]');
-      var sxSl=document.querySelector('#cut-props-body input[oninput*=".scaleX="]');
-      var sySl=document.querySelector('#cut-props-body input[oninput*=".scaleY="]');
-      if(xSl){xSl.value=cl2.transform.x.toFixed(1);xSl.nextElementSibling.textContent=cl2.transform.x.toFixed(1)+'%';}
-      if(ySl){ySl.value=cl2.transform.y.toFixed(1);ySl.nextElementSibling.textContent=cl2.transform.y.toFixed(1)+'%';}
-      if(sxSl){sxSl.value=cl2.transform.scaleX;sxSl.nextElementSibling.textContent=cl2.transform.scaleX+'%';}
-      if(sySl){sySl.value=cl2.transform.scaleY;sySl.nextElementSibling.textContent=cl2.transform.scaleY+'%';}
+      renderBoundingBox(ci2);
+      // Live-update props sliders
+      const xSlider = document.querySelector('#cut-props-body input[oninput*=".x="]');
+      const ySlider = document.querySelector('#cut-props-body input[oninput*=".y="]');
+      if(xSlider){ xSlider.value=cl.transform.x.toFixed(1); xSlider.nextElementSibling.textContent=cl.transform.x.toFixed(1)+'%'; }
+      if(ySlider){ ySlider.value=cl.transform.y.toFixed(1); ySlider.nextElementSibling.textContent=cl.transform.y.toFixed(1)+'%'; }
     });
+
+    window.addEventListener('mouseup', () => { _dragging = false; });
   }
-
-  function _onUp(){
-    if(_mode){ if(window.cutSaveHistory) cutSaveHistory('transform'); if(window.scheduleSave) scheduleSave(); }
-    _mode=null;
-  }
-
-  window.addEventListener('mousemove', _onMove);
-  window.addEventListener('mouseup',   _onUp);
-
-  // Store cleanup so it runs exactly once when box is replaced
-  box._cleanup = function(){
-    window.removeEventListener('mousemove', _onMove);
-    window.removeEventListener('mouseup',   _onUp);
-  };
-  var _origRemove = box.remove.bind(box);
-  box.remove = function(){ if(box._cleanup){box._cleanup();box._cleanup=null;} _origRemove(); };
 }
 window.renderBoundingBox = renderBoundingBox;
 
@@ -7153,8 +6449,6 @@ function insertFrameHoldAtEnd(ci){
     type:'frame_hold', start:clipEnd, dur:holdDur, track:clip.track,
     name:'Frame Hold', color:'linear-gradient(135deg,#3d1a5a,#6b2fa0)',
     _imgData:dataURL, _img:img,
-    mediaIdx: clip.mediaIdx,
-    _sourceTime: (clip.fileStart||0) + clip.dur,
   };
   S.cut.clips.push(holdClip);
   S.cut.sel = S.cut.clips.indexOf(holdClip);
@@ -7163,48 +6457,7 @@ function insertFrameHoldAtEnd(ci){
 }
 window.insertFrameHoldAtEnd = insertFrameHoldAtEnd;
 
-// ── Regenerate _imgData for all frame_hold clips after project load ──
-// _imgData is stripped before Firestore save; must be rebuilt from the source video.
-async function _regenerateFrameHolds(){
-  const fhClips = S.cut.clips.filter(c => c.type === 'frame_hold' && !c._imgData);
-  if(!fhClips.length) return;
-  const off = document.createElement('canvas');
-  off.width = S.proj?.w || 1920;
-  off.height = S.proj?.h || 1080;
-  const ctx = off.getContext('2d');
-  for(const clip of fhClips){
-    const item = S.cut.media[clip.mediaIdx];
-    if(!item?.url) continue; // media not yet re-imported, skip
-    await new Promise(resolve => {
-      const v = document.createElement('video');
-      v.src = item.url;
-      v.muted = true;
-      v.preload = 'metadata';
-      // frame_hold sits at the end of the previous clip, so capture the last frame
-      // of the source: use fileStart + dur of the preceding clip as approximate seek point
-      const _prevClip = clip._sourceTime !== undefined ? null :
-                    S.cut.clips.find(c => c.type==='video' && c.mediaIdx===clip.mediaIdx && c.start < clip.start);
-      const seekT = clip._sourceTime !== undefined ? clip._sourceTime :
-                    (_prevClip ? ((_prevClip.fileStart||0) + _prevClip.dur) : 0);
-      v.addEventListener('seeked', () => {
-        try{
-          ctx.clearRect(0,0,off.width,off.height);
-          ctx.drawImage(v, 0, 0, off.width, off.height);
-          clip._imgData = off.toDataURL('image/jpeg', 0.85);
-          clip._img = new Image();
-          clip._img.src = clip._imgData;
-        }catch(e){ console.warn('frame_hold regen failed', e); }
-        v.src = '';
-        resolve();
-      }, {once:true});
-      v.addEventListener('error', () => { v.src=''; resolve(); }, {once:true});
-      v.load();
-      v.currentTime = Math.max(0, seekT - 0.05);
-    });
-  }
-  if(fhClips.some(c=>c._imgData)) syncCutVid();
-}
-window._regenerateFrameHolds = _regenerateFrameHolds;
+
 
 // ══════════════════════════════════════════════════════════════════════
 // MONITOR OVERLAY SYSTEM — Safe Zones, Guides, Metadata, Timecode
@@ -7652,13 +6905,10 @@ function _highlightSelected(){
 }
 window._highlightSelected = _highlightSelected;
 
-// Clear multi-select when clicking empty area — but NOT after a marquee drag
-let _lastMarqueeEnd = 0; // timestamp of last marquee mouseup
+// Clear multi-select when clicking empty area
 document.addEventListener('click', e => {
   if(!e.target.closest('#tl-scroll') && !e.target.closest('#tl-rows')) return;
   if(e.target.closest('.tl-clip') || e.target.closest('.tl-overlay-clip')) return;
-  // Don't clear if this click is the tail-end of a marquee drag (within 100ms)
-  if(Date.now() - _lastMarqueeEnd < 100) return;
   if(window._selectedClips?.size > 0){
     window._selectedClips.clear();
     document.querySelectorAll('.tl-clip.selected').forEach(el => el.classList.remove('selected'));
@@ -7732,12 +6982,26 @@ function cutToggleFullscreen(){
   _cutFsActive = !_cutFsActive;
 
   if(_cutFsActive){
-    _cutEnterSoftFullscreen();
+    // Try native fullscreen on the screen element
+    // screen = #cut-screen (the preview container with the video inside)
+    const _fsTarget = document.getElementById('cut-screen');
+    const _fsPromise = _fsTarget?.requestFullscreen?.() ||
+                       _fsTarget?.webkitRequestFullscreen?.() ||
+                       _fsTarget?.mozRequestFullScreen?.();
+    if(_fsPromise && typeof _fsPromise.catch === 'function'){
+      _fsPromise.catch(() => _cutEnterSoftFullscreen());
+    } else if(!_fsTarget?.requestFullscreen && !_fsTarget?.webkitRequestFullscreen){
+      _cutEnterSoftFullscreen();
+    }
   } else {
-    if(document.fullscreenElement) document.exitFullscreen().catch(()=>{});
+    // Exit
+    if(document.fullscreenElement){
+      document.exitFullscreen().catch(()=>{});
+    }
     _cutExitSoftFullscreen();
   }
 
+  // Update button icon
   const btn = document.getElementById('cut-fs-btn');
   if(btn) btn.innerHTML = _cutFsActive ? '&#x2715;' : '&#x26F6;';
   btn?.setAttribute('title', _cutFsActive ? 'Exit Fullscreen (F or Esc)' : 'Fullscreen (F)');
@@ -7745,32 +7009,26 @@ function cutToggleFullscreen(){
 window.cutToggleFullscreen = cutToggleFullscreen;
 
 function _cutEnterSoftFullscreen(){
+  // Soft fallback: expand preview to cover full app
   const preview = document.querySelector('.cut-preview');
   const lpanel  = document.querySelector('.cut-lpanel');
   const rpanel  = document.querySelector('.cut-rpanel');
   const tl      = document.getElementById('cut-tl');
-  if(preview){ preview.dataset.fsStyle = preview.style.cssText; preview.style.cssText='position:fixed;inset:0;z-index:1500;background:#000;display:flex;align-items:center;justify-content:center;flex-direction:column'; }
+  if(preview){ preview.dataset.fsStyle = preview.style.cssText; preview.style.cssText='position:fixed;inset:0;z-index:1500;background:#000;display:flex;flex-direction:column'; }
+  // Ensure video fills screen preserving aspect ratio
   const _fsFrame = document.getElementById('cut-viewport-frame');
-  if(_fsFrame){ _fsFrame.dataset.fsFrStyle = _fsFrame.style.cssText; _fsFrame.style.cssText='position:relative;width:auto;height:auto;max-width:100vw;max-height:100vh;display:flex;align-items:center;justify-content:center;'; }
+  if(_fsFrame){ _fsFrame.dataset.fsFrStyle = _fsFrame.style.cssText; _fsFrame.style.cssText='width:100%;height:100%;display:flex;align-items:center;justify-content:center'; }
   const _fsMv = document.getElementById('cut-main-vid');
-  if(_fsMv){ _fsMv.dataset.fsMvStyle = _fsMv.style.cssText; _fsMv.style.cssText='position:absolute;inset:0;width:100%;height:100%;object-fit:contain;display:block;'; }
-  // Keep canvas visible and sized if in canvas mode
+  if(_fsMv){ _fsMv.dataset.fsMvStyle = _fsMv.style.cssText; _fsMv.style.objectFit='contain'; _fsMv.style.width='100%'; _fsMv.style.height='100%'; }
+  // Also ensure canvas is visible and sized if video is hidden (canvas mode)
   const _fsCvs = document.getElementById('cut-trans-cvs');
-  if(_fsCvs){ _fsCvs.style.cssText='position:absolute;inset:0;width:100%;height:100%;pointer-events:none;z-index:2;'; if(_fsCvs.style.display==='none') _fsCvs.style.display='none'; }
-  if(lpanel){ lpanel.dataset.fsDis=lpanel.style.display; lpanel.style.display='none'; }
-  if(rpanel){ rpanel.dataset.fsDis=rpanel.style.display; rpanel.style.display='none'; }
-  if(tl)    { tl.dataset.fsDis=tl.style.display;         tl.style.display='none'; }
-  // Apply correct aspect ratio after layout settles
-  setTimeout(()=>{
-    const W=S.proj.w||1920, H=S.proj.h||1080;
-    const ar=W/H;
-    const vw=window.innerWidth, vh=window.innerHeight;
-    let fw=vw, fh=vw/ar;
-    if(fh>vh){ fh=vh; fw=vh*ar; }
-    const _fr=document.getElementById('cut-viewport-frame');
-    if(_fr){ _fr.style.width=Math.round(fw)+'px'; _fr.style.height=Math.round(fh)+'px'; }
-    syncCutVid();
-  }, 80);
+  if(_fsCvs && _fsCvs.style.display !== 'none'){
+    _fsCvs.style.cssText='position:absolute;inset:0;width:100%;height:100%;pointer-events:none;z-index:2;display:block;';
+  }
+  if(lpanel) { lpanel.dataset.fsDis = lpanel.style.display; lpanel.style.display='none'; }
+  if(rpanel) { rpanel.dataset.fsDis = rpanel.style.display; rpanel.style.display='none'; }
+  if(tl)     { tl.dataset.fsDis    = tl.style.display;     tl.style.display='none'; }
+  setTimeout(()=>{ if(window.applyCanvasAspectRatio) applyCanvasAspectRatio(S.proj.w||1920,S.proj.h||1080); if(window.drawMonitorOverlays) drawMonitorOverlays(); syncCutVid(); },100);
 }
 
 function _cutExitSoftFullscreen(){
