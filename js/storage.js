@@ -48,13 +48,13 @@ function _openMediaDB() {
 }
 
 async function saveMediaFile(projectId, file, mediaId) {
-  // mediaId is the unique identifier (projectId_timestamp_random).
-  // Falls back to projectId/filename for legacy compat if mediaId not supplied.
+  // mediaId / UUID is the permanent identity key.
+  // key = projectId/__uuid__mediaId so it is unique across all projects and filenames.
   const db  = await _openMediaDB();
   const buf = await file.arrayBuffer();
   const key = mediaId
-    ? (projectId + '/__mid__' + mediaId)   // new ID-keyed record
-    : (projectId + '/' + file.name);        // legacy fallback
+    ? (projectId + '/__uuid__' + mediaId)  // UUID-keyed — collision-free
+    : (projectId + '/' + file.name);       // legacy fallback for old code paths
   await new Promise((res, rej) => {
     const tx = db.transaction(_IDB_STORE, 'readwrite');
     tx.objectStore(_IDB_STORE).put({ key, name: file.name, mediaId: mediaId || null, type: file.type, buf });
@@ -75,7 +75,7 @@ async function loadMediaFiles(projectId) {
   db.close();
   // Return all files for this project (both new ID-keyed and legacy name-keyed)
   return files
-    .filter(f => f.key.startsWith(projectId + '/') || f.key.startsWith(projectId + '/__mid__'))
+    .filter(f => f.key.startsWith(projectId + '/') || f.key.startsWith(projectId + '/__mid__') || f.key.startsWith(projectId + '/__uuid__'))
     .map(f => {
       const blob = new Blob([f.buf], { type: f.type });
       return {
@@ -99,7 +99,7 @@ async function deleteProjectMediaFiles(projectId) {
   });
   // Delete both new ID-keyed AND legacy name-keyed records for this project
   keys
-    .filter(k => k.startsWith(projectId + '/') || k.startsWith(projectId + '/__mid__'))
+    .filter(k => k.startsWith(projectId + '/') || k.startsWith(projectId + '/__mid__') || k.startsWith(projectId + '/__uuid__'))
     .forEach(k => store.delete(k));
   await new Promise((res, rej) => { tx.oncomplete = res; tx.onerror = e => rej(e.target.error); });
   db.close();

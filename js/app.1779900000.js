@@ -96,8 +96,13 @@ async function autoSave() {
         audioTracks: S.cut.audioTracks,
         overlays: (window._overlays || []).map(o => ({...o, _img: undefined, _imgData: undefined})),
         media: S.cut.media.map(m => ({
-          name: m.name, mediaId: m.mediaId || null, type: m.type,
+          name: m.name,
+          id: m.id || m.mediaId || null,      // UUID — permanent identity
+          mediaId: m.mediaId || m.id || null, // kept for compat
+          type: m.type,
           duration: m.duration || 0,
+          width: m.width || null,
+          height: m.height || null,
           thumbnail: m.thumbnail || null
         }))
       }
@@ -379,33 +384,50 @@ window.openProject = async function(id) {
       const savedMeta = cs.media || [];
 
       // ── ID-FIRST restore: match by mediaId, fall back to name for legacy data ──
+      // ID-FIRST restore — no name collisions possible
       restoredMedia = savedMeta.map(m => {
-        // 1. Try exact mediaId match (new system — collision-free)
-        let stored = m.mediaId ? storedFiles.find(sf => sf.mediaId === m.mediaId) : null;
-        // 2. Fall back to name match for legacy projects that predate mediaId
+        const savedId = m.id || m.mediaId; // support both field names
+        // 1. Exact UUID match in IndexedDB (new system)
+        let stored = savedId ? storedFiles.find(sf => sf.mediaId === savedId) : null;
+        // 2. Legacy fallback: match by filename (pre-UUID projects)
         if (!stored) stored = storedFiles.find(sf => sf.name === m.name);
+        const baseItem = { ...m, id: savedId || null, mediaId: savedId || null };
         if (stored) {
-          return { ...m, url: stored.url, file: stored.blob };
+          return { ...baseItem, url: stored.url, file: stored.blob };
         } else {
-          return { ...m, url: null };
+          return { ...baseItem, url: null };
         }
       });
 
-      // Assign fresh mediaIds to any legacy items that don't have one yet (migration)
-      restoredMedia.forEach(m => {
-        if (!m.mediaId) {
-          m.mediaId = id + '_migr_' + Date.now() + '_' + Math.random().toString(36).slice(2,6);
+      // Migration: assign permanent UUIDs to any items that still lack one
+      const _now = Date.now();
+      restoredMedia.forEach((m, idx) => {
+        if (!m.id) {
+          m.id = id + '_migr_' + _now + '_' + idx + '_' + Math.random().toString(36).slice(2,5);
+          m.mediaId = m.id;
         }
       });
 
-      // Add any orphaned IndexedDB files not in saved meta (edge case)
+      // Also remap any clips that still reference numeric mediaIdx → migrate to mediaId
+      const _savedClips = cs.clips || [];
+      _savedClips.forEach(c => {
+        if (c.mediaIdx !== undefined && c.mediaIdx !== null && !c.mediaId) {
+          const m = restoredMedia[c.mediaIdx];
+          if (m) { c.mediaId = m.id; }
+          delete c.mediaIdx;
+        }
+      });
+
+      // Add any orphaned IndexedDB files not already in meta
       storedFiles.forEach(sf => {
         const alreadyRestored = restoredMedia.some(m =>
-          (sf.mediaId && m.mediaId === sf.mediaId) || m.name === sf.name
+          (sf.mediaId && (m.id === sf.mediaId || m.mediaId === sf.mediaId)) ||
+          m.name === sf.name
         );
         if (!alreadyRestored) {
+          const newId = id + '_orph_' + Date.now() + '_' + Math.random().toString(36).slice(2,5);
           restoredMedia.push({
-            name: sf.name, mediaId: sf.mediaId || null,
+            name: sf.name, id: newId, mediaId: newId,
             type: sf.type.startsWith('video') ? 'video' : sf.type.startsWith('audio') ? 'audio' : 'image',
             url: sf.url, file: sf.blob, duration: 0, thumbnail: null
           });
@@ -437,8 +459,8 @@ window.openProject = async function(id) {
     if(_imgBgOverlays.length > 0){
       // First pass: try to restore from restoredMedia using mediaIdx
       _imgBgOverlays.forEach(o => {
-        if(o.mediaIdx !== undefined && o.mediaIdx !== null){
-          const mItem = restoredMedia[o.mediaIdx];
+        if(o.mediaId){
+          const mItem = restoredMedia.find(m=>m.id===o.mediaId);
           if(mItem && mItem.url){
             o.url  = mItem.url;
             o._img = null;
@@ -915,8 +937,13 @@ window.doSave = async function() {
         audioTracks: S.cut.audioTracks,
         overlays: (window._overlays || []).map(o => ({...o, _img: undefined, _imgData: undefined})),
         media: S.cut.media.map(m => ({
-          name: m.name, mediaId: m.mediaId || null, type: m.type,
+          name: m.name,
+          id: m.id || m.mediaId || null,      // UUID — permanent identity
+          mediaId: m.mediaId || m.id || null, // kept for compat
+          type: m.type,
           duration: m.duration || 0,
+          width: m.width || null,
+          height: m.height || null,
           thumbnail: m.thumbnail || null
         }))
       }
@@ -1247,8 +1274,8 @@ async function startExport(){
   // ── PHASE 1: Pre-load video elements ─────────────────────────────────────
   _set('Loading video files...',3,'Phase 1/4 — Loading','');
   const drawEls={};
-  await Promise.all([...new Set(videoClips.map(c=>c.mediaIdx))].map(mIdx=>{
-    const item=S.cut.media[mIdx];
+  await Promise.all([...new Set(videoClips.map(c=>c.mediaId).filter(Boolean))].map(mIdx=>{
+    const item=getMediaById(mIdx);
     if(!item?.url)return Promise.resolve();
     const v=document.createElement('video');
     v.muted=true;v.volume=0;v.preload='auto';v.playsInline=true;
@@ -1272,7 +1299,7 @@ async function startExport(){
     try{
       const offCtx=new OfflineAudioContext(2,Math.ceil(totalDur*48000)+48000,48000);
       await Promise.all(audioClips.map(async ac=>{
-        const item=S.cut.media[ac.mediaIdx]; if(!item?.url)return;
+        const item=getMediaById(ac.mediaId); if(!item?.url)return;
         try{
           const buf=await offCtx.decodeAudioData(await(await fetch(item.url)).arrayBuffer());
           const src=offCtx.createBufferSource();
@@ -1355,8 +1382,8 @@ async function startExport(){
 
   // Pre-seek first clip so first frame isn't black
   const fc=videoClips[0];
-  if(fc&&drawEls[fc.mediaIdx]){
-    const v=drawEls[fc.mediaIdx];
+  if(fc&&drawEls[fc.mediaId]){
+    const v=drawEls[fc.mediaId];
     v.currentTime=fc.fileStart||0; v.playbackRate=fc.speed||1;
     await new Promise(r=>{const h=()=>{v.removeEventListener('seeked',h);r();};v.addEventListener('seeked',h);setTimeout(r,2000);});
     try{await v.play();}catch(e){}
@@ -1395,7 +1422,7 @@ async function startExport(){
       } else {
         const clip=videoClips.find(c=>t>=c.start&&t<c.start+c.dur);
         if(clip){
-          const vid=drawEls[clip.mediaIdx];
+          const vid=drawEls[clip.mediaId];
           const ci=videoClips.indexOf(clip);
           if(ci!==lastClipIdx){
             if(lastVid&&lastVid!==vid&&!lastVid.paused)lastVid.pause();
@@ -1727,7 +1754,7 @@ function sendCutToMotion(){
   // Copy all Cut media + clips to Motion state
   S.ae.media = S.cut.media.map(m=>({...m}));
   S.ae.clips = videoClips.map(c=>({
-    mediaIdx: c.mediaIdx,
+    mediaId: c.mediaId,
     name: c.name,
     start: c.start,
     dur: c.dur,
@@ -2583,7 +2610,10 @@ function setupCutFileInput() {
       // Assign new media items to the folder
       setTimeout(()=>{
         if(!S.cut.mediaBins) S.cut.mediaBins={};
-        for(let k=prevLen; k<S.cut.media.length; k++) S.cut.mediaBins[k]=folderId;
+        for(let k=prevLen; k<S.cut.media.length; k++){
+          const _m = S.cut.media[k];
+          if(_m?.id) S.cut.mediaBins[_m.id]=folderId;
+        }
         buildBinList(); scheduleSave();
       }, 500);
       fiFolder.value='';
@@ -2603,9 +2633,12 @@ function handleCutFiles(files) {
     const isImg = f.type.startsWith('image/');
     if (!isVid&&!isAud&&!isImg) return;
     const url = URL.createObjectURL(f);
-    // Generate a unique mediaId so clips with identical names across projects never collide
-    const _mid = (S.currentProject?.id || 'local') + '_' + Date.now() + '_' + Math.random().toString(36).slice(2,7);
-    const item = { name:f.name, mediaId:_mid, type:isVid?'video':isAud?'audio':'image', file:f, url, duration:isImg?5:0, thumbnail:null };
+    // Generate permanent UUID4 — never derived from filename
+    const _uuid = 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => {
+      const r = Math.random() * 16 | 0;
+      return (c === 'x' ? r : (r & 0x3 | 0x8)).toString(16);
+    });
+    const item = { name:f.name, id:_uuid, mediaId:_uuid, type:isVid?'video':isAud?'audio':'image', file:f, url, duration:isImg?5:0, thumbnail:null };
     if (isVid) {
       const v = document.createElement('video'); v.src = url;
       v.onloadedmetadata = () => {
@@ -2662,7 +2695,7 @@ function buildBinList() {
   // Group media by bin
   const binItems = {};
   S.cut.media.forEach((item,i) => {
-    const binId = S.cut.mediaBins?.[i] || 'root';
+    const binId = S.cut.mediaBins?.[item.id] || 'root';
     if(!binItems[binId]) binItems[binId] = [];
     binItems[binId].push({item,i});
   });
@@ -2723,8 +2756,8 @@ function cutMediaContextMenu(e, i){
   showContextMenu(e, [
     {icon:'🗑️', label:'Delete from project', danger:true, fn:()=>cutMediaDelete(i)},
     {sep:true},
-    ...bins.map(b=>({icon:'📁', label:'Move to: '+b.name, fn:()=>{ if(!S.cut.mediaBins)S.cut.mediaBins={}; S.cut.mediaBins[i]=b.id; buildBinList(); }})),
-    ...(bins.length?[{icon:'📂', label:'Move to: All Media', fn:()=>{ if(S.cut.mediaBins)delete S.cut.mediaBins[i]; buildBinList(); }}]:[]),
+    ...bins.map(b=>({icon:'📁', label:'Move to: '+b.name, fn:()=>{ if(!S.cut.mediaBins)S.cut.mediaBins={}; S.cut.mediaBins[item.id]=b.id; buildBinList(); }})),
+    ...(bins.length?[{icon:'📂', label:'Move to: All Media', fn:()=>{ if(S.cut.mediaBins)delete S.cut.mediaBins[item.id]; buildBinList(); }}]:[]),
     {sep:true},
     {icon:'📁', label:'New folder', fn:()=>cutMediaNewBin()},
   ]);
@@ -2732,24 +2765,25 @@ function cutMediaContextMenu(e, i){
 window.cutMediaContextMenu = cutMediaContextMenu;
 
 function cutMediaDelete(i){
-  const item = S.cut.media[i];
-  const usedClips = S.cut.clips.filter(c=>c.mediaIdx===i);
+  // i can be array index (from bin click) or mediaId string — resolve both
+  const item = typeof i === 'string'
+    ? S.cut.media.find(m=>m.id===i)
+    : S.cut.media[i];
+  if(!item) return;
+  const mediaId = item.id;
+  const usedClips = S.cut.clips.filter(c=>c.mediaId===mediaId);
   if(usedClips.length){
     if(!confirm(`"${item.name}" is used in ${usedClips.length} timeline clip(s).\nDelete anyway? Those clips will be removed.`)) return;
   }
   cutSaveHistory('delete_media');
-  S.cut.clips = S.cut.clips.filter(c=>c.mediaIdx!==i);
-  S.cut.clips.forEach(c=>{ if(c.mediaIdx>i) c.mediaIdx--; });
-  S.cut.media.splice(i,1);
-  const newBins = {};
-  Object.entries(S.cut.mediaBins||{}).forEach(([k,v])=>{
-    const ki=parseInt(k);
-    if(ki<i) newBins[ki]=v;
-    else if(ki>i) newBins[ki-1]=v;
-  });
-  S.cut.mediaBins = newBins;
-  if(S.cut.selMedia===i) S.cut.selMedia=null;
-  else if(S.cut.selMedia>i) S.cut.selMedia--;
+  // Remove clips that reference this mediaId — no index shifting needed with UUID system
+  S.cut.clips = S.cut.clips.filter(c=>c.mediaId!==mediaId);
+  // Remove from media array
+  const arrIdx = S.cut.media.indexOf(item);
+  if(arrIdx >= 0) S.cut.media.splice(arrIdx, 1);
+  // Remove from bins — keyed by mediaId, no re-index needed
+  if(S.cut.mediaBins) delete S.cut.mediaBins[mediaId];
+  if(S.cut.selMedia===mediaId) S.cut.selMedia=null;
   buildBinList(); renderCutTimeline(); scheduleSave();
   notify('Media deleted','#3fb950');
 }
@@ -2789,7 +2823,7 @@ function updatePropsPanel(ci){
     return;
   }
   const c=S.cut.clips[ci]; if(!c){body.innerHTML='';return;}
-  const item=S.cut.media[c.mediaIdx]||{};
+  const item=getMediaById(c.mediaId)||{};
   const fmtN=n=>Math.round(n*100)/100;
   const speed=c.speed||1;
   const inp=(id,val,step,min,onch)=>`<input type="number" id="${id}" value="${val}" step="${step}" min="${min||0}" style="width:62px;background:#161616;border:0.5px solid rgba(255,255,255,0.1);border-radius:5px;color:var(--tx);font-size:11px;padding:2px 5px;outline:none" onchange="${onch}">`;
@@ -3093,14 +3127,14 @@ function applyClipSpeed(ci, newSpeedPct, ripple){
   // _origDur = available source content from fileStart to end of file
   // Use media item duration minus fileStart for true available duration
   if(c._origDur === undefined || c._origDur === null){
-    const _item = S.cut.media[c.mediaIdx];
+    const _item = getMediaById(c.mediaId);
     const _srcTotal = _item?.duration || (c.dur * (c.speed||1));
     c._origDur = Math.max(c.dur * (c.speed||1), _srcTotal - (c.fileStart||0));
   }
   
   const oldDur  = c.dur;
   // Available source = total from fileStart (never exceed file end)
-  const _item2 = S.cut.media[c.mediaIdx];
+  const _item2 = getMediaById(c.mediaId);
   const _srcAvail = _item2?.duration
     ? Math.max(0, _item2.duration - (c.fileStart||0))
     : c._origDur;
@@ -3644,7 +3678,7 @@ function toggleTrackMute(trackIdx){
   const isMuted = S.cut.mutedTracks[trackIdx];
   // Apply mute to live audio elements
   S.cut.clips.filter(c=>c.track===trackIdx).forEach(c=>{
-    const item=S.cut.media[c.mediaIdx];
+    const item=getMediaById(c.mediaId);
     if(item?.url&&_audioEls[item.url]) _audioEls[item.url].muted = !!isMuted;
   });
   // Apply mute to main video element if it's on this track
@@ -3720,14 +3754,14 @@ function cutAddToTL(i) {
     }
     window._lastActiveVideoTrack = track;
   }
-  S.cut.clips.push({mediaIdx:i,name:item.name,type:item.type,track,start:startSec,dur:Math.max(item.duration||5,0.5),fileStart:0,
+  S.cut.clips.push({mediaId:item.id,name:item.name,type:item.type,track,start:startSec,dur:Math.max(item.duration||5,0.5),fileStart:0,
     transform:{x:0,y:0,scaleX:100,scaleY:100,rotation:0},
     color:item.type==='video'?'rgba(88,166,255,0.8)':item.type==='audio'?'rgba(210,153,34,0.8)':'rgba(63,185,80,0.8)'});
   // If video file, also add linked audio clip on first audio track
   if(item.type==='video'&&item.hasAudio!==false){
     const audioTrackIdx=S.cut.videoTracks; // first audio track
     S.cut.clips.push({
-      mediaIdx:i,
+      mediaId:item.id,
       name:item.name+' [Audio]',
       type:'audio',
       track:audioTrackIdx,
@@ -3870,13 +3904,13 @@ function renderCutTimeline() {
       if(isAudioTrack && isVisualAsset){ notify('Video/image assets must go on Video tracks (V1, V2...)','#E31837'); return; }
       const rect=row.getBoundingClientRect();
       const start=Math.max(0,(e.clientX-rect.left+document.getElementById('tl-scroll')?.scrollLeft||0)/PPS);
-      S.cut.clips.push({mediaIdx:i,name:item.name,type:item.type,track:t,start,dur:Math.max(item.duration||5,0.5),fileStart:0,
+      S.cut.clips.push({mediaId:item.id,name:item.name,type:item.type,track:t,start,dur:Math.max(item.duration||5,0.5),fileStart:0,
         transform:{x:0,y:0,scaleX:100,scaleY:100,rotation:0},
         color:item.type==='video'?'rgba(88,166,255,0.8)':item.type==='audio'?'rgba(210,153,34,0.8)':'rgba(63,185,80,0.8)'});
       // Auto-add audio track for video clips
       if(item.type==='video'&&item.hasAudio!==false){
         const audioTrackIdx=S.cut.videoTracks;
-        S.cut.clips.push({mediaIdx:i,name:item.name+' [Audio]',type:'audio',track:audioTrackIdx,start,dur:Math.max(item.duration||5,0.5),fileStart:0,linkedToVideo:true,color:'rgba(210,153,34,0.6)'});
+        S.cut.clips.push({mediaId:item.id,name:item.name+' [Audio]',type:'audio',track:audioTrackIdx,start,dur:Math.max(item.duration||5,0.5),fileStart:0,linkedToVideo:true,color:'rgba(210,153,34,0.6)'});
       }
       renderCutTimeline();notify(item.name+' added','#3fb950');scheduleSave();
     };
@@ -4072,8 +4106,8 @@ function renderCutTimeline() {
       el.querySelector('.clip-resize-l').addEventListener('mousedown',e=>{e.stopPropagation();clipResizeStart(e,ci,'l');});
       el.querySelector('.clip-resize-r').addEventListener('mousedown',e=>{e.stopPropagation();clipResizeStart(e,ci,'r');});
       // Waveform for audio clips (with fileStart offset for split clips)
-      if(c.type==='audio'&&S.cut.media[c.mediaIdx]?.url&&window.generateWaveformForClip){
-        const _url=S.cut.media[c.mediaIdx].url;
+      if(c.type==='audio'&&getMediaById(c.mediaId)?.url&&window.generateWaveformForClip){
+        const _url=getMediaById(c.mediaId).url;
         const _fs=c.fileStart||0;
         const _dur=c.dur;
         setTimeout(()=>{ if(el.isConnected) generateWaveformForClip(el, _url, _fs, _dur); },100);
@@ -4711,10 +4745,10 @@ function cutDelete(){
       const c = S.cut.clips[ci];
       if(!c) return;
       if(c.type==='video'){
-        const li = S.cut.clips.findIndex((a,i)=>i!==ci&&a.linkedToVideo&&a.mediaIdx===c.mediaIdx&&Math.abs(a.start-c.start)<0.5);
+        const li = S.cut.clips.findIndex((a,i)=>i!==ci&&a.linkedToVideo&&a.mediaId===c.mediaId&&Math.abs(a.start-c.start)<0.5);
         if(li>=0){ S.cut.clips[li].linkedToVideo=false; S.cut.clips[li].name=S.cut.clips[li].name.replace(' [Audio]','')+' (Audio)'; }
       } else if(c.linkedToVideo || c.type==='audio'){
-        const pv = S.cut.clips.find((v,i)=>i!==ci&&v.type==='video'&&v.mediaIdx===c.mediaIdx&&Math.abs(v.start-c.start)<1.0);
+        const pv = S.cut.clips.find((v,i)=>i!==ci&&v.type==='video'&&v.mediaId===c.mediaId&&Math.abs(v.start-c.start)<1.0);
         if(pv) pv.nativeAudioMuted = true;
       }
       S.cut.clips.splice(ci,1);
@@ -4737,7 +4771,7 @@ function cutDelete(){
   // Handle linked audio relationships
   if(c.type==='video'){
     // Video deleted — unlink any linked audio clip (keep audio, detach from video)
-    const li=S.cut.clips.findIndex(a=>a.linkedToVideo&&a.mediaIdx===c.mediaIdx&&Math.abs(a.start-c.start)<0.5);
+    const li=S.cut.clips.findIndex(a=>a.linkedToVideo&&a.mediaId===c.mediaId&&Math.abs(a.start-c.start)<0.5);
     if(li>=0){
       const linkedAudio = S.cut.clips[li];
       const isSamePosition = Math.abs(linkedAudio.start - c.start) < 0.1 && Math.abs(linkedAudio.dur - c.dur) < 0.1;
@@ -4750,7 +4784,7 @@ function cutDelete(){
     // Audio clip deleted — find its parent video and mark native audio as muted
     // so video tag doesn't suddenly play raw audio
     const parentVideo = S.cut.clips.find(
-      v => v.type==='video' && v.mediaIdx===c.mediaIdx && Math.abs(v.start-c.start)<1.0
+      v => v.type==='video' && v.mediaId===c.mediaId && Math.abs(v.start-c.start)<1.0
     );
     if(parentVideo) parentVideo.nativeAudioMuted = true;
   }
@@ -4900,7 +4934,7 @@ function cutTogglePlay(){
     const mv=$('cut-main-vid')||document.querySelector('#cut-screen video');
 
     if(activeClip&&mv){
-      const item=S.cut.media[activeClip.mediaIdx];
+      const item=getMediaById(activeClip.mediaId);
       if(item?.url){
         const clipIdx=S.cut.clips.indexOf(activeClip);
         // Set source if different
@@ -5138,11 +5172,11 @@ function cutTogglePlay(){
               && c.start < currentEnd + 300)
             .sort((a,b)=>a.start-b.start)[0];
           if(nextClip){
-            const item=S.cut.media[nextClip.mediaIdx];
+            const item=getMediaById(nextClip.mediaId);
             if(item?.url){
               // Switch to next clip — seek to its fileStart position
-              if(vidEl.dataset.mediaIdx !== String(nextClip.mediaIdx)){
-                vidEl.dataset.mediaIdx = String(nextClip.mediaIdx);
+              if(vidEl.dataset.mediaId !== nextClip.mediaId){
+                vidEl.dataset.mediaId = nextClip.mediaId;
                 vidEl.src = item.url;
               }
               vidEl.dataset.clipIdx = String(S.cut.clips.indexOf(nextClip));
@@ -5240,7 +5274,7 @@ function startAudioPlayback(){
   const ph = S.cut.ph;
   // Only play standalone audio-only clips — video audio comes from cut-main-vid directly
   S.cut.clips.filter(c => c.type === 'audio' && !c.linkedToVideo).forEach(c => {
-    const item = S.cut.media[c.mediaIdx];
+    const item = getMediaById(c.mediaId);
     if (!item?.url) return;
     if (ph >= c.start && ph < c.start + c.dur) {
       const a = getAudioEl(item.url);
@@ -5267,7 +5301,7 @@ function purgeStaleAudioEls(){
   const activeUrls = new Set(
     S.cut.clips
       .filter(c => c.type === 'audio' && !c.linkedToVideo)
-      .map(c => S.cut.media[c.mediaIdx]?.url)
+      .map(c => getMediaById(c.mediaId)?.url)
       .filter(Boolean)
   );
   Object.keys(_audioEls).forEach(url => {
@@ -5306,7 +5340,7 @@ function syncAudioPlayback(){
   Object.keys(_audioEls).forEach(url => {
     const a = _audioEls[url];
     const activeClip = standaloneCips.find(c =>
-      S.cut.media[c.mediaIdx]?.url === url &&
+      getMediaById(c.mediaId)?.url === url &&
       ph >= c.start && ph < c.start + c.dur
     );
     if (!activeClip) {
@@ -5325,7 +5359,7 @@ function syncAudioPlayback(){
   });
   // Start audio for clips not yet in cache
   standaloneCips.forEach(c => {
-    const item = S.cut.media[c.mediaIdx];
+    const item = getMediaById(c.mediaId);
     if (!item?.url) return;
     if (ph >= c.start && ph < c.start + c.dur) {
       const a = getAudioEl(item.url);
@@ -5339,6 +5373,15 @@ function syncAudioPlayback(){
 // ── TRANSITION ENGINE ──
 // Hidden video elements for blending
 const _vidPool = {};
+// ── Media Library: lookup by permanent UUID ─────────────────────────────
+// This is the ONLY correct way to resolve a clip's asset. Never use array
+// index after the initial import — use clip.mediaId (UUID string).
+function getMediaById(mediaId){
+  if(!mediaId) return null;
+  return (S.cut.media || []).find(m => m.id === mediaId) || null;
+}
+window.getMediaById = getMediaById;
+
 function getPoolVid(url){
   if(!_vidPool[url]){
     const v=document.createElement('video');
@@ -5429,7 +5472,7 @@ function syncCutVid(){
 
   // Ensure pool elements exist for all clips
   videoClips.forEach(c => {
-    const item = S.cut.media[c.mediaIdx];
+    const item = getMediaById(c.mediaId);
     if(item?.url){
       if(c.type === 'image') getPoolImg(item.url);
       else getPoolVid(item.url);
@@ -5493,15 +5536,15 @@ function syncCutVid(){
 
     // No clip at exact playhead — try to show nearest video clip as poster frame
     const _nearestVid = S.cut.clips
-      .filter(c => (c.type==='video'||c.type==='image') && S.cut.media[c.mediaIdx]?.url)
+      .filter(c => (c.type==='video'||c.type==='image') && getMediaById(c.mediaId)?.url)
       .sort((a,b) => Math.abs(a.start+a.dur/2-ph) - Math.abs(b.start+b.dur/2-ph))[0];
 
     if(_nearestVid && !hasActiveOverlays){
       // Show nearest clip via mv so user sees something instead of black
-      const _ni = S.cut.media[_nearestVid.mediaIdx];
+      const _ni = getMediaById(_nearestVid.mediaId);
       if(_nearestVid.type==='video' && _ni?.url){
-        if(mv.dataset.mediaIdx !== String(_nearestVid.mediaIdx)){
-          mv.dataset.mediaIdx = String(_nearestVid.mediaIdx);
+        if(mv.dataset.mediaId !== _nearestVid.mediaId){
+          mv.dataset.mediaId = _nearestVid.mediaId;
           mv.src = _ni.url;
         }
         mv.style.opacity='1'; mv.style.display='block';
@@ -5681,12 +5724,12 @@ function syncCutVid(){
     // ── PLAIN VIDEO PATH — single video clip, overlays drawn on transparent canvas on top ──
     const _c  = _singleVideoClip;
     const _ci = S.cut.clips.indexOf(_c);
-    const _it = S.cut.media[_c.mediaIdx];
+    const _it = getMediaById(_c.mediaId);
     if(!_it?.url) return;
 
     if(placeholder) placeholder.style.display = 'none';
-    if(mv.dataset.mediaIdx !== String(_c.mediaIdx) || !mv.src || mv.src === window.location.href){
-      mv.dataset.mediaIdx = String(_c.mediaIdx);
+    if(mv.dataset.mediaId !== _c.mediaId || !mv.src || mv.src === window.location.href){
+      mv.dataset.mediaId = _c.mediaId;
       mv.src = _it.url;
     }
     mv.dataset.clipIdx = String(_ci);
@@ -5744,11 +5787,11 @@ function syncCutVid(){
     const _primaryClip = _masterList.find(e => e.kind==='clip' && e.clip.type==='video');
     if(_primaryClip){
       const _pc = _primaryClip.clip;
-      const _pi = S.cut.media[_pc.mediaIdx];
+      const _pi = getMediaById(_pc.mediaId);
       if(_pi?.url){
         getPoolVid(_pi.url);
-        if(mv.dataset.mediaIdx !== String(_pc.mediaIdx) || !mv.src || mv.src.includes('undefined')){
-          mv.dataset.mediaIdx = String(_pc.mediaIdx);
+        if(mv.dataset.mediaId !== _pc.mediaId || !mv.src || mv.src.includes('undefined')){
+          mv.dataset.mediaId = _pc.mediaId;
           mv.src = _pi.url;
         }
         mv.dataset.clipIdx = String(S.cut.clips.indexOf(_pc));
@@ -5785,7 +5828,7 @@ function syncCutVid(){
       if(entry.kind === 'clip'){
         const c  = entry.clip;
         const ci = S.cut.clips.indexOf(c);
-        const it = S.cut.media[c.mediaIdx];
+        const it = getMediaById(c.mediaId);
         if(!it?.url) return;
 
         if(c.type === 'frame_hold'){
@@ -6020,11 +6063,11 @@ function setupPlayheadDrag(){
       // Find correct clip at new position
       const newClip=S.cut.clips.find(c=>c.type==='video'&&S.cut.ph>=c.start&&S.cut.ph<c.start+c.dur);
       if(newClip){
-        const item=S.cut.media[newClip.mediaIdx];
+        const item=getMediaById(newClip.mediaId);
         if(item?.url){
           const newCI=S.cut.clips.indexOf(newClip);
-          if(mv.dataset.mediaIdx!==String(newClip.mediaIdx)){
-            mv.dataset.mediaIdx=String(newClip.mediaIdx);
+          if(mv.dataset.mediaId!==newClip.mediaId){
+            mv.dataset.mediaId=newClip.mediaId;
             mv.src=item.url;
           }
           mv.dataset.clipIdx=String(newCI);
@@ -6116,9 +6159,9 @@ function setupPlayheadDrag(){
       if(_mv_click){
         const nc = S.cut.clips.find(c => (c.type==='video'||c.type==='image') && S.cut.ph >= c.start && S.cut.ph < c.start + Math.max(c.dur, 0.1));
         if(nc){
-          const _it = S.cut.media[nc.mediaIdx];
+          const _it = getMediaById(nc.mediaId);
           if(_it?.url){
-            if(_mv_click.dataset.mediaIdx !== String(nc.mediaIdx)){ _mv_click.dataset.mediaIdx = String(nc.mediaIdx); _mv_click.src = _it.url; }
+            if(_mv_click.dataset.mediaId !== nc.mediaId){ _mv_click.dataset.mediaId = nc.mediaId; _mv_click.src = _it.url; }
             _mv_click.dataset.clipIdx = String(S.cut.clips.indexOf(nc));
             _mv_click.currentTime = (nc.fileStart||0) + Math.max(0, (S.cut.ph - nc.start) * (nc.speed||1));
           }
@@ -6139,7 +6182,7 @@ function setupPlayheadDrag(){
         const mv3=$('cut-main-vid');
         if(mv3){
           const nc=S.cut.clips.find(c=>c.type==='video'&&S.cut.ph>=c.start&&S.cut.ph<c.start+c.dur);
-          if(nc){const item3=S.cut.media[nc.mediaIdx];if(item3?.url){if(mv3.dataset.mediaIdx!==String(nc.mediaIdx)){mv3.dataset.mediaIdx=String(nc.mediaIdx);mv3.src=item3.url;}mv3.dataset.clipIdx=String(S.cut.clips.indexOf(nc));mv3.currentTime=(nc.fileStart||0)+Math.max(0,(S.cut.ph-nc.start)*(nc.speed||1));mv3.style.display='block';}}
+          if(nc){const item3=getMediaById(nc.mediaId);if(item3?.url){if(mv3.dataset.mediaId!==nc.mediaId){mv3.dataset.mediaId=nc.mediaId;mv3.src=item3.url;}mv3.dataset.clipIdx=String(S.cut.clips.indexOf(nc));mv3.currentTime=(nc.fileStart||0)+Math.max(0,(S.cut.ph-nc.start)*(nc.speed||1));mv3.style.display='block';}}
         }
       });
       document.addEventListener('mouseup',function(){dragging=false;S.cut._scrubbing=false;},{once:true});
@@ -6326,7 +6369,8 @@ function aeJumpToClip(clips, idx, vid, autoPlay){
   if(idx >= clips.length) idx = 0;
   S.ae._cutPlayIdx = idx;
   const c = clips[idx];
-  const item = S.ae.media[c.mediaIdx];
+  // S.ae.media mirrors S.cut.media; clips use mediaId
+  const item = S.ae.media.find(m=>m.id===c.mediaId) || S.ae.media[c.mediaIdx];
   if(!item?.url) return;
   const targetTime = c.fileStart || 0;
   // Change src if different file
@@ -6686,7 +6730,7 @@ function clipContextMenu(e, ci){
         c.dur-=trimAmt;
         c.start=ph;
         // Sync linked audio
-        const linkedA=S.cut.clips.find(a=>a.linkedToVideo&&a.mediaIdx===c.mediaIdx&&Math.abs(a.start-(c.start-trimAmt))<0.2);
+        const linkedA=S.cut.clips.find(a=>a.linkedToVideo&&a.mediaId===c.mediaId&&Math.abs(a.start-(c.start-trimAmt))<0.2);
         if(linkedA){linkedA.fileStart=(linkedA.fileStart||0)+trimAmt;linkedA.dur-=trimAmt;linkedA.start=ph;}
         renderCutTimeline();notify('Trimmed from start');
       } else notify('Playhead not on clip','#E31837');
@@ -6697,7 +6741,7 @@ function clipContextMenu(e, ci){
         const newDur=ph-c.start;
         c.dur=newDur;
         // Sync linked audio
-        const linkedA=S.cut.clips.find(a=>a.linkedToVideo&&a.mediaIdx===c.mediaIdx&&Math.abs(a.start-c.start)<0.2);
+        const linkedA=S.cut.clips.find(a=>a.linkedToVideo&&a.mediaId===c.mediaId&&Math.abs(a.start-c.start)<0.2);
         if(linkedA) linkedA.dur=newDur;
         renderCutTimeline();notify('Trimmed to end');
       } else notify('Playhead not on clip','#E31837');
@@ -6710,7 +6754,7 @@ function clipContextMenu(e, ci){
       // Delete video clip
       S.cut.clips.splice(ci,1);
       // Also delete linked audio clip
-      const linkedIdx=S.cut.clips.findIndex(a=>a.linkedToVideo&&a.mediaIdx===c.mediaIdx&&Math.abs(a.start-c.start)<0.5);
+      const linkedIdx=S.cut.clips.findIndex(a=>a.linkedToVideo&&a.mediaId===c.mediaId&&Math.abs(a.start-c.start)<0.5);
       if(linkedIdx>=0) S.cut.clips.splice(linkedIdx,1);
       S.cut.sel=null;
       renderCutTimeline();notify('Clip + audio deleted');scheduleSave();
@@ -6733,13 +6777,13 @@ function clipContextMenu(e, ci){
 
 function mergeWithNext(ci){
   const c=S.cut.clips[ci];
-  const next=S.cut.clips.find((c2,i2)=>i2!==ci&&c2.track===c.track&&Math.abs(c2.start-(c.start+c.dur))<0.5&&c2.mediaIdx===c.mediaIdx);
+  const next=S.cut.clips.find((c2,i2)=>i2!==ci&&c2.track===c.track&&Math.abs(c2.start-(c.start+c.dur))<0.5&&c2.mediaId===c.mediaId);
   if(!next){notify('No adjacent clip to merge on same track','#E31837');return;}
   c.dur=next.start+next.dur-c.start;
   const ni=S.cut.clips.indexOf(next);
   // Also merge linked audio
-  const audioLinked=S.cut.clips.find(a=>a.linkedToVideo&&a.mediaIdx===c.mediaIdx&&Math.abs(a.start-next.start)<0.2);
-  const audioBase=S.cut.clips.find(a=>a.linkedToVideo&&a.mediaIdx===c.mediaIdx&&Math.abs(a.start-c.start)<0.2&&a!==audioLinked);
+  const audioLinked=S.cut.clips.find(a=>a.linkedToVideo&&a.mediaId===c.mediaId&&Math.abs(a.start-next.start)<0.2);
+  const audioBase=S.cut.clips.find(a=>a.linkedToVideo&&a.mediaId===c.mediaId&&Math.abs(a.start-c.start)<0.2&&a!==audioLinked);
   if(audioBase&&audioLinked){audioBase.dur=c.dur;S.cut.clips.splice(S.cut.clips.indexOf(audioLinked),1);}
   S.cut.clips.splice(ni,1);
   renderCutTimeline();notify('Clips merged ✓','#3fb950');scheduleSave();
@@ -6747,13 +6791,13 @@ function mergeWithNext(ci){
 
 function mergeWithPrev(ci){
   const c=S.cut.clips[ci];
-  const prev=S.cut.clips.find((c2,i2)=>i2!==ci&&c2.track===c.track&&Math.abs((c2.start+c2.dur)-c.start)<0.5&&c2.mediaIdx===c.mediaIdx);
+  const prev=S.cut.clips.find((c2,i2)=>i2!==ci&&c2.track===c.track&&Math.abs((c2.start+c2.dur)-c.start)<0.5&&c2.mediaId===c.mediaId);
   if(!prev){notify('No adjacent clip before this one','#E31837');return;}
   // Extend prev to cover both
   prev.dur=c.start+c.dur-prev.start;
   // Also merge linked audio
-  const audioC=S.cut.clips.find(a=>a.linkedToVideo&&a.mediaIdx===c.mediaIdx&&Math.abs(a.start-c.start)<0.2);
-  const audioPrev=S.cut.clips.find(a=>a.linkedToVideo&&a.mediaIdx===c.mediaIdx&&Math.abs(a.start-prev.start)<0.2&&a!==audioC);
+  const audioC=S.cut.clips.find(a=>a.linkedToVideo&&a.mediaId===c.mediaId&&Math.abs(a.start-c.start)<0.2);
+  const audioPrev=S.cut.clips.find(a=>a.linkedToVideo&&a.mediaId===c.mediaId&&Math.abs(a.start-prev.start)<0.2&&a!==audioC);
   if(audioPrev&&audioC){audioPrev.dur=prev.dur;S.cut.clips.splice(S.cut.clips.indexOf(audioC),1);}
   S.cut.clips.splice(ci,1);
   renderCutTimeline();notify('Merged with previous ✓','#3fb950');scheduleSave();
@@ -6813,7 +6857,7 @@ function renderBoundingBox(ci){
   // Compute actual rendered image base dimensions (contain-fit inside frame)
   let baseW = fW, baseH = fH;
   if(clip.type === 'image'){
-    const item = S.cut.media[clip.mediaIdx];
+    const item = getMediaById(clip.mediaId);
     const imgEl = item && item.url ? getPoolImg(item.url) : null;
     if(imgEl && imgEl.naturalWidth && imgEl.naturalHeight){
       const iAR = imgEl.naturalWidth / imgEl.naturalHeight;
@@ -7040,7 +7084,7 @@ function insertFrameHold(ci){
   const origStart  = clip.start;
   const origDur    = clip.dur;
   const origTrack  = clip.track;
-  const origMedia  = clip.mediaIdx;
+  const origMedia  = clip.mediaId;
   const origFS     = clip.fileStart || 0;
   const origSpeed  = clip.speed || 1;
 
@@ -7205,7 +7249,7 @@ function insertFrameHoldAtEnd(ci){
     type:'frame_hold', start:clipEnd, dur:holdDur, track:clip.track,
     name:'Frame Hold', color:'linear-gradient(135deg,#3d1a5a,#6b2fa0)',
     _imgData:dataURL, _img:img,
-    mediaIdx: clip.mediaIdx,
+    mediaId: clip.mediaId,
     _sourceTime: (clip.fileStart||0) + clip.dur,
   };
   S.cut.clips.push(holdClip);
@@ -7225,7 +7269,7 @@ async function _regenerateFrameHolds(){
   off.height = S.proj?.h || 1080;
   const ctx = off.getContext('2d');
   for(const clip of fhClips){
-    const item = S.cut.media[clip.mediaIdx];
+    const item = getMediaById(clip.mediaId);
     if(!item?.url) continue; // media not yet re-imported, skip
     await new Promise(resolve => {
       const v = document.createElement('video');
@@ -7235,7 +7279,7 @@ async function _regenerateFrameHolds(){
       // frame_hold sits at the end of the previous clip, so capture the last frame
       // of the source: use fileStart + dur of the preceding clip as approximate seek point
       const _prevClip = clip._sourceTime !== undefined ? null :
-                    S.cut.clips.find(c => c.type==='video' && c.mediaIdx===clip.mediaIdx && c.start < clip.start);
+                    S.cut.clips.find(c => c.type==='video' && c.mediaId===clip.mediaId && c.start < clip.start);
       const seekT = clip._sourceTime !== undefined ? clip._sourceTime :
                     (_prevClip ? ((_prevClip.fileStart||0) + _prevClip.dur) : 0);
       v.addEventListener('seeked', () => {
