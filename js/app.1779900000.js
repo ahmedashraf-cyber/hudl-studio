@@ -96,7 +96,7 @@ async function autoSave() {
         audioTracks: S.cut.audioTracks,
         overlays: (window._overlays || []).map(o => ({...o, _img: undefined, _imgData: undefined})),
         media: S.cut.media.map(m => ({
-          name: m.name, type: m.type,
+          name: m.name, mediaId: m.mediaId || null, type: m.type,
           duration: m.duration || 0,
           thumbnail: m.thumbnail || null
         }))
@@ -376,22 +376,39 @@ window.openProject = async function(id) {
     let restoredMedia = [];
     try {
       const storedFiles = await loadMediaFiles(id);
-      // Match stored files back to saved media metadata by name
       const savedMeta = cs.media || [];
+
+      // ── ID-FIRST restore: match by mediaId, fall back to name for legacy data ──
       restoredMedia = savedMeta.map(m => {
-        const stored = storedFiles.find(sf => sf.name === m.name);
+        // 1. Try exact mediaId match (new system — collision-free)
+        let stored = m.mediaId ? storedFiles.find(sf => sf.mediaId === m.mediaId) : null;
+        // 2. Fall back to name match for legacy projects that predate mediaId
+        if (!stored) stored = storedFiles.find(sf => sf.name === m.name);
         if (stored) {
-          // File found in IndexedDB — restore with fresh blob URL
           return { ...m, url: stored.url, file: stored.blob };
         } else {
-          // File not in IndexedDB (e.g. different device/browser) — keep metadata
           return { ...m, url: null };
         }
       });
-      // Also add any files in IndexedDB not in saved meta (edge case)
+
+      // Assign fresh mediaIds to any legacy items that don't have one yet (migration)
+      restoredMedia.forEach(m => {
+        if (!m.mediaId) {
+          m.mediaId = id + '_migr_' + Date.now() + '_' + Math.random().toString(36).slice(2,6);
+        }
+      });
+
+      // Add any orphaned IndexedDB files not in saved meta (edge case)
       storedFiles.forEach(sf => {
-        if (!restoredMedia.find(m => m.name === sf.name)) {
-          restoredMedia.push({ name: sf.name, type: sf.type.startsWith('video') ? 'video' : sf.type.startsWith('audio') ? 'audio' : 'image', url: sf.url, file: sf.blob, duration: 0, thumbnail: null });
+        const alreadyRestored = restoredMedia.some(m =>
+          (sf.mediaId && m.mediaId === sf.mediaId) || m.name === sf.name
+        );
+        if (!alreadyRestored) {
+          restoredMedia.push({
+            name: sf.name, mediaId: sf.mediaId || null,
+            type: sf.type.startsWith('video') ? 'video' : sf.type.startsWith('audio') ? 'audio' : 'image',
+            url: sf.url, file: sf.blob, duration: 0, thumbnail: null
+          });
         }
       });
     } catch(e) {
@@ -898,7 +915,7 @@ window.doSave = async function() {
         audioTracks: S.cut.audioTracks,
         overlays: (window._overlays || []).map(o => ({...o, _img: undefined, _imgData: undefined})),
         media: S.cut.media.map(m => ({
-          name: m.name, type: m.type,
+          name: m.name, mediaId: m.mediaId || null, type: m.type,
           duration: m.duration || 0,
           thumbnail: m.thumbnail || null
         }))
@@ -2586,7 +2603,9 @@ function handleCutFiles(files) {
     const isImg = f.type.startsWith('image/');
     if (!isVid&&!isAud&&!isImg) return;
     const url = URL.createObjectURL(f);
-    const item = { name:f.name, type:isVid?'video':isAud?'audio':'image', file:f, url, duration:isImg?5:0, thumbnail:null };
+    // Generate a unique mediaId so clips with identical names across projects never collide
+    const _mid = (S.currentProject?.id || 'local') + '_' + Date.now() + '_' + Math.random().toString(36).slice(2,7);
+    const item = { name:f.name, mediaId:_mid, type:isVid?'video':isAud?'audio':'image', file:f, url, duration:isImg?5:0, thumbnail:null };
     if (isVid) {
       const v = document.createElement('video'); v.src = url;
       v.onloadedmetadata = () => {
@@ -2621,7 +2640,7 @@ function handleCutFiles(files) {
     S.cut.media.push(item); added++;
     // Persist file bytes in IndexedDB so it survives page reload
     if (S.currentProject?.id) {
-      saveMediaFile(S.currentProject.id, f).catch(e => console.warn('MediaStore save failed:', e));
+      saveMediaFile(S.currentProject.id, f, item.mediaId).catch(e => console.warn('MediaStore save failed:', e));
     }
   });
   if (added) notify(added+' file'+(added>1?'s':'')+' imported','#3fb950');

@@ -47,14 +47,17 @@ function _openMediaDB() {
   });
 }
 
-async function saveMediaFile(projectId, file) {
-  // Store file as ArrayBuffer in IndexedDB keyed by projectId + filename
+async function saveMediaFile(projectId, file, mediaId) {
+  // mediaId is the unique identifier (projectId_timestamp_random).
+  // Falls back to projectId/filename for legacy compat if mediaId not supplied.
   const db  = await _openMediaDB();
   const buf = await file.arrayBuffer();
-  const key = projectId + '/' + file.name;
+  const key = mediaId
+    ? (projectId + '/__mid__' + mediaId)   // new ID-keyed record
+    : (projectId + '/' + file.name);        // legacy fallback
   await new Promise((res, rej) => {
     const tx = db.transaction(_IDB_STORE, 'readwrite');
-    tx.objectStore(_IDB_STORE).put({ key, name: file.name, type: file.type, buf });
+    tx.objectStore(_IDB_STORE).put({ key, name: file.name, mediaId: mediaId || null, type: file.type, buf });
     tx.oncomplete = res;
     tx.onerror    = e => rej(e.target.error);
   });
@@ -70,15 +73,19 @@ async function loadMediaFiles(projectId) {
     req.onerror   = e => rej(e.target.error);
   });
   db.close();
-  // Return only files for this project, with fresh blob URLs
+  // Return all files for this project (both new ID-keyed and legacy name-keyed)
   return files
-    .filter(f => f.key.startsWith(projectId + '/'))
-    .map(f => ({
-      name: f.name,
-      type: f.type,
-      url:  URL.createObjectURL(new Blob([f.buf], { type: f.type })),
-      blob: new Blob([f.buf], { type: f.type }),
-    }));
+    .filter(f => f.key.startsWith(projectId + '/') || f.key.startsWith(projectId + '/__mid__'))
+    .map(f => {
+      const blob = new Blob([f.buf], { type: f.type });
+      return {
+        name:    f.name,
+        mediaId: f.mediaId || null,   // new ID field (null for legacy records)
+        type:    f.type,
+        url:     URL.createObjectURL(blob),
+        blob,
+      };
+    });
 }
 
 async function deleteProjectMediaFiles(projectId) {
@@ -90,7 +97,10 @@ async function deleteProjectMediaFiles(projectId) {
     r.onsuccess = () => res(r.result);
     r.onerror   = e => rej(e.target.error);
   });
-  keys.filter(k => k.startsWith(projectId + '/')).forEach(k => store.delete(k));
+  // Delete both new ID-keyed AND legacy name-keyed records for this project
+  keys
+    .filter(k => k.startsWith(projectId + '/') || k.startsWith(projectId + '/__mid__'))
+    .forEach(k => store.delete(k));
   await new Promise((res, rej) => { tx.oncomplete = res; tx.onerror = e => rej(e.target.error); });
   db.close();
 }
