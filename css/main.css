@@ -1429,6 +1429,16 @@ html, body { width: 100%; height: 100%; overflow: hidden; font-family: 'DM Sans'
   border-bottom: 0.5px solid rgba(255,255,255,0.06);
   transition: background 0.1s;
 }
+.text-overlay-row{
+  background:rgba(255,200,50,0.04);
+  border-top:0.5px solid rgba(255,200,50,0.12);
+}
+.text-track-label{
+  background:rgba(255,200,50,0.06);
+  border-top:0.5px solid rgba(255,200,50,0.12);
+  display:flex;align-items:center;justify-content:center;
+}
+
 .clip-track-row.video-row { background: rgba(88,166,255,0.02); }
 .clip-track-row.audio-row { background: rgba(210,153,34,0.02); }
 .clip-track-row.drag-over { background: rgba(232,89,12,0.08) !important; }

@@ -3810,6 +3810,14 @@ function renderCutTimeline() {
       row.style.width = _tlW + 'px';
       if(ph) rows.insertBefore(row,ph); else rows.appendChild(row);
     }
+    // Text overlay track row (dedicated, always present, just below video rows)
+    const _textRow = document.createElement('div');
+    _textRow.id = 'tl-row-text';
+    _textRow.className = 'clip-track-row text-overlay-row';
+    _textRow.setAttribute('data-track','text');
+    _textRow.style.width = _tlW + 'px';
+    if(ph) rows.insertBefore(_textRow, ph); else rows.appendChild(_textRow);
+
     // Audio rows: ascending
     for(let a=1; a<=S.cut.audioTracks; a++){
       const t = S.cut.videoTracks+(a-1);
@@ -4453,6 +4461,16 @@ function rebuildTrackLabels(){
     d.addEventListener('contextmenu',e=>trackLabelContextMenu(e,trackIdx));
     labels.appendChild(d);
   }
+  // Text track label — dedicated row for text overlays
+  (()=>{
+    const d=document.createElement('div');
+    d.className='track-label text-track-label';
+    d.style.cssText='height:30px;min-height:30px;box-sizing:border-box;display:flex;align-items:center;justify-content:center;gap:4px;padding:0 6px;background:rgba(255,200,50,0.06);border-top:0.5px solid rgba(255,200,50,0.15);cursor:default';
+    d.innerHTML='<span style="font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:rgba(255,200,50,0.85)">T</span><span style="font-size:9px;color:rgba(255,200,50,0.5);overflow:hidden;text-overflow:ellipsis">Text</span>';
+    d.title='Text Overlay Track';
+    labels.appendChild(d);
+  })();
+
   for(let a=1; a<=S.cut.audioTracks; a++){
     const trackIdx=S.cut.videoTracks+(a-1);
     const d=document.createElement('div');
@@ -4495,6 +4513,16 @@ function rebuildTrackLabels(){
     row.style.cssText='height:30px;min-height:30px;box-sizing:border-box;width:'+_tlWidth+'px';
     if(phEl) rows.insertBefore(row,phEl); else rows.appendChild(row);
   }
+  // Text overlay track row — sits between video and audio rows
+  (()=>{
+    const row=document.createElement('div');
+    row.id='tl-row-text';
+    row.className='clip-track-row text-overlay-row';
+    row.setAttribute('data-track','text');
+    row.style.cssText='height:30px;min-height:30px;box-sizing:border-box;width:'+_tlWidth+'px;background:rgba(255,200,50,0.03);border-top:0.5px solid rgba(255,200,50,0.12)';
+    if(phEl) rows.insertBefore(row,phEl); else rows.appendChild(row);
+  })();
+
   // Audio rows in ascending order
   for(let a=1; a<=S.cut.audioTracks; a++){
     const t=S.cut.videoTracks+(a-1); // internal track index
@@ -5617,7 +5645,12 @@ function syncCutVid(){
 
   // Use plain video path for single video clip (with or without overlays)
   // mv shows the video; canvas draws overlays on top if any exist
-  const _hasActiveOverlaysNow = _masterList.some(e => e.kind === 'overlay');
+  // Recheck active overlays directly from _overlays (not _masterList which may be stale)
+  // This prevents race conditions where masterList was built before latest ph update
+  const _hasActiveOverlaysNow = (window._overlays||[]).some(o =>
+    ph >= o.startTime && ph < o.endTime &&
+    !(o.type==='freeze' && _playedFreezes && _playedFreezes.has(o.id))
+  );
   // Count just the clip entries (not overlays)
   const _clipEntries = _masterList.filter(e => e.kind === 'clip');
   const _onlyOneVideoClip = _clipEntries.length === 1 && _clipEntries[0].clip.type === 'video';

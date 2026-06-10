@@ -314,16 +314,26 @@ function showTextDialog(editId){
   const ph       = S.cut.ph;
 
   // Default overlay object (used as live preview state while dialog is open)
-  const draft = existing ? {...existing} : {
+  // Convert stored 0-1 coords → 0-100 for display
+  // Spec: x:50 y:50 = centered, x:0 y:0 = top-left, x:50 y:90 = bottom-center
+  const _toPercent = v => v !== undefined ? Math.round(v * 100) : undefined;
+  const draft = existing ? {
+    ...existing,
+    // Display as 0-100 percent in dialog
+    _xPct: _toPercent(existing.x) ?? 10,
+    _yPct: _toPercent(existing.y) ?? 82,
+    _bwPct: _toPercent(existing.bw) ?? 80,
+  } : {
     id: newOverlayId(), type: 'text',
     startTime: ph, endTime: ph + 3,
     text: '',
-    font: 'DM Sans', size: 48, weight: 'bold',
+    font: 'DM Sans', size: 48, bold: true,
     color: '#ffffff', bg: 'none',
     stroke: '#000000', strokeW: 0,
     effect: 'none', align: 'left',
     italic: false,
-    x: 0.10, y: 0.82, bw: 0.80,
+    x: 0.10, y: 0.82, bw: 0.80,   // stored as 0-1
+    _xPct: 10, _yPct: 82, _bwPct: 80, // display as 0-100
   };
 
   // ── Build modal HTML ─────────────────────────────────────────────
@@ -344,23 +354,23 @@ function showTextDialog(editId){
         <!-- Bounding box position controls -->
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
           <div>
-            <label class="modal-field-label">Box X (0-1)</label>
-            <input id="txt-bx" type="number" step="0.01" min="0" max="1"
-              value="${draft.x.toFixed(2)}" style="${inputStyle()}"
-              oninput="_txtDraft.x=parseFloat(this.value)||0;_txtRender()">
+            <label class="modal-field-label">X Position (%)</label>
+            <input id="txt-bx" type="number" step="1" min="0" max="100"
+              value="${draft._xPct}" placeholder="0–100" style="${inputStyle()}"
+              oninput="_txtDraft.x=(parseFloat(this.value)||0)/100;_txtRender()">
           </div>
           <div>
-            <label class="modal-field-label">Box Y (0-1)</label>
-            <input id="txt-by" type="number" step="0.01" min="0" max="1"
-              value="${draft.y.toFixed(2)}" style="${inputStyle()}"
-              oninput="_txtDraft.y=parseFloat(this.value)||0;_txtRender()">
+            <label class="modal-field-label">Y Position (%)</label>
+            <input id="txt-by" type="number" step="1" min="0" max="100"
+              value="${draft._yPct}" placeholder="0–100" style="${inputStyle()}"
+              oninput="_txtDraft.y=(parseFloat(this.value)||0)/100;_txtRender()">
           </div>
         </div>
         <div>
-          <label class="modal-field-label">Box Width (0-1)</label>
-          <input id="txt-bw" type="number" step="0.01" min="0.1" max="1"
-            value="${draft.bw.toFixed(2)}" style="${inputStyle()}"
-            oninput="_txtDraft.bw=parseFloat(this.value)||0.8;_txtRender()">
+          <label class="modal-field-label">Box Width (%)</label>
+          <input id="txt-bw" type="number" step="1" min="10" max="100"
+            value="${draft._bwPct}" placeholder="10–100" style="${inputStyle()}"
+            oninput="_txtDraft.bw=(parseFloat(this.value)||80)/100;_txtRender()">
         </div>
       </div>
 
@@ -507,7 +517,7 @@ Press Enter for a new line."
       type: 'text',
       startTime: start,
       endTime: end,
-      track: (window.S?.cut?.videoTracks || 2) - 1,
+      track: 'text',  // dedicated text track row
       _editing: false,
     };
     if (editId) {
@@ -1506,8 +1516,15 @@ function renderOverlayTimeline(){
   window._overlays.forEach(ov => {
     if(ov.track === undefined || ov.track === null) ov.track = 0;
     // Clamp only for DOM row display — do NOT mutate ov.track, preserve the real value
-    const displayTrack = Math.max(0, Math.min(_videoTracks - 1, ov.track));
-    const row = document.getElementById('tl-row-' + displayTrack);
+    // Text overlays go on dedicated text track; other overlays on their video track
+    let _rowId;
+    if(ov.type === 'text' || ov.track === 'text'){
+      _rowId = 'tl-row-text';
+    } else {
+      const displayTrack = Math.max(0, Math.min(_videoTracks - 1, ov.track || 0));
+      _rowId = 'tl-row-' + displayTrack;
+    }
+    const row = document.getElementById(_rowId);
     if(!row) return;
     // per-overlay block
     const color = OVERLAY_COLORS[ov.type] || 'rgba(128,128,128,0.7)';
