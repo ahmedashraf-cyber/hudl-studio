@@ -1416,7 +1416,7 @@ async function startExport(){
         if(fh._img?.complete){
           const ci=S.cut.clips.indexOf(fh),p=[];
           (S.cut.effects[ci]||[]).forEach(ef=>{if(ef.visible===false)return;const e=CUT_EFFECTS[ef.i];if(!e||e.type==='transition')return;const es=fh.start+(ef.startOffset||0),ee=es+(ef.effectDur??fh.dur);if(t<es||t>=ee)return;if(e.type==='range')p.push(e.prop+'('+ef.v+e.unit+')');else if(e.type==='toggle')p.push(e.filter);});
-          ctx.save();if(p.length)ctx.filter=p.join(' ');ctx.drawImage(fh._img,0,0,W,H);ctx.filter='none';ctx.restore();
+          ctx.save();if(p.length)ctx.filter=p.join(' ');ctx.globalAlpha=(fh.opacity!==undefined)?Math.max(0,Math.min(1,fh.opacity)):1;ctx.drawImage(fh._img,0,0,W,H);ctx.globalAlpha=1;ctx.filter='none';ctx.restore();
         }
         if(lastVid&&!lastVid.paused)lastVid.pause();
       } else {
@@ -1439,8 +1439,9 @@ async function startExport(){
             const ci2=S.cut.clips.indexOf(clip),vp=[];
             (S.cut.effects[ci2]||[]).forEach(ef=>{if(ef.visible===false)return;const e=CUT_EFFECTS[ef.i];if(!e||e.type==='transition')return;const es=clip.start+(ef.startOffset||0),ee=es+(ef.effectDur??clip.dur);if(t<es||t>=ee)return;if(e.type==='range')vp.push(e.prop+'('+ef.v+e.unit+')');else if(e.type==='toggle')vp.push(e.filter);});
             ctx.save();if(vp.length)ctx.filter=vp.join(' ');
+            ctx.globalAlpha=(clip.opacity!==undefined)?Math.max(0,Math.min(1,clip.opacity)):1;
             try{ctx.drawImage(vid,0,0,W,H);}catch(e){}
-            ctx.filter='none';ctx.restore();
+            ctx.globalAlpha=1;ctx.filter='none';ctx.restore();
           }
         } else {
           ctx.fillStyle='#000';ctx.fillRect(0,0,W,H);
@@ -2888,6 +2889,14 @@ function updatePropsPanel(ci){
       <div style="width:3px;height:18px;border-radius:2px;background:linear-gradient(180deg,#E8590C,#ff8c42)"></div>
       <span style="font-size:11px;font-weight:700;color:rgba(255,255,255,0.85)">${c.type==='video'?'Video Clip':c.type==='image'?'Image Clip':c.type==='audio'?'Audio Clip':'Clip'}</span>
       <span style="font-size:10px;color:rgba(255,255,255,0.25);flex:1;text-align:right;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${item.name||''}</span>
+    </div>
+
+    <div class="prop-row">
+      <span class="prop-label">Opacity</span>
+      <input type="range" id="op-val-${ci}" min="0" max="100" value="${Math.round((c.opacity !== undefined ? c.opacity : 1) * 100)}"
+        style="flex:1;accent-color:#E8590C"
+        oninput="S.cut.clips[${ci}].opacity=this.value/100;document.getElementById('op-pct-${ci}').textContent=this.value+'%';if(window.syncCutVid)syncCutVid();_applyPropToSelected('opacity',this.value/100,${ci})">
+      <span id="op-pct-${ci}" style="font-size:10px;color:var(--mu);min-width:32px;text-align:right">${Math.round((c.opacity !== undefined ? c.opacity : 1) * 100)}%</span>
     </div>
 
     ${(c.type==='video'||c.type==='image') ? `
@@ -5738,7 +5747,7 @@ function syncCutVid(){
       if(Math.abs(mv.currentTime - _t) > 0.02) mv.currentTime = _t;
       if(!mv.paused) mv.pause();
     }
-    mv.style.opacity = '1';
+    mv.style.opacity = String(_c.opacity !== undefined ? _c.opacity : 1);
     mv.style.display = 'block';
     const _fs = buildFilterStr(_ci);
     mv.style.filter = _fs !== 'none' ? _fs : '';
@@ -5840,8 +5849,10 @@ function syncCutVid(){
             ctx.save();
             const _fhF = buildFilterStr(ci);
             if(_fhF !== 'none') ctx.filter = _fhF;
+            ctx.globalAlpha = (c.opacity !== undefined) ? Math.max(0, Math.min(1, c.opacity)) : 1;
             ctx.drawImage(c._img, 0, 0, canvas.width, canvas.height);
             _anythingDrawn = true;
+            ctx.globalAlpha = 1;
             ctx.filter = 'none';
             ctx.restore();
           }
@@ -5922,6 +5933,7 @@ function syncCutVid(){
           ctx.save();
           if(flt3 !== 'none') ctx.filter = flt3;
           ctx.globalCompositeOperation = 'source-over';
+          ctx.globalAlpha = (c.opacity !== undefined) ? Math.max(0, Math.min(1, c.opacity)) : 1;
 
           if(!trW3){
             if(_drawFrame(vSrc, ctx, canvas.width, canvas.height)) _anythingDrawn = true;
