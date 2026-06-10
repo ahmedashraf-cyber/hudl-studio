@@ -1583,7 +1583,7 @@ const MENUS = {
       { l: '❄ Freeze Frame…', fn: () => window.showFreezeDialog() },
       { sep: true },
       { l: '⊞ Monitor Overlays…', fn: () => window.showMonitorOverlayPanel() },
-      { l: 'T  Add Text…', fn: () => window.showTextDialog() },
+      { l: 'T  Add Text…', fn: () => window.cutAddTextClip ? window.cutAddTextClip() : window.showTextDialog() },
       { l: '◆ Add Shape / Pattern…', fn: () => window.showShapeDialog() },
       { l: '🖼 Image / Background…', fn: () => window.showImageBgDialog() },
       { sep: true },
@@ -2534,7 +2534,7 @@ function buildTimelineHTML() {
   var sidebar = '<div class="tl-sidebar" id="tl-sidebar">'
     + '<div class="tl-sidebar-top">'
       + '<div class="vt-btn active" id="vt-select" data-tool="select" title="Select (V)" onclick="setCutTool(\'select\')"><svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><path d="M4 0l16 12-8 2-4 8L4 0z"/></svg></div>'
-      + '<div class="vt-btn" id="vt-text" data-tool="text" title="Text (T)" onclick="setCutTool(\'text\')"><svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><path d="M2 4h20v3h-8v13h-4V7H2z"/></svg></div>'
+      + '<div class="vt-btn" id="vt-text" data-tool="text" title="Text (T)" onclick="if(window.cutAddTextClip){cutAddTextClip();}else if(window.showTextDialog){showTextDialog();}setCutTool(\'select\')"><svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><path d="M2 4h20v3h-8v13h-4V7H2z"/></svg></div>'
       + '<div class="vt-btn vt-has-sub" id="vt-shape" data-tool="shape" title="Shape (R)" onclick="setCutTool(\'shape\')" oncontextmenu="showShapeSubmenu(event)" onmousedown="handleShapeMousedown(event)"><svg id="vt-shape-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/></svg><span class="vt-sub-arrow">▾</span></div>'
       + '<div class="vt-btn" id="vt-pen" data-tool="pen" title="Pen (P)" onclick="setCutTool(\'pen\')"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20h9M16.5 3.5a2.121 2.121 0 013 3L7 19l-4 1 1-4L16.5 3.5z"/></svg></div>'
       + '<div class="vt-btn" id="vt-split" data-tool="split" title="Blade (S)" onclick="setCutTool(\'split\')"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="8" y1="2" x2="8" y2="22"/><path d="M4 6l4 4-4 4"/></svg></div>'

@@ -309,263 +309,242 @@ const TEXT_EFFECTS = [
 ];
 
 
-function showTextDialog(editId){
-  const existing = editId ? window._overlays.find(o => o.id === editId) : null;
-  const ph       = S.cut.ph;
 
-  // Default overlay object (used as live preview state while dialog is open)
-  // Convert stored 0-1 coords → 0-100 for display
-  // Spec: x:50 y:50 = centered, x:0 y:0 = top-left, x:50 y:90 = bottom-center
-  const _toPercent = v => v !== undefined ? Math.round(v * 100) : undefined;
+function showTextDialog(editId){
+  const existing = editId ? (window._overlays||[]).find(o=>o.id===editId) : null;
+  const ph = window.S?.cut?.ph || 0;
+
+  // Spec: x,y in 0-100 percent, center-based
+  // Internal storage: also 0-100 (> 1) so renderTextOverlay detects it
   const draft = existing ? {
     ...existing,
-    // Display as 0-100 percent in dialog
-    _xPct: _toPercent(existing.x) ?? 10,
-    _yPct: _toPercent(existing.y) ?? 82,
-    _bwPct: _toPercent(existing.bw) ?? 80,
+    // Normalise stored values to display format (0-100)
+    _xPct: existing.x > 1 ? Math.round(existing.x) : Math.round((existing.x||0.5)*100),
+    _yPct: existing.y > 1 ? Math.round(existing.y) : Math.round((existing.y||0.85)*100),
+    _bwPct: existing.bw > 1 ? Math.round(existing.bw) : Math.round((existing.bw||0.80)*100),
   } : {
     id: newOverlayId(), type: 'text',
-    startTime: ph, endTime: ph + 3,
+    startTime: ph,
+    endTime: ph + 3,
     text: '',
-    font: 'DM Sans', size: 48, bold: true,
-    color: '#ffffff', bg: 'none',
-    stroke: '#000000', strokeW: 0,
-    effect: 'none', align: 'left',
+    font: 'DM Sans', fontFamily: 'DM Sans',
+    size: 32, fontSize: 32,
+    fontWeight: 'normal', bold: false,
     italic: false,
-    x: 0.10, y: 0.82, bw: 0.80,   // stored as 0-1
-    _xPct: 10, _yPct: 82, _bwPct: 80, // display as 0-100
+    color: '#ffffff',
+    opacity: 100,           // 0-100
+    bg: 'none', background: 'none',
+    borderRadius: 6,
+    shadow: 'none',
+    effect: 'none',
+    align: 'center',
+    stroke: '#000000', strokeW: 0,
+    // Spec: x:50 y:85 = bottom-center default
+    x: 50, y: 85, bw: 80,  // stored as 0-100
+    _xPct: 50, _yPct: 85, _bwPct: 80,
+    track: 'text',
   };
 
-  // ── Build modal HTML ─────────────────────────────────────────────
-  const inp = (id, val, attrs='') =>
-    `<input id="${id}" value="${String(val).replace(/"/g,'&quot;')}" ${attrs}
-      style="${inputStyle()}">`;
+  const inputStyle = () =>
+    'width:100%;background:#161616;border:0.5px solid rgba(255,255,255,0.1);border-radius:6px;color:#f0f2f5;font-size:11px;padding:5px 8px;outline:none;box-sizing:border-box';
+  const smallBtnStyle = () =>
+    'height:30px;padding:0 8px;background:rgba(255,255,255,0.04);border:0.5px solid rgba(255,255,255,0.1);border-radius:6px;color:#f0f2f5;font-size:10px;cursor:pointer';
 
   const modal = createModal('Text Overlay', `
-    <div style="display:flex;gap:14px;min-height:340px">
+    <div style="display:flex;gap:14px;min-height:320px">
 
-      <!-- LEFT: Mini canvas preview -->
-      <div style="flex:0 0 320px;display:flex;flex-direction:column;gap:8px">
-        <label class="modal-field-label">Live Preview</label>
+      <!-- LEFT: live preview -->
+      <div style="flex:0 0 300px;display:flex;flex-direction:column;gap:8px">
+        <label style="font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:rgba(255,255,255,.35)">Live Preview</label>
         <canvas id="txt-preview-cvs" width="640" height="360"
-          style="width:320px;height:180px;background:#111;border-radius:6px;
-                 border:0.5px solid rgba(255,255,255,0.10);display:block"></canvas>
-
-        <!-- Bounding box position controls -->
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+          style="width:300px;height:169px;background:#111;border-radius:6px;
+                 border:0.5px solid rgba(255,255,255,0.1);display:block"></canvas>
+        <!-- Position controls -->
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px">
           <div>
-            <label class="modal-field-label">X Position (%)</label>
-            <input id="txt-bx" type="number" step="1" min="0" max="100"
-              value="${draft._xPct}" placeholder="0–100" style="${inputStyle()}"
-              oninput="_txtDraft.x=(parseFloat(this.value)||0)/100;_txtRender()">
+            <label style="font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:rgba(255,255,255,.35);display:block;margin-bottom:3px">X% (center)</label>
+            <input id="txt-bx" type="number" step="1" min="0" max="100" value="${draft._xPct}"
+              style="${inputStyle()}"
+              oninput="_txtDraft.x=parseFloat(this.value)||50;_txtRender()">
           </div>
           <div>
-            <label class="modal-field-label">Y Position (%)</label>
-            <input id="txt-by" type="number" step="1" min="0" max="100"
-              value="${draft._yPct}" placeholder="0–100" style="${inputStyle()}"
-              oninput="_txtDraft.y=(parseFloat(this.value)||0)/100;_txtRender()">
+            <label style="font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:rgba(255,255,255,.35);display:block;margin-bottom:3px">Y% (center)</label>
+            <input id="txt-by" type="number" step="1" min="0" max="100" value="${draft._yPct}"
+              style="${inputStyle()}"
+              oninput="_txtDraft.y=parseFloat(this.value)||85;_txtRender()">
           </div>
         </div>
         <div>
-          <label class="modal-field-label">Box Width (%)</label>
-          <input id="txt-bw" type="number" step="1" min="10" max="100"
-            value="${draft._bwPct}" placeholder="10–100" style="${inputStyle()}"
-            oninput="_txtDraft.bw=(parseFloat(this.value)||80)/100;_txtRender()">
+          <label style="font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:rgba(255,255,255,.35);display:block;margin-bottom:3px">Box Width %</label>
+          <input id="txt-bw" type="number" step="1" min="10" max="100" value="${draft._bwPct}"
+            style="${inputStyle()}"
+            oninput="_txtDraft.bw=parseFloat(this.value)||80;_txtRender()">
         </div>
       </div>
 
-      <!-- RIGHT: Controls -->
-      <div style="flex:1;display:flex;flex-direction:column;gap:10px;overflow-y:auto;max-height:400px;padding-right:4px">
+      <!-- RIGHT: controls -->
+      <div style="flex:1;display:flex;flex-direction:column;gap:9px;overflow-y:auto;max-height:420px;padding-right:2px">
 
         <!-- Timing -->
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px">
           <div>
-            <label class="modal-field-label">Start (s)</label>
-            <div style="display:flex;gap:5px">
-              ${inp('txt-start', draft.startTime.toFixed(2), 'type="number" step="0.1"')}
-              <button onclick="document.getElementById('txt-start').value=S.cut.ph.toFixed(2)"
-                style="${smallBtnStyle()}">⏱</button>
+            <label style="font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:rgba(255,255,255,.35);display:block;margin-bottom:3px">Start (s)</label>
+            <div style="display:flex;gap:4px">
+              <input id="txt-start" type="number" step="0.1" value="${draft.startTime.toFixed(2)}" style="${inputStyle()}">
+              <button onclick="document.getElementById('txt-start').value=(window.S?.cut?.ph||0).toFixed(2)" style="${smallBtnStyle()}">⏱</button>
             </div>
           </div>
           <div>
-            <label class="modal-field-label">End (s)</label>
-            <div style="display:flex;gap:5px">
-              ${inp('txt-end', draft.endTime.toFixed(2), 'type="number" step="0.1"')}
-              <button onclick="document.getElementById('txt-end').value=S.cut.ph.toFixed(2)"
-                style="${smallBtnStyle()}">⏱</button>
-            </div>
+            <label style="font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:rgba(255,255,255,.35);display:block;margin-bottom:3px">Duration (s)</label>
+            <input id="txt-dur" type="number" step="0.1" min="0.1" value="${(draft.endTime-draft.startTime).toFixed(2)}" style="${inputStyle()}">
           </div>
         </div>
 
-        <!-- Text content — TEXTAREA with Enter support -->
+        <!-- Content -->
         <div>
-          <label class="modal-field-label">Text (Enter = new line)</label>
-          <textarea id="txt-content" rows="4"
-            placeholder="Type your text here…
-Press Enter for a new line."
+          <label style="font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:rgba(255,255,255,.35);display:block;margin-bottom:3px">Text (Enter = new line)</label>
+          <textarea id="txt-content" rows="4" placeholder="Type caption here…"
             style="${inputStyle()};resize:vertical;font-family:'DM Mono',monospace;line-height:1.5"
-            oninput="_txtDraft.text=this.value;_txtRender()"
-            >${draft.text}</textarea>
+            oninput="_txtDraft.text=this.value;_txtRender()">${draft.text||''}</textarea>
         </div>
 
-        <!-- Font + Size + Weight/Italic -->
-        <div style="display:grid;grid-template-columns:1fr 80px 40px 40px;gap:8px;align-items:end">
+        <!-- Font row -->
+        <div style="display:grid;grid-template-columns:1fr 64px 38px 38px;gap:6px;align-items:end">
           <div>
-            <label class="modal-field-label">Font</label>
-            <select id="txt-font" style="${inputStyle()}"
-              onchange="_txtDraft.font=this.value;_txtRender()">
-              ${['DM Sans','Arial','Georgia','Impact','Courier New','Times New Roman',
-                 'Verdana','Trebuchet MS'].map(f =>
-                `<option value="${f}"${draft.font===f?' selected':''}>${f}</option>`
+            <label style="font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:rgba(255,255,255,.35);display:block;margin-bottom:3px">Font</label>
+            <select id="txt-font" style="${inputStyle()}" onchange="_txtDraft.font=this.value;_txtDraft.fontFamily=this.value;_txtRender()">
+              ${['DM Sans','Arial','Georgia','Impact','Courier New','Times New Roman','Verdana','Trebuchet MS'].map(f=>
+                `<option value="${f}"${(draft.font||draft.fontFamily||'DM Sans')===f?' selected':''}>${f}</option>`
               ).join('')}
             </select>
           </div>
           <div>
-            <label class="modal-field-label">Size</label>
-            <input id="txt-size" type="number" min="10" max="300"
-              value="${draft.size}" style="${inputStyle()}"
-              oninput="_txtDraft.size=parseInt(this.value)||48;_txtRender()">
+            <label style="font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:rgba(255,255,255,.35);display:block;margin-bottom:3px">Size</label>
+            <input id="txt-size" type="number" min="10" max="300" value="${draft.size||draft.fontSize||32}"
+              style="${inputStyle()}" oninput="_txtDraft.size=parseInt(this.value)||32;_txtDraft.fontSize=_txtDraft.size;_txtRender()">
           </div>
-          <div>
-            <label class="modal-field-label">B</label>
-            <button id="txt-bold" onclick="_txtDraft.bold=!_txtDraft.bold;this.style.background=_txtDraft.bold?'rgba(232,89,12,0.25)':'rgba(255,255,255,0.04)';_txtRender()"
-              style="width:100%;height:36px;background:${draft.bold?'rgba(232,89,12,0.25)':'rgba(255,255,255,0.04)'};
-                     border:0.5px solid rgba(255,255,255,0.1);border-radius:6px;color:#fff;
-                     font-weight:bold;cursor:pointer;font-size:14px">B</button>
+          <div style="display:flex;flex-direction:column;gap:2px">
+            <label style="font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:rgba(255,255,255,.35)">B</label>
+            <button id="txt-bold" onclick="_txtDraft.bold=!_txtDraft.bold;_txtDraft.fontWeight=_txtDraft.bold?'bold':'normal';this.style.background=_txtDraft.bold?'rgba(232,89,12,0.25)':'rgba(255,255,255,0.04)';_txtRender()"
+              style="height:30px;background:${draft.bold?'rgba(232,89,12,0.25)':'rgba(255,255,255,0.04)'};border:0.5px solid rgba(255,255,255,0.1);border-radius:6px;color:#fff;font-weight:bold;cursor:pointer;font-size:13px">B</button>
           </div>
-          <div>
-            <label class="modal-field-label">I</label>
+          <div style="display:flex;flex-direction:column;gap:2px">
+            <label style="font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:rgba(255,255,255,.35)">I</label>
             <button id="txt-italic" onclick="_txtDraft.italic=!_txtDraft.italic;this.style.background=_txtDraft.italic?'rgba(232,89,12,0.25)':'rgba(255,255,255,0.04)';_txtRender()"
-              style="width:100%;height:36px;background:${draft.italic?'rgba(232,89,12,0.25)':'rgba(255,255,255,0.04)'};
-                     border:0.5px solid rgba(255,255,255,0.1);border-radius:6px;color:#fff;
-                     font-style:italic;cursor:pointer;font-size:14px">I</button>
+              style="height:30px;background:${draft.italic?'rgba(232,89,12,0.25)':'rgba(255,255,255,0.04)'};border:0.5px solid rgba(255,255,255,0.1);border-radius:6px;color:#fff;font-style:italic;cursor:pointer;font-size:13px">I</button>
           </div>
         </div>
 
-        <!-- Color + BG + Align -->
-        <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px">
+        <!-- Color + align + bg row -->
+        <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px">
           <div>
-            <label class="modal-field-label">Color</label>
-            <input id="txt-color" type="color" value="${draft.color}"
-              style="${inputStyle()};padding:4px;height:36px"
-              oninput="_txtDraft.color=this.value;_txtRender()">
+            <label style="font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:rgba(255,255,255,.35);display:block;margin-bottom:3px">Color</label>
+            <input id="txt-color" type="color" value="${draft.color||'#ffffff'}"
+              style="${inputStyle()};padding:2px;height:30px" oninput="_txtDraft.color=this.value;_txtRender()">
           </div>
           <div>
-            <label class="modal-field-label">Background</label>
-            <select id="txt-bg" style="${inputStyle()}"
-              onchange="_txtDraft.bg=this.value;_txtRender()">
-              ${['none','black','white','semi'].map(b=>
-                `<option value="${b}"${draft.bg===b?' selected':''}>${b}</option>`
-              ).join('')}
+            <label style="font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:rgba(255,255,255,.35);display:block;margin-bottom:3px">Align</label>
+            <select id="txt-align" style="${inputStyle()}" onchange="_txtDraft.align=this.value;_txtRender()">
+              ${['left','center','right'].map(a=>`<option value="${a}"${(draft.align||'center')===a?' selected':''}>${a}</option>`).join('')}
             </select>
           </div>
           <div>
-            <label class="modal-field-label">Align</label>
-            <select id="txt-align" style="${inputStyle()}"
-              onchange="_txtDraft.align=this.value;_txtRender()">
-              ${['left','center','right'].map(a=>
-                `<option value="${a}"${(draft.align||'left')===a?' selected':''}>${a}</option>`
-              ).join('')}
+            <label style="font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:rgba(255,255,255,.35);display:block;margin-bottom:3px">Background</label>
+            <select id="txt-bg" style="${inputStyle()}" onchange="_txtDraft.bg=this.value;_txtDraft.background=this.value;_txtRender()">
+              ${['none','black','white','semi'].map(b=>`<option value="${b}"${(draft.bg||draft.background||'none')===b?' selected':''}>${b}</option>`).join('')}
             </select>
           </div>
         </div>
 
-        <!-- Stroke -->
-        <div style="display:grid;grid-template-columns:60px 1fr;gap:8px">
+        <!-- Opacity + borderRadius row -->
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px">
           <div>
-            <label class="modal-field-label">Stroke</label>
-            <input id="txt-stroke" type="color" value="${draft.stroke||'#000000'}"
-              style="${inputStyle()};padding:4px;height:36px"
-              oninput="_txtDraft.stroke=this.value;_txtRender()">
+            <label style="font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:rgba(255,255,255,.35);display:block;margin-bottom:3px">Opacity <span id="txt-op-pct">${draft.opacity||100}%</span></label>
+            <input type="range" id="txt-op" min="0" max="100" value="${draft.opacity!==undefined?draft.opacity:100}"
+              style="width:100%;accent-color:#E8590C"
+              oninput="_txtDraft.opacity=parseInt(this.value);document.getElementById('txt-op-pct').textContent=this.value+'%';_txtRender()">
           </div>
           <div>
-            <label class="modal-field-label">Stroke Width</label>
-            <input id="txt-strokew" type="number" min="0" max="20"
-              value="${draft.strokeW||0}" style="${inputStyle()}"
-              oninput="_txtDraft.strokeW=parseInt(this.value)||0;_txtRender()">
+            <label style="font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:rgba(255,255,255,.35);display:block;margin-bottom:3px">Border Radius</label>
+            <input id="txt-br" type="number" min="0" max="40" value="${draft.borderRadius||6}" style="${inputStyle()}"
+              oninput="_txtDraft.borderRadius=parseInt(this.value)||0;_txtRender()">
           </div>
+        </div>
+
+        <!-- Shadow -->
+        <div>
+          <label style="font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:rgba(255,255,255,.35);display:block;margin-bottom:3px">Shadow</label>
+          <select id="txt-shadow" style="${inputStyle()}" onchange="_txtDraft.shadow=this.value==='on'?{color:'rgba(0,0,0,0.8)',blur:4,x:1,y:1}:'none';_txtRender()">
+            <option value="off" ${!draft.shadow||draft.shadow==='none'?'selected':''}>None</option>
+            <option value="on"  ${draft.shadow&&draft.shadow!=='none'?'selected':''}>Drop Shadow</option>
+          </select>
         </div>
 
         <!-- Animation -->
         <div>
-          <label class="modal-field-label">Animation</label>
-          <select id="txt-effect" style="${inputStyle()}"
-            onchange="_txtDraft.effect=this.value;_txtRender()">
-            ${[
-              {id:'none',l:'None'},{id:'fadein',l:'Fade In'},{id:'fadeout',l:'Fade Out'},
-              {id:'slideup',l:'Slide Up'},{id:'slidedown',l:'Slide Down'},
-              {id:'slideleft',l:'Slide Left'},{id:'slideright',l:'Slide Right'},
-              {id:'zoom',l:'Zoom In'},{id:'bounce',l:'Bounce'},
-              {id:'typewriter',l:'Typewriter'},{id:'wordbyw',l:'Word by Word'},
-              {id:'handwrite',l:'Handwrite'},{id:'glitch',l:'Glitch'},
-            ].map(e=>`<option value="${e.id}"${draft.effect===e.id?' selected':''}>${e.l}</option>`).join('')}
+          <label style="font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:rgba(255,255,255,.35);display:block;margin-bottom:3px">Animation</label>
+          <select id="txt-effect" style="${inputStyle()}" onchange="_txtDraft.effect=this.value;_txtRender()">
+            ${[{id:'none',l:'None'},{id:'fadein',l:'Fade In'},{id:'fadeout',l:'Fade Out'},
+               {id:'slideup',l:'Slide Up'},{id:'slidedown',l:'Slide Down'},
+               {id:'slideleft',l:'Slide Left'},{id:'slideright',l:'Slide Right'},
+               {id:'zoom',l:'Zoom In'},{id:'typewriter',l:'Typewriter'},
+            ].map(e=>`<option value="${e.id}"${(draft.effect||'none')===e.id?' selected':''}>${e.l}</option>`).join('')}
           </select>
         </div>
 
       </div>
     </div>
   `, () => {
-    // ── Confirm: read from draft object (already in sync via oninput) ──
     const start = parseFloat(document.getElementById('txt-start').value);
-    const end   = parseFloat(document.getElementById('txt-end').value);
-    if (!_txtDraft.text.trim() || isNaN(start) || isNaN(end) || end <= start) {
-      notify('Fill all fields correctly', '#E31837'); return;
+    const dur   = parseFloat(document.getElementById('txt-dur').value);
+    if(!_txtDraft || isNaN(start) || isNaN(dur) || dur <= 0){
+      if(window.notify) notify('Fill timing fields','#E31837'); return;
     }
     const ov = {
       ..._txtDraft,
       id: editId || _txtDraft.id,
       type: 'text',
       startTime: start,
-      endTime: end,
-      track: 'text',  // dedicated text track row
+      endTime: start + dur,
+      track: 'text',
       _editing: false,
     };
-    if (editId) {
-      if (window.cutSaveHistory) cutSaveHistory('edit_overlay');
-      const i = window._overlays.findIndex(o => o.id === editId);
-      if (i >= 0) window._overlays[i] = ov;
+    if(editId){
+      if(window.cutSaveHistory) cutSaveHistory('edit_overlay');
+      const i = (window._overlays||[]).findIndex(o=>o.id===editId);
+      if(i>=0) window._overlays[i] = ov;
     } else {
-      if (window.cutSaveHistory) cutSaveHistory('add_overlay');
+      if(window.cutSaveHistory) cutSaveHistory('add_overlay');
+      if(!window._overlays) window._overlays = [];
       window._overlays.push(ov);
     }
     window._txtDraft = null;
-    notify('Text overlay ' + (editId ? 'updated' : 'added'), '#3fb950');
+    if(window.notify) notify('Text overlay '+(editId?'updated':'added'),'#3fb950');
     closeModal();
-    renderOverlayTimeline();
-    if (window.syncCutVid) syncCutVid();
+    if(window.renderOverlayTimeline) renderOverlayTimeline();
+    if(window.syncCutVid) syncCutVid();
   });
 
-  // ── Live preview renderer ────────────────────────────────────────
   window._txtDraft = draft;
   window._txtRender = function(){
     const cvs = document.getElementById('txt-preview-cvs');
-    if (!cvs) return;
+    if(!cvs) return;
     const ctx = cvs.getContext('2d');
-    const W = 640, H = 360;
-    ctx.clearRect(0, 0, W, H);
-
-    // Draw fake video background (dark gradient to suggest video)
-    const grad = ctx.createLinearGradient(0, 0, 0, H);
-    grad.addColorStop(0, '#1a2233');
-    grad.addColorStop(1, '#0a0f18');
-    ctx.fillStyle = grad;
-    ctx.fillRect(0, 0, W, H);
-
-    // Draw the text overlay using the same production renderer
-    renderTextOverlay(ctx, W, H, {...window._txtDraft, _editing: true}, 0.5);
+    ctx.clearRect(0,0,640,360);
+    const grad = ctx.createLinearGradient(0,0,0,360);
+    grad.addColorStop(0,'#1a2233'); grad.addColorStop(1,'#0a0f18');
+    ctx.fillStyle = grad; ctx.fillRect(0,0,640,360);
+    renderTextOverlay(ctx, 640, 360, {...window._txtDraft, _editing:true}, 0.5);
   };
 
-  // Start the live preview after modal DOM is ready
-  setTimeout(() => {
+  setTimeout(()=>{
     window._txtRender();
-    // Focus the textarea and put cursor at end
     const ta = document.getElementById('txt-content');
-    if (ta) { ta.focus(); ta.setSelectionRange(ta.value.length, ta.value.length); }
+    if(ta){ ta.focus(); ta.setSelectionRange(ta.value.length,ta.value.length); }
   }, 80);
 }
 
 
-// ── FEATURE 3: IMAGE / BACKGROUND REPLACEMENT ──
 function showImageBgDialog(){
   const ph = S.cut.ph;
   const modal = createModal('Image / Background Overlay', `
@@ -1182,133 +1161,129 @@ window.renderSingleOverlayOnCanvas = renderSingleOverlayOnCanvas;
 const _textRenderCache = new Map();
 
 function renderTextOverlay(ctx, W, H, ov, progress){
-  // ── 1. Font setup ────────────────────────────────────────────────
-  const size    = ov.size || ov.fontSize || 48;
-  const font    = ov.font || 'DM Sans';
-  const weight  = ov.bold  ? 'bold'   : 'normal';
-  const fStyle  = ov.italic? 'italic' : 'normal';
-  ctx.font = `${fStyle} ${weight} ${size}px "${font}", sans-serif`;
+  // ── Font ───────────────────────────────────────────────────────
+  const size    = ov.size || ov.fontSize || 32;
+  const family  = ov.font || ov.fontFamily || 'DM Sans';
+  const weight  = ov.bold || ov.fontWeight==='bold' ? 'bold' : (ov.fontWeight || 'normal');
+  const fStyle  = ov.italic ? 'italic' : 'normal';
+  ctx.font = `${fStyle} ${weight} ${size}px "${family}", sans-serif`;
   ctx.textBaseline = 'top';
 
-  // ── 2. Bounding Box position ─────────────────────────────────────
-  // ov.x, ov.y  = normalised anchor (0-1) — top-left corner of the box
-  // ov.bw       = normalised box width  (0-1), default 0.80 × canvas
-  // ov.bh is computed from content, not stored
-  const BOX_PAD   = 16;                        // px inside the box
-  const LINE_H    = size * 1.35;               // line height
-  const MAX_BW    = (ov.bw !== undefined ? ov.bw : 0.80) * W;  // max text width
-  const AX        = (ov.x  !== undefined ? ov.x  : 0.10) * W;  // box left edge
-  const AY        = (ov.y  !== undefined ? ov.y  : 0.82) * H;  // box top edge
+  // ── Bounding box — spec: x,y = 0-100 percent, CENTER-based ───
+  // Stored as 0-1 (internal) OR 0-100 (spec); handle both
+  const _xRaw = ov.x !== undefined ? ov.x : 0.5;
+  const _yRaw = ov.y !== undefined ? ov.y : 0.85;
+  // Detect if stored as 0-100 percent (> 1) or 0-1 normalized
+  const AX = (_xRaw > 1 ? _xRaw / 100 : _xRaw) * W;  // center X in pixels
+  const AY = (_yRaw > 1 ? _yRaw / 100 : _yRaw) * H;  // center Y in pixels
 
-  // ── 3. Word-wrap engine ──────────────────────────────────────────
-  // Split on explicit \n first, then word-wrap each paragraph
-  const rawLines  = (ov.text || '').split('\n');
+  const _bwRaw = ov.bw !== undefined ? ov.bw : 0.80;
+  const MAX_BW  = (_bwRaw > 1 ? _bwRaw / 100 : _bwRaw) * W;
+  const BOX_PAD = 14;
+  const LINE_H  = size * 1.35;
+
+  // ── Word-wrap ─────────────────────────────────────────────────
+  const rawLines = (ov.text || '').split('\n');
   const wrappedLines = [];
-
-  rawLines.forEach(paragraph => {
-    if (paragraph === '') { wrappedLines.push(''); return; }
-    const words   = paragraph.split(' ');
-    let current   = '';
+  rawLines.forEach(para => {
+    if(!para){ wrappedLines.push(''); return; }
+    const words = para.split(' ');
+    let cur = '';
     words.forEach(word => {
-      const test  = current ? current + ' ' + word : word;
-      const tw    = ctx.measureText(test).width;
-      if (tw > MAX_BW - BOX_PAD * 2 && current !== '') {
-        wrappedLines.push(current);
-        current = word;
-      } else {
-        current = test;
-      }
+      const test = cur ? cur + ' ' + word : word;
+      if(ctx.measureText(test).width > MAX_BW - BOX_PAD*2 && cur !== ''){
+        wrappedLines.push(cur); cur = word;
+      } else { cur = test; }
     });
-    if (current) wrappedLines.push(current);
+    if(cur) wrappedLines.push(cur);
   });
 
-  const totalH    = wrappedLines.length * LINE_H;
-  const boxW      = MAX_BW;
-  const boxH      = totalH + BOX_PAD * 2;
+  const totalH = wrappedLines.length * LINE_H;
+  const boxW   = MAX_BW;
+  const boxH   = totalH + BOX_PAD * 2;
 
-  // ── 4. Animation ─────────────────────────────────────────────────
-  let alpha = 1, offX = 0, offY = 0, scale = 1;
+  // ── Animation ─────────────────────────────────────────────────
+  let anim_alpha = 1, offX = 0, offY = 0, scale = 1;
   const e = ov.effect || 'none';
-  const p = progress;
-  if      (e === 'fadein')    { alpha  = Math.min(1, p * 3); }
-  else if (e === 'fadeout')   { alpha  = Math.max(0, 1 - p * 3); }
-  else if (e === 'slideup')   { offY   = (1 - Math.min(1, p * 2)) * 80; alpha = Math.min(1, p * 3); }
-  else if (e === 'slidedown') { offY   = -(1 - Math.min(1, p * 2)) * 80; alpha = Math.min(1, p * 3); }
-  else if (e === 'slideleft') { offX   = (1 - Math.min(1, p * 2)) * 120; alpha = Math.min(1, p * 3); }
-  else if (e === 'slideright'){ offX   = -(1 - Math.min(1, p * 2)) * 120; alpha = Math.min(1, p * 3); }
-  else if (e === 'zoom')      { scale  = 0.3 + Math.min(1, p * 2) * 0.7; alpha = Math.min(1, p * 2); }
-  else if (e === 'bounce')    { offY   = -Math.abs(Math.sin(p * Math.PI * 4)) * 20; }
-  else if (e === 'glitch')    { offX   = (Math.random() - .5) * 8 * (1 - p); offY = (Math.random() - .5) * 4 * (1 - p); }
-
-  // Typewriter / word-by-word / handwrite overrides
-  let displayLines = [...wrappedLines];
-  if (e === 'typewriter') {
-    const total   = (ov.text || '').length;
-    const shown   = Math.floor(total * Math.min(1, p * 1.5));
-    displayLines  = (ov.text || '').substring(0, shown).split('\n');
-    // Re-wrap the truncated text
-    const rw = [];
-    displayLines.forEach(para => {
-      if (!para) { rw.push(''); return; }
-      const ws = para.split(' '); let cur = '';
-      ws.forEach(w => {
-        const t = cur ? cur + ' ' + w : w;
-        if (ctx.measureText(t).width > MAX_BW - BOX_PAD * 2 && cur) { rw.push(cur); cur = w; }
-        else cur = t;
-      });
-      if (cur) rw.push(cur);
+  const p = progress || 0;
+  if(e==='fadein')     { anim_alpha = Math.min(1, p*3); }
+  else if(e==='fadeout'){ anim_alpha = Math.max(0, 1-p*3); }
+  else if(e==='slideup'){ offY = (1-Math.min(1,p*2))*80; anim_alpha = Math.min(1,p*3); }
+  else if(e==='slidedown'){ offY = -(1-Math.min(1,p*2))*80; anim_alpha = Math.min(1,p*3); }
+  else if(e==='slideleft'){ offX = (1-Math.min(1,p*2))*120; anim_alpha = Math.min(1,p*3); }
+  else if(e==='slideright'){ offX = -(1-Math.min(1,p*2))*120; anim_alpha = Math.min(1,p*3); }
+  else if(e==='zoom')  { scale = 0.3+Math.min(1,p*2)*0.7; anim_alpha = Math.min(1,p*2); }
+  else if(e==='typewriter'){
+    const total = (ov.text||'').length;
+    const shown = Math.floor(total * Math.min(1, p*1.5));
+    wrappedLines.length = 0;
+    (ov.text||'').substring(0,shown).split('\n').forEach(para => {
+      if(!para){ wrappedLines.push(''); return; }
+      const ws = para.split(' '); let cur='';
+      ws.forEach(w=>{ const t=cur?cur+' '+w:w; if(ctx.measureText(t).width>MAX_BW-BOX_PAD*2&&cur){wrappedLines.push(cur);cur=w;}else cur=t; });
+      if(cur)wrappedLines.push(cur);
     });
-    displayLines = rw;
-  } else if (e === 'wordbyw') {
-    const allWords  = (ov.text || '').split(' ');
-    const count     = Math.ceil(allWords.length * Math.min(1, p * 1.5));
-    displayLines    = allWords.slice(0, count).join(' ').split('\n');
-  } else if (e === 'handwrite') {
-    const total   = (ov.text || '').length;
-    const shown   = Math.floor(total * Math.min(1, p * 1.2));
-    const raw     = (ov.text || '').substring(0, shown) + '|';
-    displayLines  = raw.split('\n');
-    ctx.font      = `italic bold ${size}px "Courier New", monospace`;
   }
 
-  // ── 5. Draw ──────────────────────────────────────────────────────
+  // ── Clip opacity (from clip.opacity field, 0-100 or 0-1) ──────
+  const _opRaw  = ov.opacity !== undefined ? ov.opacity : 100;
+  const clipAlpha = (_opRaw > 1 ? _opRaw/100 : _opRaw);
+  const totalAlpha = anim_alpha * clipAlpha;
+
+  // ── Draw ──────────────────────────────────────────────────────
   ctx.save();
-  ctx.globalAlpha = alpha;
-  ctx.translate(AX + offX, AY + offY);
-  if (scale !== 1) ctx.scale(scale, scale);
+  ctx.globalAlpha = totalAlpha;
+  // Apply translate(-50%,-50%) so x,y is the CENTER of the text box
+  ctx.translate(AX + offX - boxW/2, AY + offY - boxH/2);
+  if(scale !== 1) ctx.scale(scale, scale);
 
   // Background
-  if      (ov.bg === 'black') { ctx.fillStyle = 'rgba(0,0,0,0.85)';    ctx.fillRect(0, 0, boxW, boxH); }
-  else if (ov.bg === 'white') { ctx.fillStyle = 'rgba(255,255,255,0.9)'; ctx.fillRect(0, 0, boxW, boxH); }
-  else if (ov.bg === 'semi')  { ctx.fillStyle = 'rgba(0,0,0,0.50)';     ctx.fillRect(0, 0, boxW, boxH); }
-
-  // Active-edit bounding box indicator (dashed, only in preview not export)
-  if (ov._editing) {
-    ctx.save();
-    ctx.strokeStyle = 'rgba(88,166,255,0.8)';
-    ctx.lineWidth   = 1.5;
-    ctx.setLineDash([6, 4]);
-    ctx.strokeRect(-2, -2, boxW + 4, boxH + 4);
-    ctx.setLineDash([]);
-    ctx.restore();
+  const bg = ov.bg || ov.background;
+  if(bg && bg !== 'none'){
+    const br = ov.borderRadius || 6;
+    if(bg==='black')       ctx.fillStyle='rgba(0,0,0,0.82)';
+    else if(bg==='white')  ctx.fillStyle='rgba(255,255,255,0.88)';
+    else if(bg==='semi')   ctx.fillStyle='rgba(0,0,0,0.52)';
+    else                   ctx.fillStyle = bg;
+    ctx.beginPath();
+    if(ctx.roundRect) ctx.roundRect(0, 0, boxW, boxH, br);
+    else ctx.rect(0, 0, boxW, boxH);
+    ctx.fill();
   }
 
-  // Lines
-  const textAlign = ov.align || 'left';
-  ctx.textAlign   = textAlign;
-  const textX = textAlign === 'center' ? boxW / 2
-              : textAlign === 'right'  ? boxW - BOX_PAD
-              : BOX_PAD;
+  // Selection outline (only in live preview during edit)
+  if(ov._editing){
+    ctx.save();
+    ctx.strokeStyle='rgba(88,166,255,0.85)';
+    ctx.lineWidth=1.5; ctx.setLineDash([5,4]);
+    ctx.strokeRect(-2,-2,boxW+4,boxH+4);
+    ctx.setLineDash([]); ctx.restore();
+  }
 
-  displayLines.forEach((line, i) => {
+  // Text lines
+  const textAlign = ov.align || 'center';
+  ctx.textAlign   = textAlign;
+  const textX = textAlign==='center' ? boxW/2 : textAlign==='right' ? boxW-BOX_PAD : BOX_PAD;
+
+  wrappedLines.forEach((line, i) => {
     const lineY = BOX_PAD + i * LINE_H;
-    if (ov.strokeW > 0) {
-      ctx.strokeStyle = ov.stroke   || '#000';
-      ctx.lineWidth   = ov.strokeW  || 2;
+    // Shadow
+    const sh = ov.shadow;
+    if(sh && sh !== 'none'){
+      ctx.shadowColor   = sh.color || 'rgba(0,0,0,0.8)';
+      ctx.shadowBlur    = sh.blur  !== undefined ? sh.blur : 4;
+      ctx.shadowOffsetX = sh.x     !== undefined ? sh.x   : 1;
+      ctx.shadowOffsetY = sh.y     !== undefined ? sh.y   : 1;
+    }
+    // Stroke
+    if(ov.strokeW > 0){
+      ctx.strokeStyle = ov.stroke || '#000';
+      ctx.lineWidth   = ov.strokeW;
       ctx.strokeText(line, textX, lineY);
     }
     ctx.fillStyle = ov.color || '#fff';
     ctx.fillText(line, textX, lineY);
+    ctx.shadowColor='transparent'; ctx.shadowBlur=0; ctx.shadowOffsetX=0; ctx.shadowOffsetY=0;
   });
 
   ctx.restore();
@@ -1842,9 +1817,23 @@ window.updateOverlayProps = function(id){
         >${(ov.text||'').replace(/`/g,'\`')}</textarea>
     </div>
     <div class="prop-row">
+      <span class="prop-label">Font</span>
+      <select style="flex:1;background:#161616;border:0.5px solid rgba(255,255,255,0.1);border-radius:5px;color:var(--tx);font-size:11px;padding:2px 4px;outline:none"
+        onchange="const o=window._overlays.find(o=>o.id==='${ov.id}');if(o){o.font=this.value;o.fontFamily=this.value;}if(window.syncCutVid)syncCutVid();">
+        ${['DM Sans','Arial','Georgia','Impact','Courier New','Times New Roman','Verdana'].map(f=>`<option value="${f}" ${(ov.font||ov.fontFamily||'DM Sans')===f?'selected':''}>${f}</option>`).join('')}
+      </select>
+    </div>
+    <div class="prop-row">
       <span class="prop-label">Size</span>
-      ${inp('op-fs', ov.size||ov.fontSize||48, 1,
-        `const o=window._overlays.find(o=>o.id==='${ov.id}');if(o)o.size=parseInt(this.value);if(window.syncCutVid)syncCutVid();`)}
+      ${inp('op-fs', ov.size||ov.fontSize||32, 1,
+        `const o=window._overlays.find(o=>o.id==='${ov.id}');if(o){o.size=parseInt(this.value);o.fontSize=o.size;}if(window.syncCutVid)syncCutVid();`)}
+    </div>
+    <div class="prop-row">
+      <span class="prop-label">Weight</span>
+      <select style="flex:1;background:#161616;border:0.5px solid rgba(255,255,255,0.1);border-radius:5px;color:var(--tx);font-size:11px;padding:2px 4px;outline:none"
+        onchange="const o=window._overlays.find(o=>o.id==='${ov.id}');if(o){o.fontWeight=this.value;o.bold=this.value==='bold';}if(window.syncCutVid)syncCutVid();">
+        ${['normal','bold'].map(w=>`<option value="${w}" ${(ov.fontWeight||'normal')===w?'selected':''}>${w}</option>`).join('')}
+      </select>
     </div>
     <div class="prop-row">
       <span class="prop-label">Color</span>
@@ -1856,8 +1845,40 @@ window.updateOverlayProps = function(id){
       <span class="prop-label">Align</span>
       <select style="flex:1;background:#161616;border:0.5px solid rgba(255,255,255,0.1);border-radius:5px;color:var(--tx);font-size:11px;padding:2px 4px;outline:none"
         onchange="const o=window._overlays.find(o=>o.id==='${ov.id}');if(o)o.align=this.value;if(window.syncCutVid)syncCutVid();">
-        ${['left','center','right'].map(a=>`<option value="${a}" ${(ov.align||'left')===a?'selected':''}>${a}</option>`).join('')}
+        ${['left','center','right'].map(a=>`<option value="${a}" ${(ov.align||'center')===a?'selected':''}>${a}</option>`).join('')}
       </select>
+    </div>
+    <div class="prop-row">
+      <span class="prop-label">Opacity</span>
+      <input type="range" min="0" max="100" value="${ov.opacity!==undefined?ov.opacity:100}"
+        style="flex:1;accent-color:#E8590C"
+        oninput="const o=window._overlays.find(o=>o.id==='${ov.id}');if(o)o.opacity=parseInt(this.value);document.getElementById('op-txt-pct-${ov.id}').textContent=this.value+'%';if(window.syncCutVid)syncCutVid();">
+      <span id="op-txt-pct-${ov.id}" style="font-size:10px;color:var(--mu);min-width:30px;text-align:right">${ov.opacity!==undefined?ov.opacity:100}%</span>
+    </div>
+    <div class="prop-row">
+      <span class="prop-label">Background</span>
+      <select style="flex:1;background:#161616;border:0.5px solid rgba(255,255,255,0.1);border-radius:5px;color:var(--tx);font-size:11px;padding:2px 4px;outline:none"
+        onchange="const o=window._overlays.find(o=>o.id==='${ov.id}');if(o){o.bg=this.value;o.background=this.value;}if(window.syncCutVid)syncCutVid();">
+        ${['none','black','white','semi'].map(b=>`<option value="${b}" ${(ov.bg||ov.background||'none')===b?'selected':''}>${b}</option>`).join('')}
+      </select>
+    </div>
+    <div class="prop-row">
+      <span class="prop-label">Shadow</span>
+      <select style="flex:1;background:#161616;border:0.5px solid rgba(255,255,255,0.1);border-radius:5px;color:var(--tx);font-size:11px;padding:2px 4px;outline:none"
+        onchange="const o=window._overlays.find(o=>o.id==='${ov.id}');if(o)o.shadow=this.value==='on'?{color:'rgba(0,0,0,0.8)',blur:4,x:1,y:1}:'none';if(window.syncCutVid)syncCutVid();">
+        <option value="off" ${!ov.shadow||ov.shadow==='none'?'selected':''}>None</option>
+        <option value="on"  ${ov.shadow&&ov.shadow!=='none'?'selected':''}>Drop Shadow</option>
+      </select>
+    </div>
+    <div class="prop-row">
+      <span class="prop-label">X%</span>
+      ${inp('op-tx', ov.x>1?Math.round(ov.x):Math.round((ov.x||0.5)*100), 1,
+        `const o=window._overlays.find(o=>o.id==='${ov.id}');if(o)o.x=parseFloat(this.value);if(window.syncCutVid)syncCutVid();`)}
+    </div>
+    <div class="prop-row">
+      <span class="prop-label">Y%</span>
+      ${inp('op-ty', ov.y>1?Math.round(ov.y):Math.round((ov.y||0.85)*100), 1,
+        `const o=window._overlays.find(o=>o.id==='${ov.id}');if(o)o.y=parseFloat(this.value);if(window.syncCutVid)syncCutVid();`)}
     </div>` : '';
 
   body.innerHTML = `
@@ -2421,7 +2442,47 @@ window.showImageBgEditDialog=showImageBgEditDialog;
 window.showOverlayHandles=showOverlayHandles;
 window.setupVideoDragForOverlay=setupVideoDragForOverlay;
 window.removeOverlayHandles=removeOverlayHandles;
+
 window.showTextDialog=showTextDialog;
+
+// ── cutAddTextClip: create text at playhead with spec defaults ───────
+// Called from toolbar T button. Immediately creates + selects the clip.
+function cutAddTextClip(){
+  const ph = window.S?.cut?.ph || 0;
+  const uuid = 'ov_tx_' + Date.now() + '_' + Math.random().toString(36).slice(2,6);
+  const ov = {
+    id: uuid,
+    type: 'text',
+    startTime: ph,
+    endTime: ph + 3,
+    track: 'text',
+    text: 'Caption',
+    font: 'DM Sans', fontFamily: 'DM Sans',
+    size: 32, fontSize: 32,
+    fontWeight: 'normal', bold: false, italic: false,
+    color: '#ffffff',
+    opacity: 100,
+    bg: 'none', background: 'none',
+    borderRadius: 6,
+    shadow: 'none',
+    effect: 'none',
+    align: 'center',
+    // Spec default: x:50 y:85 = bottom-center
+    x: 50, y: 85, bw: 80,
+    strokeW: 0,
+  };
+  if(!window._overlays) window._overlays = [];
+  window._overlays.push(ov);
+  if(window.cutSaveHistory) cutSaveHistory('add_text');
+  if(window.renderOverlayTimeline) renderOverlayTimeline();
+  if(window.syncCutVid) syncCutVid();
+  // Select and show properties
+  if(window.setActiveEditId) setActiveEditId(ov.id);
+  if(window.updateOverlayProps) updateOverlayProps(ov.id);
+  if(window.notify) notify('Text clip added at '+ph.toFixed(1)+'s','#3fb950');
+}
+window.cutAddTextClip = cutAddTextClip;
+
 window.showImageBgDialog=showImageBgDialog;
 window.showShapeDialog=showShapeDialog;
 window.showTransformDialog=showTransformDialog;
