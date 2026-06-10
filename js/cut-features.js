@@ -308,107 +308,252 @@ const TEXT_EFFECTS = [
   {id:'glitch',     label:'Glitch'},
 ];
 
+
 function showTextDialog(editId){
-  const existing = editId ? window._overlays.find(o=>o.id===editId) : null;
-  const ph = S.cut.ph;
-  const modal = createModal('Add Text Overlay', `
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:14px">
-      <div>
-        <label class="modal-field-label">Start Time (s)</label>
-        <div style="display:flex;gap:6px">
-          <input id="txt-start" type="number" step="0.1" value="${existing?existing.startTime.toFixed(2):ph.toFixed(2)}" style="${inputStyle()}">
-          <button onclick="document.getElementById('txt-start').value=S.cut.ph.toFixed(2)" style="${smallBtnStyle()}">⏱</button>
+  const existing = editId ? window._overlays.find(o => o.id === editId) : null;
+  const ph       = S.cut.ph;
+
+  // Default overlay object (used as live preview state while dialog is open)
+  const draft = existing ? {...existing} : {
+    id: newOverlayId(), type: 'text',
+    startTime: ph, endTime: ph + 3,
+    text: '',
+    font: 'DM Sans', size: 48, weight: 'bold',
+    color: '#ffffff', bg: 'none',
+    stroke: '#000000', strokeW: 0,
+    effect: 'none', align: 'left',
+    italic: false,
+    x: 0.10, y: 0.82, bw: 0.80,
+  };
+
+  // ── Build modal HTML ─────────────────────────────────────────────
+  const inp = (id, val, attrs='') =>
+    `<input id="${id}" value="${String(val).replace(/"/g,'&quot;')}" ${attrs}
+      style="${inputStyle()}">`;
+
+  const modal = createModal('Text Overlay', `
+    <div style="display:flex;gap:14px;min-height:340px">
+
+      <!-- LEFT: Mini canvas preview -->
+      <div style="flex:0 0 320px;display:flex;flex-direction:column;gap:8px">
+        <label class="modal-field-label">Live Preview</label>
+        <canvas id="txt-preview-cvs" width="640" height="360"
+          style="width:320px;height:180px;background:#111;border-radius:6px;
+                 border:0.5px solid rgba(255,255,255,0.10);display:block"></canvas>
+
+        <!-- Bounding box position controls -->
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+          <div>
+            <label class="modal-field-label">Box X (0-1)</label>
+            <input id="txt-bx" type="number" step="0.01" min="0" max="1"
+              value="${draft.x.toFixed(2)}" style="${inputStyle()}"
+              oninput="_txtDraft.x=parseFloat(this.value)||0;_txtRender()">
+          </div>
+          <div>
+            <label class="modal-field-label">Box Y (0-1)</label>
+            <input id="txt-by" type="number" step="0.01" min="0" max="1"
+              value="${draft.y.toFixed(2)}" style="${inputStyle()}"
+              oninput="_txtDraft.y=parseFloat(this.value)||0;_txtRender()">
+          </div>
+        </div>
+        <div>
+          <label class="modal-field-label">Box Width (0-1)</label>
+          <input id="txt-bw" type="number" step="0.01" min="0.1" max="1"
+            value="${draft.bw.toFixed(2)}" style="${inputStyle()}"
+            oninput="_txtDraft.bw=parseFloat(this.value)||0.8;_txtRender()">
         </div>
       </div>
-      <div>
-        <label class="modal-field-label">End Time (s)</label>
-        <div style="display:flex;gap:6px">
-          <input id="txt-end" type="number" step="0.1" value="${existing?existing.endTime.toFixed(2):(ph+3).toFixed(2)}" style="${inputStyle()}">
-          <button onclick="document.getElementById('txt-end').value=S.cut.ph.toFixed(2)" style="${smallBtnStyle()}">⏱</button>
+
+      <!-- RIGHT: Controls -->
+      <div style="flex:1;display:flex;flex-direction:column;gap:10px;overflow-y:auto;max-height:400px;padding-right:4px">
+
+        <!-- Timing -->
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+          <div>
+            <label class="modal-field-label">Start (s)</label>
+            <div style="display:flex;gap:5px">
+              ${inp('txt-start', draft.startTime.toFixed(2), 'type="number" step="0.1"')}
+              <button onclick="document.getElementById('txt-start').value=S.cut.ph.toFixed(2)"
+                style="${smallBtnStyle()}">⏱</button>
+            </div>
+          </div>
+          <div>
+            <label class="modal-field-label">End (s)</label>
+            <div style="display:flex;gap:5px">
+              ${inp('txt-end', draft.endTime.toFixed(2), 'type="number" step="0.1"')}
+              <button onclick="document.getElementById('txt-end').value=S.cut.ph.toFixed(2)"
+                style="${smallBtnStyle()}">⏱</button>
+            </div>
+          </div>
         </div>
+
+        <!-- Text content — TEXTAREA with Enter support -->
+        <div>
+          <label class="modal-field-label">Text (Enter = new line)</label>
+          <textarea id="txt-content" rows="4"
+            placeholder="Type your text here…
+Press Enter for a new line."
+            style="${inputStyle()};resize:vertical;font-family:'DM Mono',monospace;line-height:1.5"
+            oninput="_txtDraft.text=this.value;_txtRender()"
+            >${draft.text}</textarea>
+        </div>
+
+        <!-- Font + Size + Weight/Italic -->
+        <div style="display:grid;grid-template-columns:1fr 80px 40px 40px;gap:8px;align-items:end">
+          <div>
+            <label class="modal-field-label">Font</label>
+            <select id="txt-font" style="${inputStyle()}"
+              onchange="_txtDraft.font=this.value;_txtRender()">
+              ${['DM Sans','Arial','Georgia','Impact','Courier New','Times New Roman',
+                 'Verdana','Trebuchet MS'].map(f =>
+                `<option value="${f}"${draft.font===f?' selected':''}>${f}</option>`
+              ).join('')}
+            </select>
+          </div>
+          <div>
+            <label class="modal-field-label">Size</label>
+            <input id="txt-size" type="number" min="10" max="300"
+              value="${draft.size}" style="${inputStyle()}"
+              oninput="_txtDraft.size=parseInt(this.value)||48;_txtRender()">
+          </div>
+          <div>
+            <label class="modal-field-label">B</label>
+            <button id="txt-bold" onclick="_txtDraft.bold=!_txtDraft.bold;this.style.background=_txtDraft.bold?'rgba(232,89,12,0.25)':'rgba(255,255,255,0.04)';_txtRender()"
+              style="width:100%;height:36px;background:${draft.bold?'rgba(232,89,12,0.25)':'rgba(255,255,255,0.04)'};
+                     border:0.5px solid rgba(255,255,255,0.1);border-radius:6px;color:#fff;
+                     font-weight:bold;cursor:pointer;font-size:14px">B</button>
+          </div>
+          <div>
+            <label class="modal-field-label">I</label>
+            <button id="txt-italic" onclick="_txtDraft.italic=!_txtDraft.italic;this.style.background=_txtDraft.italic?'rgba(232,89,12,0.25)':'rgba(255,255,255,0.04)';_txtRender()"
+              style="width:100%;height:36px;background:${draft.italic?'rgba(232,89,12,0.25)':'rgba(255,255,255,0.04)'};
+                     border:0.5px solid rgba(255,255,255,0.1);border-radius:6px;color:#fff;
+                     font-style:italic;cursor:pointer;font-size:14px">I</button>
+          </div>
+        </div>
+
+        <!-- Color + BG + Align -->
+        <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px">
+          <div>
+            <label class="modal-field-label">Color</label>
+            <input id="txt-color" type="color" value="${draft.color}"
+              style="${inputStyle()};padding:4px;height:36px"
+              oninput="_txtDraft.color=this.value;_txtRender()">
+          </div>
+          <div>
+            <label class="modal-field-label">Background</label>
+            <select id="txt-bg" style="${inputStyle()}"
+              onchange="_txtDraft.bg=this.value;_txtRender()">
+              ${['none','black','white','semi'].map(b=>
+                `<option value="${b}"${draft.bg===b?' selected':''}>${b}</option>`
+              ).join('')}
+            </select>
+          </div>
+          <div>
+            <label class="modal-field-label">Align</label>
+            <select id="txt-align" style="${inputStyle()}"
+              onchange="_txtDraft.align=this.value;_txtRender()">
+              ${['left','center','right'].map(a=>
+                `<option value="${a}"${(draft.align||'left')===a?' selected':''}>${a}</option>`
+              ).join('')}
+            </select>
+          </div>
+        </div>
+
+        <!-- Stroke -->
+        <div style="display:grid;grid-template-columns:60px 1fr;gap:8px">
+          <div>
+            <label class="modal-field-label">Stroke</label>
+            <input id="txt-stroke" type="color" value="${draft.stroke||'#000000'}"
+              style="${inputStyle()};padding:4px;height:36px"
+              oninput="_txtDraft.stroke=this.value;_txtRender()">
+          </div>
+          <div>
+            <label class="modal-field-label">Stroke Width</label>
+            <input id="txt-strokew" type="number" min="0" max="20"
+              value="${draft.strokeW||0}" style="${inputStyle()}"
+              oninput="_txtDraft.strokeW=parseInt(this.value)||0;_txtRender()">
+          </div>
+        </div>
+
+        <!-- Animation -->
+        <div>
+          <label class="modal-field-label">Animation</label>
+          <select id="txt-effect" style="${inputStyle()}"
+            onchange="_txtDraft.effect=this.value;_txtRender()">
+            ${[
+              {id:'none',l:'None'},{id:'fadein',l:'Fade In'},{id:'fadeout',l:'Fade Out'},
+              {id:'slideup',l:'Slide Up'},{id:'slidedown',l:'Slide Down'},
+              {id:'slideleft',l:'Slide Left'},{id:'slideright',l:'Slide Right'},
+              {id:'zoom',l:'Zoom In'},{id:'bounce',l:'Bounce'},
+              {id:'typewriter',l:'Typewriter'},{id:'wordbyw',l:'Word by Word'},
+              {id:'handwrite',l:'Handwrite'},{id:'glitch',l:'Glitch'},
+            ].map(e=>`<option value="${e.id}"${draft.effect===e.id?' selected':''}>${e.l}</option>`).join('')}
+          </select>
+        </div>
+
       </div>
     </div>
-    <div style="margin-bottom:12px">
-      <label class="modal-field-label">Text Content</label>
-      <textarea id="txt-content" rows="2" style="${inputStyle()};resize:vertical">${existing?existing.text:''}</textarea>
-    </div>
-    <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;margin-bottom:12px">
-      <div>
-        <label class="modal-field-label">Font</label>
-        <select id="txt-font" style="${inputStyle()}">
-          ${['DM Sans','Arial','Georgia','Impact','Courier New','Times New Roman','Verdana','Trebuchet MS','Futura','Bebas Neue'].map(f=>`<option value="${f}"${(existing?.font||'DM Sans')===f?' selected':''}>${f}</option>`).join('')}
-        </select>
-      </div>
-      <div>
-        <label class="modal-field-label">Size (px)</label>
-        <input id="txt-size" type="number" value="${existing?.size||48}" min="10" max="300" style="${inputStyle()}">
-      </div>
-      <div>
-        <label class="modal-field-label">Color</label>
-        <input id="txt-color" type="color" value="${existing?.color||'#ffffff'}" style="${inputStyle()};padding:4px;height:36px">
-      </div>
-    </div>
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:12px">
-      <div>
-        <label class="modal-field-label">Animation Effect</label>
-        <select id="txt-effect" style="${inputStyle()}">
-          ${TEXT_EFFECTS.map(e=>`<option value="${e.id}"${(existing?.effect||'none')===e.id?' selected':''}>${e.label}</option>`).join('')}
-        </select>
-      </div>
-      <div>
-        <label class="modal-field-label">Position</label>
-        <select id="txt-pos" style="${inputStyle()}">
-          ${['center','top','bottom','top-left','top-right','bottom-left','bottom-right'].map(p=>`<option value="${p}"${(existing?.position||'center')===p?' selected':''}>${p}</option>`).join('')}
-        </select>
-      </div>
-    </div>
-    <div style="margin-bottom:12px">
-      <label class="modal-field-label">Text Background</label>
-      <select id="txt-bg" style="${inputStyle()}">
-        <option value="none">None</option>
-        <option value="black">Black box</option>
-        <option value="white">White box</option>
-        <option value="semi">Semi-transparent</option>
-      </select>
-    </div>
-    <div style="margin-bottom:12px">
-      <label class="modal-field-label">Stroke / Outline Color</label>
-      <div style="display:flex;gap:8px;align-items:center">
-        <input id="txt-stroke" type="color" value="${existing?.stroke||'#000000'}" style="${inputStyle()};padding:4px;height:36px;width:60px">
-        <input id="txt-stroke-w" type="number" value="${existing?.strokeW||2}" min="0" max="20" style="${inputStyle()};width:80px" placeholder="Width">
-      </div>
-    </div>
-  `, ()=>{
-    const start=parseFloat(document.getElementById('txt-start').value);
-    const end=parseFloat(document.getElementById('txt-end').value);
-    const text=document.getElementById('txt-content').value.trim();
-    if(!text||isNaN(start)||isNaN(end)||end<=start){notify('Fill all fields correctly','#E31837');return;}
+  `, () => {
+    // ── Confirm: read from draft object (already in sync via oninput) ──
+    const start = parseFloat(document.getElementById('txt-start').value);
+    const end   = parseFloat(document.getElementById('txt-end').value);
+    if (!_txtDraft.text.trim() || isNaN(start) || isNaN(end) || end <= start) {
+      notify('Fill all fields correctly', '#E31837'); return;
+    }
     const ov = {
-      track: (window.S?.cut?.videoTracks||2)-1,
-      id: editId||newOverlayId(), type:'text',
-      startTime:start, endTime:end,
-      text, font:document.getElementById('txt-font').value,
-      size:parseInt(document.getElementById('txt-size').value)||48,
-      color:document.getElementById('txt-color').value,
-      effect:document.getElementById('txt-effect').value,
-      position:document.getElementById('txt-pos').value,
-      bg:document.getElementById('txt-bg').value,
-      stroke:document.getElementById('txt-stroke').value,
-      strokeW:parseInt(document.getElementById('txt-stroke-w').value)||0,
+      ..._txtDraft,
+      id: editId || _txtDraft.id,
+      type: 'text',
+      startTime: start,
+      endTime: end,
+      track: (window.S?.cut?.videoTracks || 2) - 1,
+      _editing: false,
     };
-    if(editId){
-      if(window.cutSaveHistory) cutSaveHistory('edit_overlay');
-      const i=window._overlays.findIndex(o=>o.id===editId);
-      if(i>=0) window._overlays[i]=ov;
+    if (editId) {
+      if (window.cutSaveHistory) cutSaveHistory('edit_overlay');
+      const i = window._overlays.findIndex(o => o.id === editId);
+      if (i >= 0) window._overlays[i] = ov;
     } else {
-      if(window.cutSaveHistory) cutSaveHistory('add_overlay');
+      if (window.cutSaveHistory) cutSaveHistory('add_overlay');
       window._overlays.push(ov);
     }
-    notify('Text overlay '+(editId?'updated':'added'),'#3fb950');
+    window._txtDraft = null;
+    notify('Text overlay ' + (editId ? 'updated' : 'added'), '#3fb950');
     closeModal();
     renderOverlayTimeline();
+    if (window.syncCutVid) syncCutVid();
   });
+
+  // ── Live preview renderer ────────────────────────────────────────
+  window._txtDraft = draft;
+  window._txtRender = function(){
+    const cvs = document.getElementById('txt-preview-cvs');
+    if (!cvs) return;
+    const ctx = cvs.getContext('2d');
+    const W = 640, H = 360;
+    ctx.clearRect(0, 0, W, H);
+
+    // Draw fake video background (dark gradient to suggest video)
+    const grad = ctx.createLinearGradient(0, 0, 0, H);
+    grad.addColorStop(0, '#1a2233');
+    grad.addColorStop(1, '#0a0f18');
+    ctx.fillStyle = grad;
+    ctx.fillRect(0, 0, W, H);
+
+    // Draw the text overlay using the same production renderer
+    renderTextOverlay(ctx, W, H, {...window._txtDraft, _editing: true}, 0.5);
+  };
+
+  // Start the live preview after modal DOM is ready
+  setTimeout(() => {
+    window._txtRender();
+    // Focus the textarea and put cursor at end
+    const ta = document.getElementById('txt-content');
+    if (ta) { ta.focus(); ta.setSelectionRange(ta.value.length, ta.value.length); }
+  }, 80);
 }
+
 
 // ── FEATURE 3: IMAGE / BACKGROUND REPLACEMENT ──
 function showImageBgDialog(){
@@ -1026,80 +1171,140 @@ window.renderSingleOverlayOnCanvas = renderSingleOverlayOnCanvas;
 // Offscreen cache for text overlays — reuse if nothing changed
 const _textRenderCache = new Map();
 
-function renderTextOverlay(ctx,W,H,ov,progress){
-  const size=ov.size||48;
-  ctx.font=`bold ${size}px "${ov.font||'DM Sans'}",sans-serif`;
-  ctx.textAlign='center'; ctx.textBaseline='middle';
-  // Position — use dragged x/y if set, otherwise use preset
-  let bx, by;
-  if(ov.x !== undefined && ov.y !== undefined){
-    bx = ov.x * W;
-    by = ov.y * H;
-  } else {
-    const positions={center:[W/2,H/2],'top':[W/2,H*0.12],'bottom':[W/2,H*0.88],
-      'top-left':[W*0.15,H*0.1],'top-right':[W*0.85,H*0.1],
-      'bottom-left':[W*0.15,H*0.9],'bottom-right':[W*0.85,H*0.9]};
-    [bx,by]=positions[ov.position]||[W/2,H/2];
-  }
-  // Animation
-  let alpha=1,tx=bx,ty=by,scale=1;
-  const e=ov.effect||'none';
-  if(e==='fadein') alpha=Math.min(1,progress*3);
-  else if(e==='fadeout') alpha=Math.max(0,1-progress*3);
-  else if(e==='slideup'){ty=by+(1-Math.min(1,progress*2))*80;alpha=Math.min(1,progress*3);}
-  else if(e==='slidedown'){ty=by-(1-Math.min(1,progress*2))*80;alpha=Math.min(1,progress*3);}
-  else if(e==='slideleft'){tx=bx+(1-Math.min(1,progress*2))*120;alpha=Math.min(1,progress*3);}
-  else if(e==='slideright'){tx=bx-(1-Math.min(1,progress*2))*120;alpha=Math.min(1,progress*3);}
-  else if(e==='zoom'){scale=0.3+Math.min(1,progress*2)*0.7;alpha=Math.min(1,progress*2);}
-  else if(e==='bounce'){const b=Math.abs(Math.sin(progress*Math.PI*4));ty=by-b*20;}
-  else if(e==='glitch'){tx=bx+(Math.random()-0.5)*8*(1-progress);ty=by+(Math.random()-0.5)*4*(1-progress);}
+function renderTextOverlay(ctx, W, H, ov, progress){
+  // ── 1. Font setup ────────────────────────────────────────────────
+  const size    = ov.size || ov.fontSize || 48;
+  const font    = ov.font || 'DM Sans';
+  const weight  = ov.bold  ? 'bold'   : 'normal';
+  const fStyle  = ov.italic? 'italic' : 'normal';
+  ctx.font = `${fStyle} ${weight} ${size}px "${font}", sans-serif`;
+  ctx.textBaseline = 'top';
 
-  ctx.globalAlpha=alpha;
+  // ── 2. Bounding Box position ─────────────────────────────────────
+  // ov.x, ov.y  = normalised anchor (0-1) — top-left corner of the box
+  // ov.bw       = normalised box width  (0-1), default 0.80 × canvas
+  // ov.bh is computed from content, not stored
+  const BOX_PAD   = 16;                        // px inside the box
+  const LINE_H    = size * 1.35;               // line height
+  const MAX_BW    = (ov.bw !== undefined ? ov.bw : 0.80) * W;  // max text width
+  const AX        = (ov.x  !== undefined ? ov.x  : 0.10) * W;  // box left edge
+  const AY        = (ov.y  !== undefined ? ov.y  : 0.82) * H;  // box top edge
+
+  // ── 3. Word-wrap engine ──────────────────────────────────────────
+  // Split on explicit \n first, then word-wrap each paragraph
+  const rawLines  = (ov.text || '').split('\n');
+  const wrappedLines = [];
+
+  rawLines.forEach(paragraph => {
+    if (paragraph === '') { wrappedLines.push(''); return; }
+    const words   = paragraph.split(' ');
+    let current   = '';
+    words.forEach(word => {
+      const test  = current ? current + ' ' + word : word;
+      const tw    = ctx.measureText(test).width;
+      if (tw > MAX_BW - BOX_PAD * 2 && current !== '') {
+        wrappedLines.push(current);
+        current = word;
+      } else {
+        current = test;
+      }
+    });
+    if (current) wrappedLines.push(current);
+  });
+
+  const totalH    = wrappedLines.length * LINE_H;
+  const boxW      = MAX_BW;
+  const boxH      = totalH + BOX_PAD * 2;
+
+  // ── 4. Animation ─────────────────────────────────────────────────
+  let alpha = 1, offX = 0, offY = 0, scale = 1;
+  const e = ov.effect || 'none';
+  const p = progress;
+  if      (e === 'fadein')    { alpha  = Math.min(1, p * 3); }
+  else if (e === 'fadeout')   { alpha  = Math.max(0, 1 - p * 3); }
+  else if (e === 'slideup')   { offY   = (1 - Math.min(1, p * 2)) * 80; alpha = Math.min(1, p * 3); }
+  else if (e === 'slidedown') { offY   = -(1 - Math.min(1, p * 2)) * 80; alpha = Math.min(1, p * 3); }
+  else if (e === 'slideleft') { offX   = (1 - Math.min(1, p * 2)) * 120; alpha = Math.min(1, p * 3); }
+  else if (e === 'slideright'){ offX   = -(1 - Math.min(1, p * 2)) * 120; alpha = Math.min(1, p * 3); }
+  else if (e === 'zoom')      { scale  = 0.3 + Math.min(1, p * 2) * 0.7; alpha = Math.min(1, p * 2); }
+  else if (e === 'bounce')    { offY   = -Math.abs(Math.sin(p * Math.PI * 4)) * 20; }
+  else if (e === 'glitch')    { offX   = (Math.random() - .5) * 8 * (1 - p); offY = (Math.random() - .5) * 4 * (1 - p); }
+
+  // Typewriter / word-by-word / handwrite overrides
+  let displayLines = [...wrappedLines];
+  if (e === 'typewriter') {
+    const total   = (ov.text || '').length;
+    const shown   = Math.floor(total * Math.min(1, p * 1.5));
+    displayLines  = (ov.text || '').substring(0, shown).split('\n');
+    // Re-wrap the truncated text
+    const rw = [];
+    displayLines.forEach(para => {
+      if (!para) { rw.push(''); return; }
+      const ws = para.split(' '); let cur = '';
+      ws.forEach(w => {
+        const t = cur ? cur + ' ' + w : w;
+        if (ctx.measureText(t).width > MAX_BW - BOX_PAD * 2 && cur) { rw.push(cur); cur = w; }
+        else cur = t;
+      });
+      if (cur) rw.push(cur);
+    });
+    displayLines = rw;
+  } else if (e === 'wordbyw') {
+    const allWords  = (ov.text || '').split(' ');
+    const count     = Math.ceil(allWords.length * Math.min(1, p * 1.5));
+    displayLines    = allWords.slice(0, count).join(' ').split('\n');
+  } else if (e === 'handwrite') {
+    const total   = (ov.text || '').length;
+    const shown   = Math.floor(total * Math.min(1, p * 1.2));
+    const raw     = (ov.text || '').substring(0, shown) + '|';
+    displayLines  = raw.split('\n');
+    ctx.font      = `italic bold ${size}px "Courier New", monospace`;
+  }
+
+  // ── 5. Draw ──────────────────────────────────────────────────────
   ctx.save();
-  ctx.translate(tx,ty);
-  if(scale!==1) ctx.scale(scale,scale);
+  ctx.globalAlpha = alpha;
+  ctx.translate(AX + offX, AY + offY);
+  if (scale !== 1) ctx.scale(scale, scale);
 
-  let displayText=ov.text||'';
-  if(e==='typewriter'){
-    const chars=Math.floor(ov.text.length*Math.min(1,progress*1.5));
-    displayText=ov.text.substring(0,chars);
-  } else if(e==='wordbyw'){
-    const words=ov.text.split(' ');
-    const count=Math.ceil(words.length*Math.min(1,progress*1.5));
-    displayText=words.slice(0,count).join(' ');
-  } else if(e==='handwrite'){
-    const chars=Math.floor(ov.text.length*Math.min(1,progress*1.2));
-    displayText=ov.text.substring(0,chars)+'|';
-    ctx.font=`italic bold ${size}px "Courier New",monospace`;
+  // Background
+  if      (ov.bg === 'black') { ctx.fillStyle = 'rgba(0,0,0,0.85)';    ctx.fillRect(0, 0, boxW, boxH); }
+  else if (ov.bg === 'white') { ctx.fillStyle = 'rgba(255,255,255,0.9)'; ctx.fillRect(0, 0, boxW, boxH); }
+  else if (ov.bg === 'semi')  { ctx.fillStyle = 'rgba(0,0,0,0.50)';     ctx.fillRect(0, 0, boxW, boxH); }
+
+  // Active-edit bounding box indicator (dashed, only in preview not export)
+  if (ov._editing) {
+    ctx.save();
+    ctx.strokeStyle = 'rgba(88,166,255,0.8)';
+    ctx.lineWidth   = 1.5;
+    ctx.setLineDash([6, 4]);
+    ctx.strokeRect(-2, -2, boxW + 4, boxH + 4);
+    ctx.setLineDash([]);
+    ctx.restore();
   }
 
-  // ── Multiline support: split on \n ──
-  const lines = displayText.split('\n');
-  const lineH = size * 1.35;
-  const totalH = lines.length * lineH;
-  const maxW = Math.max(...lines.map(l => ctx.measureText(l).width));
+  // Lines
+  const textAlign = ov.align || 'left';
+  ctx.textAlign   = textAlign;
+  const textX = textAlign === 'center' ? boxW / 2
+              : textAlign === 'right'  ? boxW - BOX_PAD
+              : BOX_PAD;
 
-  // Background box (covers all lines)
-  if(ov.bg==='black'){ctx.fillStyle='rgba(0,0,0,0.85)';ctx.fillRect(-maxW/2-12,-totalH/2-4,maxW+24,totalH+8);}
-  else if(ov.bg==='white'){ctx.fillStyle='rgba(255,255,255,0.9)';ctx.fillRect(-maxW/2-12,-totalH/2-4,maxW+24,totalH+8);}
-  else if(ov.bg==='semi'){ctx.fillStyle='rgba(0,0,0,0.5)';ctx.fillRect(-maxW/2-12,-totalH/2-4,maxW+24,totalH+8);}
-
-  // Draw each line centered vertically around origin
-  const startY = -(totalH / 2) + lineH / 2;
-  lines.forEach((line, i) => {
-    const lineY = startY + i * lineH;
-    if(ov.strokeW>0){
-      ctx.strokeStyle=ov.stroke||'#000';
-      ctx.lineWidth=ov.strokeW;
-      ctx.strokeText(line, 0, lineY);
+  displayLines.forEach((line, i) => {
+    const lineY = BOX_PAD + i * LINE_H;
+    if (ov.strokeW > 0) {
+      ctx.strokeStyle = ov.stroke   || '#000';
+      ctx.lineWidth   = ov.strokeW  || 2;
+      ctx.strokeText(line, textX, lineY);
     }
-    ctx.fillStyle=ov.color||'#fff';
-    ctx.fillText(line, 0, lineY);
+    ctx.fillStyle = ov.color || '#fff';
+    ctx.fillText(line, textX, lineY);
   });
 
   ctx.restore();
-  ctx.globalAlpha=1;
+  ctx.globalAlpha = 1;
 }
+
 
 function renderImageBg(ctx,W,H,ov,progress){
   // All bg types use x,y,w,h bounding box (normalized 0-1)
@@ -1609,18 +1814,33 @@ window.updateOverlayProps = function(id){
 
   const textSection = ov.type==='text' ? `
     <div class="prop-section">✏️ Text</div>
-    <div class="prop-row"><span class="prop-label">Content</span>
-      <input type="text" value="${(ov.text||'').replace(/"/g,'&quot;')}"
-        style="flex:1;background:#161616;border:0.5px solid rgba(255,255,255,0.1);border-radius:5px;color:var(--tx);font-size:11px;padding:2px 5px;outline:none"
-        onchange="window._overlays.find(o=>o.id==='${ov.id}').text=this.value;renderOverlayTimeline();if(window.syncCutVid)syncCutVid();">
+    <div class="prop-row" style="flex-direction:column;gap:4px">
+      <span class="prop-label">Content</span>
+      <textarea rows="3"
+        style="width:100%;background:#161616;border:0.5px solid rgba(255,255,255,0.1);
+               border-radius:5px;color:var(--tx);font-size:11px;padding:5px 7px;
+               outline:none;resize:vertical;font-family:'DM Mono',monospace;line-height:1.5;
+               box-sizing:border-box"
+        oninput="const o=window._overlays.find(o=>o.id==='${ov.id}');if(o){o.text=this.value;}if(window.syncCutVid)syncCutVid();"
+        >${(ov.text||'').replace(/`/g,'\`')}</textarea>
     </div>
-    <div class="prop-row"><span class="prop-label">Size</span>
-      ${inp('op-fs',ov.fontSize||40,1,`window._overlays.find(o=>o.id==='${ov.id}').fontSize=parseInt(this.value);if(window.syncCutVid)syncCutVid();`)}
+    <div class="prop-row">
+      <span class="prop-label">Size</span>
+      ${inp('op-fs', ov.size||ov.fontSize||48, 1,
+        `const o=window._overlays.find(o=>o.id==='${ov.id}');if(o)o.size=parseInt(this.value);if(window.syncCutVid)syncCutVid();`)}
     </div>
-    <div class="prop-row"><span class="prop-label">Color</span>
+    <div class="prop-row">
+      <span class="prop-label">Color</span>
       <input type="color" value="${ov.color||'#ffffff'}"
         style="width:40px;height:24px;border:none;background:none;cursor:pointer;border-radius:4px;padding:0"
-        onchange="window._overlays.find(o=>o.id==='${ov.id}').color=this.value;if(window.syncCutVid)syncCutVid();">
+        oninput="const o=window._overlays.find(o=>o.id==='${ov.id}');if(o)o.color=this.value;if(window.syncCutVid)syncCutVid();">
+    </div>
+    <div class="prop-row">
+      <span class="prop-label">Align</span>
+      <select style="flex:1;background:#161616;border:0.5px solid rgba(255,255,255,0.1);border-radius:5px;color:var(--tx);font-size:11px;padding:2px 4px;outline:none"
+        onchange="const o=window._overlays.find(o=>o.id==='${ov.id}');if(o)o.align=this.value;if(window.syncCutVid)syncCutVid();">
+        ${['left','center','right'].map(a=>`<option value="${a}" ${(ov.align||'left')===a?'selected':''}>${a}</option>`).join('')}
+      </select>
     </div>` : '';
 
   body.innerHTML = `
