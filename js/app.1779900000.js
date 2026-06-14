@@ -394,20 +394,24 @@ window.openProject = async function(id) {
       const storedFiles = await loadMediaFiles(id);
       const savedMeta = cs.media || [];
 
-      // ── ID-FIRST restore: match by mediaId, fall back to name for legacy data ──
-      // ID-FIRST restore — no name collisions possible
+      // ── ID-FIRST restore with consumption pool ────────────────────────────
+      // BUG3 FIX: use a mutable pool so two savedMeta entries with the same
+      // filename each get their own distinct IDB blob, not both the first match.
+      const _pool = storedFiles.slice();
+
       restoredMedia = savedMeta.map(m => {
-        const savedId = m.id || m.mediaId; // support both field names
-        // 1. Exact UUID match in IndexedDB (new system)
-        let stored = savedId ? storedFiles.find(sf => sf.mediaId === savedId) : null;
-        // 2. Legacy fallback: match by filename (pre-UUID projects)
-        if (!stored) stored = storedFiles.find(sf => sf.name === m.name);
-        const baseItem = { ...m, id: savedId || null, mediaId: savedId || null };
-        if (stored) {
-          return { ...baseItem, url: stored.url, file: stored.blob };
-        } else {
-          return { ...baseItem, url: null };
+        const savedId = m.id || m.mediaId;
+        // 1. UUID match — exact, collision-free
+        let idx = savedId ? _pool.findIndex(sf => sf.mediaId === savedId) : -1;
+        // 2. Legacy name fallback — consume the match so next same-name entry
+        //    gets the next IDB record, not the same first one again
+        if (idx === -1) idx = _pool.findIndex(sf => sf.name === m.name);
+        const base = { ...m, id: savedId || null, mediaId: savedId || null };
+        if (idx !== -1) {
+          const sf = _pool.splice(idx, 1)[0];
+          return { ...base, url: sf.url, file: sf.blob };
         }
+        return { ...base, url: null };
       });
 
       // Migration: assign permanent UUIDs to any items that still lack one

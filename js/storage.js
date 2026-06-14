@@ -52,9 +52,10 @@ async function saveMediaFile(projectId, file, mediaId) {
   // key = projectId/__uuid__mediaId so it is unique across all projects and filenames.
   const db  = await _openMediaDB();
   const buf = await file.arrayBuffer();
+  const _legacyKey = projectId + '/' + file.name + '_' + Date.now() + '_' + Math.random().toString(36).slice(2,5);
   const key = mediaId
     ? (projectId + '/__uuid__' + mediaId)  // UUID-keyed — collision-free
-    : (projectId + '/' + file.name);       // legacy fallback for old code paths
+    : _legacyKey;                           // legacy: unique suffix prevents overwrite
   await new Promise((res, rej) => {
     const tx = db.transaction(_IDB_STORE, 'readwrite');
     tx.objectStore(_IDB_STORE).put({ key, name: file.name, mediaId: mediaId || null, type: file.type, buf });
