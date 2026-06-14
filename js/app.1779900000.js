@@ -414,14 +414,32 @@ window.openProject = async function(id) {
         return { ...base, url: null };
       });
 
-      // Migration: assign permanent UUIDs to any items that still lack one
+      // ── Migration: assign permanent UUIDs to any items that still lack one ──
       const _now = Date.now();
+      const _migratedItems = []; // track which items got new UUIDs so we can re-save to IDB
       restoredMedia.forEach((m, idx) => {
         if (!m.id) {
           m.id = id + '_migr_' + _now + '_' + idx + '_' + Math.random().toString(36).slice(2,5);
           m.mediaId = m.id;
+          if (m.file) _migratedItems.push(m); // has blob — re-save with UUID key
         }
       });
+
+      // BUG3 ROOT FIX: re-save migrated blobs to IDB under their new UUID keys.
+      // Without this, next reload falls back to name-matching again because IDB
+      // only has the legacy key (projectId/filename) with no mediaId — not the
+      // migration UUID. Re-saving under UUID key makes all future reloads use
+      // the exact UUID path, permanently breaking the name-collision chain.
+      if (_migratedItems.length > 0 && window.saveMediaFile) {
+        _migratedItems.forEach(m => {
+          // Re-save blob under UUID key — fire-and-forget (don't block UI)
+          const _blob = m.file instanceof Blob ? m.file : new Blob([m.file]);
+          const _file = new File([_blob], m.name, { type: _blob.type || 'video/mp4' });
+          saveMediaFile(id, _file, m.id).catch(e =>
+            console.warn('[BUG3] UUID re-save failed for', m.name, e)
+          );
+        });
+      }
 
       // Also remap any clips that still reference numeric mediaIdx → migrate to mediaId
       const _savedClips = cs.clips || [];
@@ -433,15 +451,12 @@ window.openProject = async function(id) {
         }
       });
 
-      // Add any orphaned IndexedDB files not already in meta
-      // BUG3 FIX: only match by UUID — name-based matching caused wrong clips
-      // to merge when two files shared the same filename
+      // Add any orphaned IndexedDB files not already in meta (UUID-only, no name match)
       storedFiles.forEach(sf => {
         const alreadyRestored = restoredMedia.some(m =>
           sf.mediaId && (m.id === sf.mediaId || m.mediaId === sf.mediaId)
         );
         if (!alreadyRestored && sf.mediaId) {
-          // Only add if it has a UUID we can track — ignore name-only entries
           restoredMedia.push({
             name: sf.name, id: sf.mediaId, mediaId: sf.mediaId,
             type: sf.type.startsWith('video') ? 'video' : sf.type.startsWith('audio') ? 'audio' : 'image',
@@ -5463,11 +5478,11 @@ function syncAudioPlayback(){
 // Hidden video elements for blending
 const _vidPool = {};
 // ── Media Library: lookup by permanent UUID ─────────────────────────────
-// This is the ONLY correct way to resolve a clip's asset. Never use array
-// index after the initial import — use clip.mediaId (UUID string).
+// Matches on either m.id or m.mediaId — both fields carry the same UUID
+// (mediaId kept for backwards compat with clips saved before id field existed).
 function getMediaById(mediaId){
   if(!mediaId) return null;
-  return (S.cut.media || []).find(m => m.id === mediaId) || null;
+  return (S.cut.media || []).find(m => m.id === mediaId || m.mediaId === mediaId) || null;
 }
 window.getMediaById = getMediaById;
 
