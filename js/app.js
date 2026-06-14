@@ -7253,6 +7253,40 @@ function clipContextMenu(e, ci){
   renderCutTimeline();
   const c=S.cut.clips[ci];
   showContextMenu(e,[
+    // ── NEW: top additions ────────────────────────────────────
+    {icon:'✂', label:'Cut', fn:()=>{
+      window._clipClipboard = JSON.parse(JSON.stringify(c));
+      window._clipClipboardMode = 'cut';
+      S.cut.clips.splice(ci,1); S.cut.sel=null;
+      renderCutTimeline(); cutSaveHistory('cut'); notify('Clip cut','#3fb950');
+    }},
+    {icon:'⎘', label:'Copy', fn:()=>{
+      window._clipClipboard = JSON.parse(JSON.stringify(c));
+      window._clipClipboardMode = 'copy';
+      notify('Clip copied','#3fb950');
+    }},
+    {icon:'📋', label:'Paste Attributes', fn:()=>{
+      const src=window._clipClipboard;
+      if(!src){notify('Nothing copied yet','#E31837');return;}
+      // Paste: effects, transform, opacity, colorGrade, blendMode, fx
+      if(src.transform)   c.transform   = JSON.parse(JSON.stringify(src.transform));
+      if(src.opacity!==undefined) c.opacity = src.opacity;
+      if(src.colorGrade)  c.colorGrade  = JSON.parse(JSON.stringify(src.colorGrade));
+      if(src.blendMode)   c.blendMode   = src.blendMode;
+      if(src.fx)          c.fx          = JSON.parse(JSON.stringify(src.fx));
+      const srcFx=S.cut.effects[S.cut.clips.indexOf(src)];
+      if(srcFx) S.cut.effects[ci]=JSON.parse(JSON.stringify(srcFx));
+      renderCutTimeline(); updatePropsPanel(ci); cutSaveHistory('paste_attr'); notify('Attributes pasted','#3fb950');
+    }},
+    {icon:'⧉', label:'Duplicate', fn:()=>{
+      const dup=JSON.parse(JSON.stringify(c));
+      dup.start=c.start+c.dur+0.05;
+      S.cut.clips.splice(ci+1,0,dup);
+      S.cut.sel=ci+1;
+      renderCutTimeline(); cutSaveHistory('duplicate'); notify('Clip duplicated','#3fb950');
+    }},
+    {sep:true},
+    // ── existing items (untouched) ─────────────────────────────
     {icon:'✂️', label:'Split at Playhead', fn:()=>cutSplit()},
     {sep:true},
     {icon:'⬅️', label:'Trim Start to Playhead', fn:()=>{
@@ -7306,6 +7340,46 @@ function clipContextMenu(e, ci){
     {sep:true},
     {icon:'🖼', label:'Insert Frame Hold at Playhead', fn:()=>insertFrameHold(ci)},
     {icon:'🖼', label:'Insert Frame Hold at Clip End', fn:()=>insertFrameHoldAtEnd(ci)},
+    {sep:true},
+    // ── NEW: bottom additions ─────────────────────────────────
+    {icon: c.disabled?'👁':'🚫', label: c.disabled?'Enable Clip':'Disable Clip', fn:()=>{
+      c.disabled=!c.disabled;
+      renderCutTimeline(); if(window.syncCutVid)syncCutVid(); cutSaveHistory('toggle_disable');
+      notify(c.disabled?'Clip disabled':'Clip enabled', c.disabled?'#E31837':'#3fb950');
+    }},
+    {icon:'✏️', label:'Rename…', fn:()=>{
+      const el=document.querySelector('[data-ci="'+ci+'"] span');
+      if(!el) return;
+      const orig=c.name;
+      el.contentEditable='true'; el.focus();
+      const sel=window.getSelection(); const range=document.createRange();
+      range.selectNodeContents(el); sel.removeAllRanges(); sel.addRange(range);
+      el.style.cssText='outline:1px solid #E8590C;border-radius:2px;min-width:20px;background:rgba(0,0,0,0.5)';
+      const commit=()=>{
+        el.contentEditable='false'; el.style.cssText='';
+        const newName=(el.textContent||'').trim();
+        if(newName && newName!==orig){ c.name=newName; cutSaveHistory('rename'); notify('Renamed','#3fb950'); }
+        else el.textContent=orig.replace(/\.[^.]+$/,'').substring(0,22);
+        el.removeEventListener('blur',commit); el.removeEventListener('keydown',onKey);
+      };
+      const onKey=ev=>{if(ev.key==='Enter'){ev.preventDefault();commit();}if(ev.key==='Escape'){el.textContent=orig.replace(/\.[^.]+$/,'').substring(0,22);commit();}};
+      el.addEventListener('blur',commit); el.addEventListener('keydown',onKey);
+    }},
+    {icon:'📁', label:'Reveal in Media Library', fn:()=>{
+      const item=window.getMediaById?getMediaById(c.mediaId):null;
+      if(!item){notify('Asset not in media library','#E31837');return;}
+      // Switch to bin tab and highlight
+      const binTab=document.getElementById('cut-tab-bin');
+      if(binTab) binTab.click();
+      setTimeout(()=>{
+        const binEl=document.querySelector('[data-media-id="'+c.mediaId+'"]')||
+                    document.querySelector('[data-mi="'+S.cut.media.indexOf(item)+'"]');
+        if(binEl){binEl.scrollIntoView({block:'center',behavior:'smooth'});
+          binEl.style.outline='2px solid #E8590C';
+          setTimeout(()=>{binEl.style.outline='';},1500);}
+        else notify('Asset: '+item.name,'#3fb950');
+      },100);
+    }},
   ]);
 }
 
