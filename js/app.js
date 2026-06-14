@@ -4408,13 +4408,15 @@ function renderCutTimeline() {
       const clipL = Math.round(c.start * PPS);
       el.style.left       = clipL + 'px';
       el.style.width      = clipW + 'px';
-      el.style.background = c.color;
+      el.style.background = c.disabled ? 'rgba(100,100,100,0.35)' : c.color;
+      el.style.opacity    = c.disabled ? '0.45' : '1';
       el.setAttribute('data-ci', ci);
       // fileStart stored on element for waveform offset
       el.dataset.fileStart = String(c.fileStart || 0);
       el.dataset.dur       = String(c.dur);
       el.innerHTML = '<div class="clip-resize-l"></div>'
         + '<span>' + c.name.replace(/\.[^.]+$/, '').substring(0, 22) + '</span>'
+        + '<button class="clip-dis-btn" title="Enable/Disable" onclick="event.stopPropagation();const _c=S.cut.clips['+ci+'];_c.disabled=!_c.disabled;renderCutTimeline();if(window.syncCutVid)syncCutVid();cutSaveHistory(\'toggle_disable\');" style="position:absolute;right:18px;top:50%;transform:translateY(-50%);width:12px;height:12px;border-radius:50%;border:1.5px solid rgba(255,255,255,'+(c.disabled?'0.7':'0.3')+')";background:'+(c.disabled?'rgba(255,69,58,0.8)':'transparent')+';cursor:pointer;padding:0;z-index:6"></button>'
         + '<div class="clip-resize-r"></div>';
       // ── Effect bars ──
       const clipEffects = S.cut.effects[ci]||[];
@@ -4639,8 +4641,8 @@ function clipMoveStart(e,ci){
 
   const el = e.currentTarget || e.target.closest('.tl-clip');
 
-  if(e.altKey){
-    // ── ALT + DRAG: duplicate clip and drag the copy ──
+  if(e.altKey || e.ctrlKey){
+    // ── ALT / CTRL + DRAG: duplicate clip and drag the copy ──
     e.preventDefault();
     cutSaveHistory('alt_duplicate');
 
@@ -5424,7 +5426,7 @@ function cutTogglePlay(){
       // Redraw canvas overlays every frame
       const phNow=S.cut.ph;
       // frame_hold takes priority over video at same time position
-      const _allNow=S.cut.clips.filter(c=>(c.type==='video'||c.type==='frame_hold'||c.type==='image')&&phNow>=c.start&&phNow<c.start+c.dur);
+      const _allNow=S.cut.clips.filter(c=>!c.disabled&&(c.type==='video'||c.type==='frame_hold'||c.type==='image')&&phNow>=c.start&&phNow<c.start+c.dur);
       const activeNow=_allNow.find(c=>c.type==='frame_hold')||_allNow.find(c=>c.type==='video')||_allNow[0]||null;
       if(activeNow){
         const ciNow2=S.cut.clips.indexOf(activeNow);
@@ -5930,7 +5932,7 @@ function syncCutVid(){
   if(!screen) return;
 
   // Find ALL active video/image clips at playhead, sorted by track index (V1=0 bottom, V(n) top)
-  const videoClips = S.cut.clips.filter(c => c.type === 'video' || c.type === 'frame_hold' || c.type === 'image');
+  const videoClips = S.cut.clips.filter(c => !c.disabled && (c.type === 'video' || c.type === 'frame_hold' || c.type === 'image'));
   const _allAtPh = videoClips
     .filter(c => ph >= c.start && ph < c.start + Math.max(c.dur, 0.1) && !S.cut.hiddenTracks?.[c.track])
     .sort((a,b) => (a.track||0) - (b.track||0)); // lower track index = drawn first (underneath)
