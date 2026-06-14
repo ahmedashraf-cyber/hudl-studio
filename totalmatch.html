@@ -361,23 +361,25 @@ const {
   useCallback
 } = React;
 const TOOLS = ['select', 'text', 'pen', 'arrow', 'polygon', 'shape', 'cone', 'link', 'ring', 'vision', 'zoom', 'marker', 'cut', 'eraser', 'counter_home', 'counter_away'];
+const _svg = (d) => React.createElement('svg', {width:16,height:16,viewBox:'0 0 24 24',fill:'none',stroke:'currentColor',strokeWidth:1.8,strokeLinecap:'round',strokeLinejoin:'round',style:{display:'block'}}, ...d);
+const _c = (t,p,ch) => React.createElement(t,p,...(ch||[]));
 const TOOL_ICONS = {
-  select:       '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 3l14 9-7 1-4 7z"/></svg>',
-  text:         '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M4 6h16M12 6v13M8 19h8"/></svg>',
-  pen:          '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 21c3-3 4-7 4-7l10-10a2 2 0 0 1 3 3L10 17s-4 1-7 4z"/></svg>',
-  arrow:        '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="13 6 19 12 13 18"/></svg>',
-  polygon:      '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 3 20 8 20 16 12 21 4 16 4 8"/></svg>',
-  shape:        '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><circle cx="17.5" cy="17.5" r="3.5"/></svg>',
-  cone:         '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>',
-  link:         '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="12" r="3"/><circle cx="18" cy="6" r="3"/><circle cx="18" cy="18" r="3"/><line x1="8.5" y1="10.5" x2="15.5" y2="7.5"/><line x1="8.5" y1="13.5" x2="15.5" y2="16.5"/></svg>',
-  ring:         '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="4"/></svg>',
-  vision:       '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="5" r="2"/><path d="M12 7 L6 20 L12 17 L18 20 Z"/></svg>',
-  zoom:         '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><line x1="16.5" y1="16.5" x2="21" y2="21"/><line x1="8" y1="11" x2="14" y2="11"/><line x1="11" y1="8" x2="11" y2="14"/></svg>',
-  marker:       '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="5" y1="5" x2="19" y2="19"/><line x1="19" y1="5" x2="5" y2="19"/></svg>',
-  cut:          '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><line x1="20" y1="4" x2="8.12" y2="15.88"/><line x1="14.47" y1="14.48" x2="20" y2="20"/><line x1="8.12" y1="8.12" x2="12" y2="12"/></svg>',
-  eraser:       '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M20 20H7L3 16l10-10 7 7-3.5 3.5"/><path d="M6 17l-3-3"/></svg>',
-  counter_home: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="9"/><text x="12" y="16" text-anchor="middle" fill="currentColor" stroke="none" font-size="10" font-weight="700" font-family="DM Sans,sans-serif">H</text></svg>',
-  counter_away: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="9" stroke-dasharray="3 2"/><text x="12" y="16" text-anchor="middle" fill="currentColor" stroke="none" font-size="10" font-weight="700" font-family="DM Sans,sans-serif">A</text></svg>'
+  select:       () => _svg([_c('path',{d:'M5 3l14 9-7 1-4 7z'})]),
+  text:         () => _svg([_c('path',{d:'M4 6h16M12 6v13M8 19h8'})]),
+  pen:          () => _svg([_c('path',{d:'M3 21c3-3 4-7 4-7l10-10a2 2 0 0 1 3 3L10 17s-4 1-7 4z'})]),
+  arrow:        () => _svg([_c('line',{x1:5,y1:12,x2:19,y2:12}),_c('polyline',{points:'13 6 19 12 13 18'})]),
+  polygon:      () => _svg([_c('polygon',{points:'12 3 20 8 20 16 12 21 4 16 4 8'})]),
+  shape:        () => _svg([_c('rect',{x:3,y:3,width:7,height:7,rx:1}),_c('rect',{x:14,y:3,width:7,height:7,rx:1}),_c('rect',{x:3,y:14,width:7,height:7,rx:1}),_c('circle',{cx:17.5,cy:17.5,r:3.5})]),
+  cone:         () => _svg([_c('path',{d:'M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z'}),_c('circle',{cx:12,cy:12,r:3})]),
+  link:         () => _svg([_c('circle',{cx:6,cy:12,r:3}),_c('circle',{cx:18,cy:6,r:3}),_c('circle',{cx:18,cy:18,r:3}),_c('line',{x1:8.5,y1:10.5,x2:15.5,y2:7.5}),_c('line',{x1:8.5,y1:13.5,x2:15.5,y2:16.5})]),
+  ring:         () => _svg([_c('circle',{cx:12,cy:12,r:9}),_c('circle',{cx:12,cy:12,r:4})]),
+  vision:       () => _svg([_c('circle',{cx:12,cy:5,r:2}),_c('path',{d:'M12 7L6 20l6-3 6 3z'})]),
+  zoom:         () => _svg([_c('circle',{cx:11,cy:11,r:7}),_c('line',{x1:16.5,y1:16.5,x2:21,y2:21}),_c('line',{x1:8,y1:11,x2:14,y2:11}),_c('line',{x1:11,y1:8,x2:11,y2:14})]),
+  marker:       () => _svg([_c('line',{x1:5,y1:5,x2:19,y2:19}),_c('line',{x1:19,y1:5,x2:5,y2:19})]),
+  cut:          () => _svg([_c('circle',{cx:6,cy:6,r:3}),_c('circle',{cx:6,cy:18,r:3}),_c('line',{x1:20,y1:4,x2:8.12,y2:15.88}),_c('line',{x1:14.47,y1:14.48,x2:20,y2:20}),_c('line',{x1:8.12,y1:8.12,x2:12,y2:12})]),
+  eraser:       () => _svg([_c('path',{d:'M20 20H7L3 16l10-10 7 7-3.5 3.5'}),_c('path',{d:'M6 17l-3-3'})]),
+  counter_home: () => _svg([_c('circle',{cx:12,cy:12,r:9}),_c('path',{d:'M12 8v8M10 8h4',strokeWidth:2})]),
+  counter_away: () => _svg([_c('circle',{cx:12,cy:12,r:9,strokeDasharray:'3 2'}),_c('path',{d:'M9 8h6l-6 8h6',strokeWidth:2})])
 };
 const TOOL_LABELS = {
   select: 'Select',
@@ -3408,9 +3410,8 @@ function TotalMatchAnalytics() {
     }
   },
   /*#__PURE__*/React.createElement("span", {
-    style: { display:'flex', alignItems:'center', justifyContent:'center', width:18, height:18 },
-    dangerouslySetInnerHTML: { __html: TOOL_ICONS[t] }
-  }),
+    style: { display:'flex', alignItems:'center', justifyContent:'center', width:18, height:18 }
+  }, TOOL_ICONS[t] && TOOL_ICONS[t]()),
   /*#__PURE__*/React.createElement("span", {
     style: {
       fontSize: 9,
