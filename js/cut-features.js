@@ -1043,21 +1043,21 @@ function computeOverlayTransition(ov, currentTime, W, H){
 
   let alpha=1, scaleX=1, scaleY=1, tx=0, ty=0, blurPx=0;
 
-  // IN transition
+  // ── Existing IN transition (kept exactly as-is) ──────────────────
   if(inMode !== 'none' && inDur > 0 && elapsed < inDur){
     const p = elapsed / inDur; // 0→1
     if(inMode==='fadein')  alpha = p;
     else if(inMode==='zoomin'){ alpha=p; scaleX=scaleY=0.6+0.4*p; }
-    else if(inMode==='slideleft'){ tx = -(1-p); }   // fraction of W
+    else if(inMode==='slideleft'){ tx = -(1-p); }
     else if(inMode==='slideright'){ tx = (1-p); }
     else if(inMode==='slideup'){ ty = -(1-p); }
     else if(inMode==='slidedown'){ ty = (1-p); }
     else if(inMode==='blur'){ blurPx = (1-p)*16; alpha=p; }
-    else if(inMode==='wipe'){ alpha = p; } // simple for overlays
+    else if(inMode==='wipe'){ alpha = p; }
     else if(inMode==='dissolve'){ alpha = p; }
   }
 
-  // OUT transition
+  // ── Existing OUT transition (kept exactly as-is) ─────────────────
   if(outMode !== 'none' && outDur > 0 && remaining < outDur){
     const p = remaining / outDur; // 1→0
     if(outMode==='fadeout') alpha = Math.min(alpha, p);
@@ -1068,6 +1068,42 @@ function computeOverlayTransition(ov, currentTime, W, H){
     else if(outMode==='slidedown'){ ty = (1-p); }
     else if(outMode==='blur'){ blurPx = Math.max(blurPx,(1-p)*16); alpha=Math.min(alpha,p); }
     else if(outMode==='dissolve'){ alpha=Math.min(alpha,p); }
+  }
+
+  // ── NEW: animateIn (entry) — layered on top of inTransition ──────
+  const aiType = ov.animateIn?.type  || 'none';
+  const aiDur  = Math.min(ov.animateIn?.duration || 0.3, dur * 0.5);
+  if(aiType !== 'none' && aiDur > 0 && elapsed < aiDur){
+    const p = Math.max(0, Math.min(1, elapsed / aiDur)); // 0→1
+    const e = 1 - Math.pow(1-p, 2); // ease-out quad for smoother entry
+    if(aiType==='fadein')        alpha = Math.min(alpha, e);
+    else if(aiType==='slideleft'){ tx  = tx - (1-e); }
+    else if(aiType==='slideright'){ tx = tx + (1-e); }
+    else if(aiType==='slidetop'){ ty   = ty - (1-e); }
+    else if(aiType==='slidebottom'){ ty= ty + (1-e); }
+    else if(aiType==='scaleup'){   scaleX=scaleY=Math.min(scaleX, 0.05 + 0.95*e); alpha=Math.min(alpha,e); }
+    else if(aiType==='scaledown'){ scaleX=scaleY=Math.min(scaleX, 1.8 - 0.8*e); alpha=Math.min(alpha,e); }
+    else if(aiType==='zoomin'){    scaleX=scaleY=Math.min(scaleX, 0.3 + 0.7*e); alpha=Math.min(alpha,e); }
+    else if(aiType==='wipeltr')   alpha = Math.min(alpha, e);   // canvas clip handled in renderer
+    else if(aiType==='wiperltr')  alpha = Math.min(alpha, e);
+  }
+
+  // ── NEW: animateOut (exit) — layered on top of outTransition ──────
+  const aoType = ov.animateOut?.type  || 'none';
+  const aoDur  = Math.min(ov.animateOut?.duration || 0.3, dur * 0.5);
+  if(aoType !== 'none' && aoDur > 0 && remaining < aoDur){
+    const p = Math.max(0, Math.min(1, remaining / aoDur)); // 1→0
+    const e = Math.pow(p, 2); // ease-in quad for smoother exit
+    if(aoType==='fadeout')       alpha = Math.min(alpha, e);
+    else if(aoType==='slideleft'){ tx  = tx - (1-e); }
+    else if(aoType==='slideright'){ tx = tx + (1-e); }
+    else if(aoType==='slidetop'){ ty   = ty - (1-e); }
+    else if(aoType==='slidebottom'){ ty= ty + (1-e); }
+    else if(aoType==='scaledown'){ scaleX=scaleY=Math.min(scaleX, 0.05 + 0.95*e); alpha=Math.min(alpha,e); }
+    else if(aoType==='scaleup'){   scaleX=scaleY=Math.min(scaleX, 1.0 + (1-e)*0.8); alpha=Math.min(alpha,e); }
+    else if(aoType==='zoomout'){   scaleX=scaleY=Math.min(scaleX, 0.3 + 0.7*e); alpha=Math.min(alpha,e); }
+    else if(aoType==='wipeltr')   alpha = Math.min(alpha, e);
+    else if(aoType==='wiperltr')  alpha = Math.min(alpha, e);
   }
 
   return {alpha, scaleX, scaleY, tx: tx*W, ty: ty*H, blurPx};
@@ -1913,6 +1949,30 @@ window.updateOverlayProps = function(id){
         oninput="const o=window._overlays.find(o=>o.id==='${ov.id}');if(o){o.opacity=parseInt(this.value);}document.getElementById('ov-op-pct-${ov.id}').textContent=this.value+'%';if(window.syncCutVid)syncCutVid();">
       <span id="ov-op-pct-${ov.id}" style="font-size:10px;color:var(--mu);min-width:30px;text-align:right">${ov.opacity!==undefined?(ov.opacity>1?ov.opacity:Math.round(ov.opacity*100)):100}%</span>
     </div>
+    <div class="prop-section" style="color:rgba(88,200,255,0.95)">🎬 Animate In</div>
+    <div class="prop-row"><span class="prop-label" style="color:rgba(88,200,255,0.8)">Type</span>
+      <select style="flex:1;background:#161616;border:0.5px solid rgba(255,255,255,0.1);border-radius:5px;color:var(--tx);font-size:11px;padding:2px 4px;outline:none"
+        onchange="const o=window._overlays.find(o=>o.id==='${ov.id}');if(o){if(!o.animateIn)o.animateIn={type:'none',duration:0.3};o.animateIn.type=this.value;}renderOverlayTimeline();if(window.syncCutVid)syncCutVid();">
+        ${(()=>{const _ai=(ov.animateIn&&ov.animateIn.type)||'none';const _lbl={none:'None',fadein:'Fade In',slideleft:'Slide In Left',slideright:'Slide In Right',slidetop:'Slide In Top',slidebottom:'Slide In Bottom',scaleup:'Scale Up',scaledown:'Scale Down',zoomin:'Zoom In',wipeltr:'Wipe L→R',wiperltr:'Wipe R→L'};return ['none','fadein','slideleft','slideright','slidetop','slidebottom','scaleup','scaledown','zoomin','wipeltr','wiperltr'].map(t=>`<option value="${t}" ${_ai===t?'selected':''}>${_lbl[t]||t}</option>`).join('');})()}
+      </select>
+    </div>
+    <div class="prop-row"><span class="prop-label" style="color:rgba(88,200,255,0.8)">In dur</span>
+      ${inp('op-aidur',fmtN((ov.animateIn&&ov.animateIn.duration!==undefined)?ov.animateIn.duration:0.3),0.1,`const o=window._overlays.find(o=>o.id==='${ov.id}');if(o){if(!o.animateIn)o.animateIn={type:'none',duration:0.3};o.animateIn.duration=Math.min(Math.max(0.1,parseFloat(this.value)),(o.endTime-o.startTime)*0.5);renderOverlayTimeline();if(window.syncCutVid)syncCutVid();}`)}
+      <span style="font-size:10px;color:var(--mu)">s</span>
+    </div>
+
+    <div class="prop-section" style="color:rgba(200,100,255,0.95);padding-top:4px">🎬 Animate Out</div>
+    <div class="prop-row"><span class="prop-label" style="color:rgba(200,100,255,0.8)">Type</span>
+      <select style="flex:1;background:#161616;border:0.5px solid rgba(255,255,255,0.1);border-radius:5px;color:var(--tx);font-size:11px;padding:2px 4px;outline:none"
+        onchange="const o=window._overlays.find(o=>o.id==='${ov.id}');if(o){if(!o.animateOut)o.animateOut={type:'none',duration:0.3};o.animateOut.type=this.value;}renderOverlayTimeline();if(window.syncCutVid)syncCutVid();">
+        ${(()=>{const _ao=(ov.animateOut&&ov.animateOut.type)||'none';const _lbl={none:'None',fadeout:'Fade Out',slideleft:'Slide Out Left',slideright:'Slide Out Right',slidetop:'Slide Out Top',slidebottom:'Slide Out Bottom',scaledown:'Scale Down',scaleup:'Scale Up',zoomout:'Zoom Out',wipeltr:'Wipe L→R',wiperltr:'Wipe R→L'};return ['none','fadeout','slideleft','slideright','slidetop','slidebottom','scaledown','scaleup','zoomout','wipeltr','wiperltr'].map(t=>`<option value="${t}" ${_ao===t?'selected':''}>${_lbl[t]||t}</option>`).join('');})()}
+      </select>
+    </div>
+    <div class="prop-row"><span class="prop-label" style="color:rgba(200,100,255,0.8)">Out dur</span>
+      ${inp('op-aodur',fmtN((ov.animateOut&&ov.animateOut.duration!==undefined)?ov.animateOut.duration:0.3),0.1,`const o=window._overlays.find(o=>o.id==='${ov.id}');if(o){if(!o.animateOut)o.animateOut={type:'none',duration:0.3};o.animateOut.duration=Math.min(Math.max(0.1,parseFloat(this.value)),(o.endTime-o.startTime)*0.5);renderOverlayTimeline();if(window.syncCutVid)syncCutVid();}`)}
+      <span style="font-size:10px;color:var(--mu)">s</span>
+    </div>
+
     <div class="prop-section" style="color:rgba(0,220,200,0.9)">🎬 Transitions</div>
     <div class="prop-row"><span class="prop-label" style="color:rgba(0,220,200,0.8)">In</span>
       <select style="flex:1;background:#161616;border:0.5px solid rgba(255,255,255,0.1);border-radius:5px;color:var(--tx);font-size:11px;padding:2px 4px;outline:none"
