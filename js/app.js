@@ -2351,9 +2351,121 @@ const CUT_EFFECTS = [
   {name:'RGB Split',cat:'Advanced',color:'#da77f2',type:'transition',mode:'rgb_split',dur:0.5},
   {name:'VR 360 Roll',cat:'Advanced',color:'#4dabf7',type:'transition',mode:'vr_roll',dur:1},
   {name:'VR 360 Spin',cat:'Advanced',color:'#4dabf7',type:'transition',mode:'vr_spin',dur:1},
+
+  // ── VISUAL FX (props panel Effects accordion) ──
+  // Gaussian Blur already exists at index 7 (cat:'Blur')
+  // Sharpen already exists at index 8 (cat:'Blur')
+  // These are NEW multi-param effects stored in c.fx{} not S.cut.effects[]
+  {name:'Crop',       cat:'VisualFX',color:'#74c0fc',type:'fx_crop',
+   params:{left:0,right:0,top:0,bottom:0}},
+  {name:'Drop Shadow',cat:'VisualFX',color:'#495057',type:'fx_dropshadow',
+   params:{angle:135,distance:10,softness:8,opacity:70}},
+  {name:'Bevel Edges',cat:'VisualFX',color:'#868e96',type:'fx_bevel',
+   params:{width:3,softness:2}},
+  {name:'Mosaic',     cat:'VisualFX',color:'#da77f2',type:'fx_mosaic',
+   params:{size:10}},
+  {name:'Transform FX',cat:'VisualFX',color:'#4dabf7',type:'fx_transform',
+   params:{x:0,y:0,scale:100,rotation:0,opacity:100}},
 ];
 
 if(!S.cut.effects) S.cut.effects={};
+
+// ── applyClipFX: apply Visual FX (c.fx) to canvas context ───────────────
+// Called AFTER the clip frame is drawn. Handles crop, drop-shadow, bevel,
+// mosaic, and fx_transform. Returns modified ctx state.
+// c.fx = { crop:{l,r,t,b}, shadow:{angle,distance,softness,opacity},
+//           bevel:{width,softness}, mosaic:{size},
+//           fxTransform:{x,y,scale,rotation,opacity} }
+function applyClipFXPost(ctx, W, H, c){
+  if(!c || !c.fx) return;
+  const fx = c.fx;
+
+  // ── Crop ────────────────────────────────────────────────────────────────
+  // Applied as a clipping region BEFORE drawing; set via applyClipFXPre
+  // (handled below in the Pre function)
+
+  // ── Mosaic / Pixelate ────────────────────────────────────────────────────
+  if(fx.mosaic && fx.mosaic.size > 1){
+    const size = Math.max(2, Math.round(fx.mosaic.size));
+    try{
+      const imgData = ctx.getImageData(0, 0, W, H);
+      const data = imgData.data;
+      for(let py = 0; py < H; py += size){
+        for(let px = 0; px < W; px += size){
+          // Sample center pixel
+          const cx2 = Math.min(px + Math.floor(size/2), W-1);
+          const cy2 = Math.min(py + Math.floor(size/2), H-1);
+          const si = (cy2 * W + cx2) * 4;
+          const r = data[si], g = data[si+1], b = data[si+2], a = data[si+3];
+          // Fill block
+          for(let dy = 0; dy < size && py+dy < H; dy++){
+            for(let dx = 0; dx < size && px+dx < W; dx++){
+              const di = ((py+dy)*W + (px+dx)) * 4;
+              data[di]=r; data[di+1]=g; data[di+2]=b; data[di+3]=a;
+            }
+          }
+        }
+      }
+      ctx.putImageData(imgData, 0, 0);
+    }catch(e){ /* tainted canvas — skip */ }
+  }
+}
+
+function applyClipFXPre(ctx, W, H, c){
+  if(!c || !c.fx) return false; // false = no clip path applied
+  const fx = c.fx;
+  let hasCrop = false;
+
+  // ── Crop ────────────────────────────────────────────────────────────────
+  if(fx.crop){
+    const l = ((fx.crop.left  ||0)/100)*W;
+    const r = ((fx.crop.right ||0)/100)*W;
+    const t = ((fx.crop.top   ||0)/100)*H;
+    const b = ((fx.crop.bottom||0)/100)*H;
+    if(l>0||r>0||t>0||b>0){
+      ctx.beginPath();
+      ctx.rect(l, t, W-l-r, H-t-b);
+      ctx.clip();
+      hasCrop = true;
+    }
+  }
+
+  // ── Drop Shadow ──────────────────────────────────────────────────────────
+  if(fx.shadow && fx.shadow.opacity > 0){
+    const ang    = ((fx.shadow.angle||135) * Math.PI) / 180;
+    const dist   = fx.shadow.distance || 10;
+    const soft   = fx.shadow.softness || 8;
+    const opaque = (fx.shadow.opacity||70) / 100;
+    ctx.shadowOffsetX = Math.cos(ang) * dist;
+    ctx.shadowOffsetY = Math.sin(ang) * dist;
+    ctx.shadowBlur    = soft;
+    ctx.shadowColor   = `rgba(0,0,0,${opaque.toFixed(2)})`;
+  }
+
+  // ── Bevel Edges ──────────────────────────────────────────────────────────
+  // Bevel is applied as a post-draw highlight/shadow ring
+  // (rendered in applyClipFXPost as an overlay rectangle)
+
+  return hasCrop;
+}
+
+function applyClipFXBevel(ctx, W, H, c){
+  if(!c?.fx?.bevel) return;
+  const w = Math.max(1, fx.bevel?.width || 3);
+  const s = Math.max(0, fx.bevel?.softness || 2);
+  // Light edge (top-left)
+  const lg1 = ctx.createLinearGradient(0,0,w,w);
+  lg1.addColorStop(0,'rgba(255,255,255,0.4)'); lg1.addColorStop(1,'rgba(255,255,255,0)');
+  ctx.fillStyle = lg1; ctx.fillRect(0,0,W,w); ctx.fillRect(0,0,w,H);
+  // Shadow edge (bottom-right)
+  const lg2 = ctx.createLinearGradient(W,H,W-w,H-w);
+  lg2.addColorStop(0,'rgba(0,0,0,0.3)'); lg2.addColorStop(1,'rgba(0,0,0,0)');
+  ctx.fillStyle = lg2; ctx.fillRect(0,H-w,W,w); ctx.fillRect(W-w,0,w,H);
+}
+window.applyClipFXPre  = applyClipFXPre;
+window.applyClipFXPost = applyClipFXPost;
+window.applyClipFXBevel = applyClipFXBevel;
+
 
 function cutEffectsHTML() {
   const ci=S.cut.sel;
@@ -2585,6 +2697,21 @@ function buildFilterStr(ci){
     if(e.type==='range') parts.push(e.prop+'('+ef.v+e.unit+')');
     else if(e.type==='toggle') parts.push(e.filter);
   });
+  // ── c.fx (Visual FX accordion) ──────────────────────────────────────────
+  const _fx = clip?.fx;
+  if(_fx){
+    if(_fx.blur?.radius > 0)         parts.push(`blur(${_fx.blur.radius}px)`);
+    if(_fx.sharpen?.amount > 0)      { const sv = 1 + _fx.sharpen.amount/100; parts.push(`contrast(${sv.toFixed(3)}) saturate(${(1+_fx.sharpen.amount/200).toFixed(3)})`); }
+    if(_fx.shadow?.opacity > 0){
+      const ang  = (_fx.shadow.angle||135)*Math.PI/180;
+      const dist = _fx.shadow.distance||10;
+      const soft = _fx.shadow.softness||8;
+      const opq  = (_fx.shadow.opacity||70)/100;
+      const ox   = (Math.cos(ang)*dist).toFixed(1);
+      const oy   = (Math.sin(ang)*dist).toFixed(1);
+      parts.push(`drop-shadow(${ox}px ${oy}px ${soft}px rgba(0,0,0,${opq.toFixed(2)}))`);
+    }
+  }
   return parts.length?parts.join(' '):'none';
 }
 
@@ -3328,6 +3455,82 @@ function updatePropsPanel(ci){
         </div>
       </div>
     </div>
+    ${(c.type==='video'||c.type==='image') ? `
+    <div style="border:0.5px solid rgba(88,166,255,0.2);border-radius:8px;margin:4px 0;overflow:hidden;background:rgba(88,166,255,0.03)">
+      <div style="display:flex;align-items:center;padding:8px 10px;cursor:pointer;user-select:none;gap:8px"
+        onclick="const el=document.getElementById('acc-fx-${ci}');el.hidden=!el.hidden;this.querySelector('.acc-chv').style.transform=el.hidden?'rotate(-90deg)':'rotate(0deg)'">
+        <div style="width:3px;height:28px;border-radius:2px;background:linear-gradient(180deg,#58a6ff,#74c0fc);flex-shrink:0"></div>
+        <div style="flex:1;min-width:0">
+          <div style="font-size:11px;font-weight:700;color:#fff;letter-spacing:0.3px">⚡ Effects</div>
+          <div style="font-size:10px;color:rgba(255,255,255,0.4);margin-top:1px">${c.fx&&Object.values(c.fx).some(v=>v&&typeof v==='object')?'FX active':'No effects applied'}</div>
+        </div>
+        <span class="acc-chv" style="font-size:9px;color:rgba(255,255,255,0.3);transition:transform 0.2s">▼</span>
+      </div>
+      <div id="acc-fx-${ci}" hidden style="padding:0 6px 8px">
+
+        <div class="prop-section" style="color:rgba(88,166,255,0.9)">🔵 Gaussian Blur</div>
+        <div class="prop-row"><span class="prop-label">Radius</span>
+          <input type="range" min="0" max="40" step="0.5" value="${c.fx&&c.fx.blur?c.fx.blur.radius:0}" style="flex:1;accent-color:#58a6ff"
+            oninput="const _c=S.cut.clips[${ci}];if(!_c.fx)_c.fx={};if(!_c.fx.blur)_c.fx.blur={};_c.fx.blur.radius=parseFloat(this.value);this.nextElementSibling.textContent=this.value+'px';if(window.syncCutVid)syncCutVid();">
+          <span style="font-size:10px;color:var(--mu);min-width:30px;text-align:right">${c.fx&&c.fx.blur?c.fx.blur.radius:0}px</span>
+        </div>
+
+        <div class="prop-section" style="color:rgba(88,166,255,0.9);padding-top:6px">🔶 Sharpen</div>
+        <div class="prop-row"><span class="prop-label">Amount</span>
+          <input type="range" min="0" max="100" step="1" value="${c.fx&&c.fx.sharpen?c.fx.sharpen.amount:0}" style="flex:1;accent-color:#58a6ff"
+            oninput="const _c=S.cut.clips[${ci}];if(!_c.fx)_c.fx={};if(!_c.fx.sharpen)_c.fx.sharpen={};_c.fx.sharpen.amount=parseFloat(this.value);this.nextElementSibling.textContent=this.value;if(window.syncCutVid)syncCutVid();">
+          <span style="font-size:10px;color:var(--mu);min-width:28px;text-align:right">${c.fx&&c.fx.sharpen?c.fx.sharpen.amount:0}</span>
+        </div>
+
+        <div class="prop-section" style="color:rgba(88,166,255,0.9);padding-top:6px">✂ Crop</div>
+        ${[['Left','left'],['Right','right'],['Top','top'],['Bottom','bottom']].map(([lbl,key])=>`
+        <div class="prop-row"><span class="prop-label">${lbl}</span>
+          <input type="range" min="0" max="50" step="0.5" value="${c.fx&&c.fx.crop?c.fx.crop[key]||0:0}" style="flex:1;accent-color:#74c0fc"
+            oninput="const _c=S.cut.clips[${ci}];if(!_c.fx)_c.fx={};if(!_c.fx.crop)_c.fx.crop={left:0,right:0,top:0,bottom:0};_c.fx.crop['${key}']=parseFloat(this.value);this.nextElementSibling.textContent=this.value+'%';if(window.syncCutVid)syncCutVid();">
+          <span style="font-size:10px;color:var(--mu);min-width:30px;text-align:right">${c.fx&&c.fx.crop?c.fx.crop[key]||0:0}%</span>
+        </div>`).join('')}
+
+        <div class="prop-section" style="color:rgba(88,166,255,0.9);padding-top:6px">🌑 Drop Shadow</div>
+        ${[['Angle','angle',0,360,135],['Distance','distance',0,100,10],['Softness','softness',0,50,8],['Opacity','opacity',0,100,70]].map(([lbl,key,mn,mx,def])=>`
+        <div class="prop-row"><span class="prop-label">${lbl}</span>
+          <input type="range" min="${mn}" max="${mx}" step="1" value="${c.fx&&c.fx.shadow?c.fx.shadow[key]||def:def}" style="flex:1;accent-color:#495057"
+            oninput="const _c=S.cut.clips[${ci}];if(!_c.fx)_c.fx={};if(!_c.fx.shadow)_c.fx.shadow={angle:135,distance:10,softness:8,opacity:0};_c.fx.shadow['${key}']=parseFloat(this.value);this.nextElementSibling.textContent=this.value;if(window.syncCutVid)syncCutVid();">
+          <span style="font-size:10px;color:var(--mu);min-width:28px;text-align:right">${c.fx&&c.fx.shadow?c.fx.shadow[key]||def:def}</span>
+        </div>`).join('')}
+
+        <div class="prop-section" style="color:rgba(88,166,255,0.9);padding-top:6px">🔷 Bevel Edges</div>
+        ${[['Width','width',0,20,3],['Softness','softness',0,10,2]].map(([lbl,key,mn,mx,def])=>`
+        <div class="prop-row"><span class="prop-label">${lbl}</span>
+          <input type="range" min="${mn}" max="${mx}" step="0.5" value="${c.fx&&c.fx.bevel?c.fx.bevel[key]||def:def}" style="flex:1;accent-color:#868e96"
+            oninput="const _c=S.cut.clips[${ci}];if(!_c.fx)_c.fx={};if(!_c.fx.bevel)_c.fx.bevel={width:3,softness:2};_c.fx.bevel['${key}']=parseFloat(this.value);this.nextElementSibling.textContent=this.value;if(window.syncCutVid)syncCutVid();">
+          <span style="font-size:10px;color:var(--mu);min-width:28px;text-align:right">${c.fx&&c.fx.bevel?c.fx.bevel[key]||def:def}</span>
+        </div>`).join('')}
+
+        <div class="prop-section" style="color:rgba(88,166,255,0.9);padding-top:6px">⬛ Mosaic</div>
+        <div class="prop-row"><span class="prop-label">Block Size</span>
+          <input type="range" min="1" max="80" step="1" value="${c.fx&&c.fx.mosaic?c.fx.mosaic.size||1:1}" style="flex:1;accent-color:#da77f2"
+            oninput="const _c=S.cut.clips[${ci}];if(!_c.fx)_c.fx={};if(!_c.fx.mosaic)_c.fx.mosaic={};_c.fx.mosaic.size=parseFloat(this.value);this.nextElementSibling.textContent=this.value+'px';if(window.syncCutVid)syncCutVid();">
+          <span style="font-size:10px;color:var(--mu);min-width:30px;text-align:right">${c.fx&&c.fx.mosaic?c.fx.mosaic.size||1:1}px</span>
+        </div>
+
+        <div class="prop-section" style="color:rgba(88,166,255,0.9);padding-top:6px">↔ Transform FX</div>
+        <div style="font-size:10px;color:rgba(255,255,255,0.3);padding:0 4px 4px">Extra position/scale pass on top of motion transform</div>
+        ${[['X','x',-100,100,0,'%'],['Y','y',-100,100,0,'%'],['Scale','scale',0,400,100,'%'],['Rotation','rotation',-180,180,0,'\u00b0']].map(([lbl,key,mn,mx,def,unit])=>`
+        <div class="prop-row"><span class="prop-label">${lbl}</span>
+          <input type="range" min="${mn}" max="${mx}" step="${key==='scale'?1:0.5}" value="${c.fx&&c.fx.fxTransform?c.fx.fxTransform[key]||def:def}" style="flex:1;accent-color:#4dabf7"
+            oninput="const _c=S.cut.clips[${ci}];if(!_c.fx)_c.fx={};if(!_c.fx.fxTransform)_c.fx.fxTransform={x:0,y:0,scale:100,rotation:0};_c.fx.fxTransform['${key}']=parseFloat(this.value);this.nextElementSibling.textContent=parseFloat(this.value).toFixed(1)+unit;if(window.syncCutVid)syncCutVid();">
+          <span style="font-size:10px;color:var(--mu);min-width:36px;text-align:right">${(c.fx&&c.fx.fxTransform?c.fx.fxTransform[key]||def:def)}${unit}</span>
+        </div>`).join('')}
+
+        <div class="prop-row" style="padding-top:4px">
+          <button onclick="S.cut.clips[${ci}].fx={};updatePropsPanel(${ci});if(window.syncCutVid)syncCutVid();"
+            style="flex:1;padding:4px;background:rgba(255,255,255,0.04);border:0.5px solid rgba(255,255,255,0.08);border-radius:5px;color:rgba(255,255,255,0.4);font-size:10px;cursor:pointer;font-family:'DM Sans',sans-serif">
+            Reset Effects
+          </button>
+        </div>
+
+      </div>
+    </div>` : ''}
     ${(c.type==='video'||c.type==='image') ? `
     <div style="border:0.5px solid rgba(255,200,50,0.2);border-radius:8px;margin:4px 0;overflow:hidden;background:rgba(255,200,50,0.03)">
       <div style="display:flex;align-items:center;padding:8px 10px;cursor:pointer;user-select:none;gap:8px"
@@ -6138,6 +6341,8 @@ function syncCutVid(){
           if(iAR > cAR){ dw = canvas.width * sx; dh = (canvas.width/iAR) * sy; }
           else          { dh = canvas.height * sy; dw = (canvas.height*iAR) * sx; }
           ctx.save();
+          // Pre-FX: crop (clip-path) and drop-shadow
+          if(window.applyClipFXPre) applyClipFXPre(ctx, canvas.width, canvas.height, c);
           const _colorFlt = window.buildColorFilterStr ? window.buildColorFilterStr(c) : 'none';
           const _fullFlt = [flt, _colorFlt].filter(f=>f&&f!=='none').join(' ') || 'none';
           if(tf.antiFlicker){ ctx.filter = (_fullFlt !== 'none' ? _fullFlt + ' ' : '') + 'blur(0.3px)'; }
@@ -6146,8 +6351,18 @@ function syncCutVid(){
           ctx.globalCompositeOperation = blendMode;
           ctx.translate(canvas.width/2 + tx - axOff, canvas.height/2 + ty - ayOff);
           if(rot) ctx.rotate(rot);
+          // Transform FX: extra position/scale/rotation pass
+          if(c.fx?.fxTransform){
+            const _fxt = c.fx.fxTransform;
+            if(_fxt.x||_fxt.y) ctx.translate((_fxt.x||0)/100*canvas.width, (_fxt.y||0)/100*canvas.height);
+            if(_fxt.scale&&_fxt.scale!==100){ const _fxs=_fxt.scale/100; ctx.scale(_fxs,_fxs); }
+            if(_fxt.rotation) ctx.rotate(_fxt.rotation*Math.PI/180);
+          }
           try{ ctx.drawImage(imgSrc, -dw/2, -dh/2, dw, dh); _anythingDrawn = true; }catch(e){}
-          ctx.filter = 'none'; ctx.globalAlpha = 1; ctx.globalCompositeOperation = 'source-over'; ctx.restore();
+          ctx.filter = 'none'; ctx.shadowColor = 'transparent'; ctx.shadowBlur = 0;
+          ctx.globalAlpha = 1; ctx.globalCompositeOperation = 'source-over'; ctx.restore();
+          // Post-FX: mosaic (pixel-level, applied after draw)
+          if(window.applyClipFXPost) applyClipFXPost(ctx, canvas.width, canvas.height, c);
           return;
         }
 
