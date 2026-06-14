@@ -453,12 +453,37 @@ window.openProject = async function(id) {
     S.cut = {
       clips:       cs.clips       || [],
       effects:     cs.effects     || {},
-      videoTracks: cs.videoTracks || 1,
+      videoTracks: cs.videoTracks || 2,  // default=2 matches new-project creation default
       audioTracks: cs.audioTracks || 2,
-      mutedTracks: cs.mutedTracks || {},   // BUG2 FIX: restore muted state
+      mutedTracks: cs.mutedTracks || {},
       media:       restoredMedia,
       sel: null, ph: 0, playing: false, tick: null, _hist: [], _histIdx: -1
     };
+
+    // BUG2 FIX: infer videoTracks/audioTracks from clip data for old projects
+    // where these fields were never saved to Firestore (cs.videoTracks=undefined)
+    if (!cs.videoTracks) {
+      const _vClips = S.cut.clips.filter(c => c.type==='video'||c.type==='image'||c.type==='frame_hold');
+      const _aClips = S.cut.clips.filter(c => c.type==='audio');
+      const _maxV = _vClips.length ? Math.max(..._vClips.map(c=>c.track||0)) + 1 : 1;
+      const _minA = _aClips.length ? Math.min(..._aClips.map(c=>c.track||999)) : null;
+      S.cut.videoTracks = _minA !== null ? Math.min(_maxV, _minA) : _maxV;
+      S.cut.videoTracks = Math.max(1, S.cut.videoTracks);
+      const _maxA = _aClips.length ? Math.max(..._aClips.map(c=>c.track||0)) : S.cut.videoTracks;
+      S.cut.audioTracks = Math.max(1, _maxA - S.cut.videoTracks + 1);
+    }
+
+    // Validate clip tracks: ensure video clips stay on video rows, audio on audio rows
+    // This fixes any misassignment from saved state or old default mismatch
+    S.cut.clips.forEach(c => {
+      const isVisual = c.type==='video'||c.type==='image'||c.type==='frame_hold';
+      const isAudio  = c.type==='audio';
+      if (isVisual && c.track >= S.cut.videoTracks) {
+        c.track = Math.min(c.track, S.cut.videoTracks - 1);
+      } else if (isAudio && c.track < S.cut.videoTracks) {
+        c.track = S.cut.videoTracks;  // bump to first audio row
+      }
+    });
     // BUG4 FIX: remap effects from UUID-keyed back to array-index-keyed
     // Handles both old format (numeric keys) and new format (UUID_idx keys)
     if(S.cut.effects && S.cut.clips.length){
