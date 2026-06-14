@@ -599,44 +599,54 @@ function showImageBgDialog(){
       const file=document.getElementById('img-file').files[0];
       if(!file){notify('Select an image file','#E31837');return;}
       const _blobUrl = URL.createObjectURL(file);
-      ov.url  = _blobUrl;
       ov.name = file.name;
 
-      // ── Add to media library so image persists and user can reuse/edit it ──
-      const S = window.S;
-      if(S && S.cut){
-        // Check if already in media (avoid duplicates by name)
-        let _mediaIdx = S.cut.media.findIndex(m => m.name === file.name && m.type === 'image');
-        if(_mediaIdx === -1){
-          const _item = { name: file.name, type: 'image', file: file, url: _blobUrl, duration: 5, thumbnail: null };
-          S.cut.media.push(_item);
-          _mediaIdx = S.cut.media.length - 1;
-          // Generate thumbnail
-          const _tImg = new Image();
-          _tImg.onload = () => {
-            const _tc = document.createElement('canvas');
-            _tc.width = 64; _tc.height = 36;
-            const _tCtx = _tc.getContext('2d');
-            const _ar = _tImg.naturalWidth / _tImg.naturalHeight;
-            const _tw = _ar > 64/36 ? 64 : 36 * _ar;
-            const _th = _ar > 64/36 ? 64 / _ar : 36;
-            _tCtx.drawImage(_tImg, (64-_tw)/2, (36-_th)/2, _tw, _th);
-            _item.thumbnail = _tc.toDataURL();
-            if(window.buildBinList) buildBinList();
-          };
-          _tImg.src = _blobUrl;
+      // BUG2 FIX: always register image in central media library with a UUID.
+      // Previous code deduped by name (collision) and stored ov.mediaIdx (index).
+      // Now: always create a new entry with UUID — two files with same name are
+      // independent assets. Overlay stores ov.mediaId (UUID) not ov.mediaIdx.
+      const _S = window.S;
+      if(_S && _S.cut){
+        // Generate UUID for this image asset (same system as handleCutFiles)
+        const _imgUUID = 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => {
+          const r = Math.random() * 16 | 0;
+          return (c === 'x' ? r : (r & 0x3 | 0x8)).toString(16);
+        });
+        const _item = {
+          id: _imgUUID, mediaId: _imgUUID,
+          name: file.name, type: 'image',
+          file: file, url: _blobUrl, duration: 5, thumbnail: null
+        };
+        _S.cut.media.push(_item);
+
+        // Generate thumbnail
+        const _tImg = new Image();
+        _tImg.onload = () => {
+          const _tc = document.createElement('canvas');
+          _tc.width = 64; _tc.height = 36;
+          const _tCtx = _tc.getContext('2d');
+          const _ar = _tImg.naturalWidth / _tImg.naturalHeight;
+          const _tw = _ar > 64/36 ? 64 : 36 * _ar;
+          const _th = _ar > 64/36 ? 64 / _ar : 36;
+          _tCtx.drawImage(_tImg, (64-_tw)/2, (36-_th)/2, _tw, _th);
+          _item.thumbnail = _tc.toDataURL();
           if(window.buildBinList) buildBinList();
-          // Save to IndexedDB under plain name (same as timeline media)
-          const _projId = S.currentProject?.id;
-          if(_projId && window.saveMediaFile){
-            window.saveMediaFile(_projId, file).catch(e => console.warn('Overlay image save failed:', e));
-          }
-        } else {
-          // Already in media — reuse its url (may be fresher blob)
-          ov.url = S.cut.media[_mediaIdx].url || _blobUrl;
+        };
+        _tImg.src = _blobUrl;
+        if(window.buildBinList) buildBinList();
+
+        // Save to IndexedDB under UUID key — collision-free
+        const _projId = _S.currentProject?.id;
+        if(_projId && window.saveMediaFile){
+          window.saveMediaFile(_projId, file, _imgUUID)
+            .catch(e => console.warn('Overlay image save failed:', e));
         }
-        // Store mediaIdx reference on overlay for future URL restoration
-        ov.mediaIdx = _mediaIdx;
+
+        // Overlay stores UUID reference — never array index
+        ov.mediaId  = _imgUUID;
+        ov.url      = _blobUrl; // runtime blob URL (regenerated from mediaId on reload)
+      } else {
+        ov.url = _blobUrl; // fallback if no project context
       }
     } else if(type==='color'){
       ov.color=document.getElementById('img-color').value;

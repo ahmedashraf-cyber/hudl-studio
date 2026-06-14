@@ -1372,6 +1372,20 @@ async function startExport(){
   await Promise.all([...new Set(videoClips.map(c=>c.mediaId).filter(Boolean))].map(mIdx=>{
     const item=getMediaById(mIdx);
     if(!item?.url)return Promise.resolve();
+    // BUG1 FIX: images must use <img> not <video>
+    // A <video> with an image src waits up to 12s for loadeddata that never fires,
+    // causing the app to freeze/hang when any image clip exists on the timeline.
+    if(item.type==='image'){
+      const img = new Image();
+      img.src = item.url;
+      drawEls[mIdx] = img;
+      return new Promise(r=>{
+        if(img.complete){r();return;}
+        img.onload  = r;
+        img.onerror = r;
+        setTimeout(r, 5000);
+      });
+    }
     const v=document.createElement('video');
     v.muted=true;v.volume=0;v.preload='auto';v.playsInline=true;
     // Must be visible in viewport for Chrome to decode blob URLs
@@ -1518,11 +1532,13 @@ async function startExport(){
         const clip=videoClips.find(c=>t>=c.start&&t<c.start+c.dur);
         if(clip){
           const vid=drawEls[clip.mediaId];
+          const _isImgClip = clip.type==='image'; // BUG1 FIX: images use <img>, not <video>
           const ci=videoClips.indexOf(clip);
           if(ci!==lastClipIdx){
-            if(lastVid&&lastVid!==vid&&!lastVid.paused)lastVid.pause();
-            lastClipIdx=ci; lastVid=vid;
-            if(vid){
+            if(!_isImgClip&&lastVid&&lastVid!==vid&&!lastVid.paused)lastVid.pause();
+            lastClipIdx=ci;
+            if(!_isImgClip) lastVid=vid;
+            if(vid && !_isImgClip){
               const ft=(clip.fileStart||0)+Math.max(0,(t-clip.start)*(clip.speed||1));
               vid.muted=true;vid.volume=0;vid.playbackRate=clip.speed||1;
               vid.currentTime=ft;
@@ -1530,7 +1546,9 @@ async function startExport(){
             }
           }
           ctx.fillStyle='#000';ctx.fillRect(0,0,W,H);
-          if(vid&&vid.readyState>=2){
+          // Image clips: draw immediately when loaded (complete), no readyState check
+          const _drawReady = _isImgClip ? (vid && vid.complete) : (vid && vid.readyState>=2);
+          if(_drawReady){
             const ci2=S.cut.clips.indexOf(clip),vp=[];
             (S.cut.effects[ci2]||[]).forEach(ef=>{if(ef.visible===false)return;const e=CUT_EFFECTS[ef.i];if(!e||e.type==='transition')return;const es=clip.start+(ef.startOffset||0),ee=es+(ef.effectDur??clip.dur);if(t<es||t>=ee)return;if(e.type==='range')vp.push(e.prop+'('+ef.v+e.unit+')');else if(e.type==='toggle')vp.push(e.filter);});
             ctx.save();if(vp.length)ctx.filter=vp.join(' ');
