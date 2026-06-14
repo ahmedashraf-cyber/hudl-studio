@@ -1540,7 +1540,7 @@ async function startExport(){
             if(!_isImgClip) lastVid=vid;
             if(vid && !_isImgClip){
               const ft=(clip.fileStart||0)+Math.max(0,(t-clip.start)*(clip.speed||1));
-              vid.muted=true;vid.volume=0;vid.playbackRate=clip.speed||1;
+              vid.muted=true;vid.volume=0;vid.playbackRate=(clip.reverse?-(clip.speed||1):(clip.speed||1));
               vid.currentTime=ft;
               vid.play().catch(()=>{});
             }
@@ -2961,9 +2961,26 @@ function updatePropsPanel(ci){
 
     <div class="prop-row"><span class="prop-label">Volume</span>
       <input type="range" id="vol-val-${ci}-input" min="0" max="200" value="${Math.round(vol*100)}" style="flex:1;accent-color:#E8590C"
-        oninput="S.cut.clips[${ci}].volume=this.value/100;if(!S.cut.clips[${ci}].audioFx)S.cut.clips[${ci}].audioFx={};S.cut.clips[${ci}].audioFx.volume=parseInt(this.value);document.getElementById('vol-pct-${ci}').textContent=this.value+'%';_applyPropToSelected('volume',this.value/100,${ci})">
+        oninput="S.cut.clips[${ci}].volume=this.value/100;if(!S.cut.clips[${ci}].audioFx)S.cut.clips[${ci}].audioFx={};S.cut.clips[${ci}].audioFx.volume=parseInt(this.value);document.getElementById('vol-pct-${ci}').textContent=this.value+'%';document.getElementById('vol-db-${ci}').textContent=(this.value>0?(20*Math.log10(this.value/100)).toFixed(1):'\u2212\u221e')+' dB';_applyPropToSelected('volume',this.value/100,${ci})">
       <span id="vol-pct-${ci}" style="font-size:10px;color:var(--mu);min-width:32px;text-align:right">${Math.round(vol*100)}%</span>
     </div>
+    <div class="prop-row">
+      <span class="prop-label" style="color:rgba(255,255,255,0.4)">Level</span>
+      <span id="vol-db-${ci}" style="font-size:10px;color:var(--mu);font-family:'DM Mono',monospace">${vol>0?(20*Math.log10(vol)).toFixed(1):'-∞'} dB</span>
+      <span style="flex:1"></span>
+      <label style="display:flex;align-items:center;gap:5px;cursor:pointer">
+        <input type="checkbox" id="clip-mute-${ci}" ${c.muted?'checked':''} style="accent-color:#E31837;width:13px;height:13px"
+          onchange="S.cut.clips[${ci}].muted=this.checked;syncCutVid();">
+        <span style="font-size:10px;color:${c.muted?'#ff453a':'var(--mu)'}">Mute</span>
+      </label>
+    </div>
+    <div class="prop-row"><span class="prop-label">Channel</span>
+      <select style="flex:1;background:#161616;border:0.5px solid rgba(255,255,255,0.1);border-radius:5px;color:var(--tx);font-size:10px;padding:2px 4px;outline:none"
+        onchange="S.cut.clips[${ci}].audioChannel=this.value;syncCutVid();">
+        ${['stereo','left','right','mono'].map(ch=>`<option value="${ch}" ${(c.audioChannel||'stereo')===ch?'selected':''}>${ch.charAt(0).toUpperCase()+ch.slice(1)}</option>`).join('')}
+      </select>
+    </div>
+
     <div class="prop-section" style="padding-top:6px" style="color:rgba(255,220,80,0.9)">🎚 Fade</div>
     <div class="prop-row">
       <span class="prop-label" style="color:rgba(255,220,80,0.8)">Fade In</span>
@@ -3133,9 +3150,18 @@ function updatePropsPanel(ci){
           <span style="font-size:10px;color:var(--mu)">%</span>
         </div>
         <div class="prop-row">
+          <span class="prop-label">Reverse</span>
+          <label style="display:flex;align-items:center;gap:6px;cursor:pointer">
+            <input type="checkbox" id="spd-rev-${ci}" ${c.reverse?'checked':''} style="accent-color:#E8590C;width:14px;height:14px"
+              onchange="S.cut.clips[${ci}].reverse=this.checked;syncCutVid();cutSaveHistory('reverse');">
+            <span style="font-size:10px;color:var(--mu)">Play backwards</span>
+          </label>
+        </div>
+        <div class="prop-row" style="gap:4px">
           <button onclick="showSpeedDialog(${ci})" style="flex:1;padding:5px;background:rgba(232,89,12,0.08);border:0.5px solid rgba(232,89,12,0.2);border-radius:6px;color:#E8590C;font-size:10px;cursor:pointer;font-family:'DM Sans',sans-serif;font-weight:600">
             ⚡ Speed / Duration…
           </button>
+          ${c.type==='video'?`<button onclick="insertFrameHold(${ci})" title="Insert frame-hold at playhead" style="padding:5px 7px;background:rgba(88,166,255,0.08);border:0.5px solid rgba(88,166,255,0.2);border-radius:6px;color:#58a6ff;font-size:10px;cursor:pointer;font-family:'DM Sans',sans-serif;font-weight:600">🖼 Frame Hold</button>`:''}
         </div>
       </div>
     </div>
@@ -5381,7 +5407,8 @@ function _syncVideoMute(){
   const clip = !isNaN(ci) ? S.cut.clips[ci] : null;
   const trackMuted = clip ? !!(S.cut.mutedTracks?.[clip.track]) : false;
   const nativeMuted = clip ? !!(clip.nativeAudioMuted) : false;
-  mv.muted = trackMuted || nativeMuted;
+  const clipMuted = clip ? !!(clip.muted) : false;
+  mv.muted = trackMuted || nativeMuted || clipMuted;
 }
 
 function stopCutPlay(){
@@ -5509,6 +5536,7 @@ function syncAudioPlayback(){
       }
       // Apply fade gain
       a.volume = Math.min(1, getClipGainAtPh(activeClip, ph));
+      a.muted = !!(activeClip.muted);
     }
   });
   // Start audio for clips not yet in cache
