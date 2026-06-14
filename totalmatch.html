@@ -5629,3 +5629,102 @@ root.render(/*#__PURE__*/React.createElement(AppErrorBoundary, null, /*#__PURE__
 </script>
 </body>
 </html>
+<!-- Hudl Studio Identity Override — appended post-</html>, zero code changes -->
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600;700&family=DM+Mono:wght@400;500&display=swap');
+
+  /* ── Remap ZonaLanes variables to Hudl Studio palette ── */
+  :root {
+    --void:    #070c12 !important;
+    --bg:      #070c12 !important;
+    --panel:   #0b1018 !important;
+    --raised:  #0f1218 !important;
+    --surface: #161b24 !important;
+    --elevated:#1e2533 !important;
+    --hover:   #252d3d !important;
+    --border:  rgba(255,255,255,0.06) !important;
+    --border2: rgba(255,255,255,0.11) !important;
+    --txt:     #f0f2f5 !important;
+    --txt2:    #8b949e !important;
+    --txt3:    #6a737d !important;
+    /* Replace mint (green) with Hudl orange */
+    --mint:    #E8590C !important;
+    --mint-s:  rgba(232,89,12,0.10) !important;
+    /* Replace fire (orange-red) with Hudl orange */
+    --fire:    #E8590C !important;
+    --fire-s:  rgba(232,89,12,0.10) !important;
+    --r:       6px !important;
+    --shadow:  0 2px 16px rgba(0,0,0,0.6) !important;
+    --t:       0.18s cubic-bezier(0.4,0,0.2,1) !important;
+  }
+
+  /* ── Font: DM Sans everywhere ── */
+  html, body, button, input, select, textarea {
+    font-family: 'DM Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif !important;
+  }
+
+  /* ── Topbar: Hudl blur titlebar style ── */
+  [style*="background:#0A0D10"][style*="borderBottom"],
+  [style*="background: #0A0D10"][style*="borderBottom"] {
+    background: rgba(7,12,18,0.88) !important;
+    backdrop-filter: saturate(180%) blur(24px) !important;
+    -webkit-backdrop-filter: saturate(180%) blur(24px) !important;
+    border-bottom: 0.5px solid rgba(255,255,255,0.06) !important;
+    height: 44px !important;
+  }
+
+  /* ── Primary/CTA buttons: Hudl orange gradient ── */
+  button[style*="background:#00E676"],
+  button[style*="background: #00E676"],
+  button[style*="background:#FF5722"],
+  button[style*="background: #FF5722"],
+  button[style*="backgroundColor:#00E676"],
+  button[style*="backgroundColor: #00E676"] {
+    background: linear-gradient(180deg, #FF6B1F 0%, #E8590C 100%) !important;
+    box-shadow: 0 1px 0 rgba(255,255,255,0.15) inset, 0 2px 8px rgba(232,89,12,0.35) !important;
+    color: #fff !important;
+    border: none !important;
+  }
+
+  /* ── Active tab indicator: orange not green ── */
+  .tab-btn.active {
+    color: #E8590C !important;
+    border-bottom: 2px solid #E8590C !important;
+    background: rgba(232,89,12,0.08) !important;
+  }
+
+  /* ── Focus ring: orange ── */
+  :focus-visible {
+    outline: 2px solid rgba(232,89,12,0.7) !important;
+    outline-offset: 1px !important;
+  }
+
+  /* ── Selection highlight: orange ── */
+  ::selection {
+    background: rgba(232,89,12,0.25) !important;
+    color: #fff !important;
+  }
+
+  /* ── Toggle switch checked: orange ── */
+  input:checked + .slider {
+    background-color: rgba(232,89,12,0.15) !important;
+    border-color: #E8590C !important;
+  }
+  input:checked + .slider:before {
+    background-color: #E8590C !important;
+  }
+
+  /* ── Scrollbar thumb: orange ── */
+  ::-webkit-scrollbar-thumb {
+    background: rgba(232,89,12,0.35) !important;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: rgba(232,89,12,0.55) !important;
+  }
+
+  /* ── Recording pulse: keep red (correct signal) ── */
+  .recording-btn {
+    background-color: #E31837 !important;
+    border-color: #E31837 !important;
+  }
+</style>
