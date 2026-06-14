@@ -2588,6 +2588,45 @@ function buildFilterStr(ci){
   return parts.length?parts.join(' '):'none';
 }
 
+// ── buildColorFilterStr: Lumetri-style color correction via CSS filters ──
+// Reads c.colorGrade and returns a CSS filter string that stacks on top
+// of buildFilterStr (effects). Called wherever buildFilterStr is called.
+// All values are at their neutral/identity when not set.
+function buildColorFilterStr(c){
+  if(!c || !c.colorGrade) return 'none';
+  const g = c.colorGrade;
+  const parts = [];
+
+  // Basic Correction
+  const brightness = ((g.exposure   || 0) / 100) + 1;    // -100..+100 → 0..2
+  const contrast   =  (g.contrast   || 0) + 100;          // -100..+100 → 0..200
+  const saturate   =  (g.saturation || 0) + 100;          // -100..+100 → 0..200
+  const hueRot     =   g.temperature || 0;                 // degrees
+  const tintRot    =   g.tint        || 0;
+  // Highlights/Shadows/Whites/Blacks approximate via brightness+contrast combo
+  const highAdj    =  1 + (g.highlights || 0) / 200;
+  const shadAdj    =  1 - (g.shadows    || 0) / 200;
+  const whtAdj     =  1 + (g.whites     || 0) / 200;
+  const blkAdj     =  1 - (g.blacks     || 0) / 200;
+  const compBrightness = brightness * highAdj * shadAdj * whtAdj * blkAdj;
+
+  if(Math.abs(compBrightness - 1) > 0.001)  parts.push(`brightness(${compBrightness.toFixed(3)})`);
+  if(Math.abs(contrast - 100) > 0.5)        parts.push(`contrast(${contrast.toFixed(1)}%)`);
+  if(Math.abs(saturate - 100) > 0.5)        parts.push(`saturate(${saturate.toFixed(1)}%)`);
+  if(Math.abs(hueRot)         > 0.5)        parts.push(`hue-rotate(${hueRot.toFixed(1)}deg)`);
+  if(Math.abs(tintRot)        > 0.5)        parts.push(`hue-rotate(${(tintRot * 0.5).toFixed(1)}deg)`);
+
+  // Creative
+  if(g.fadedFilm  > 0)  parts.push(`opacity(${(1 - g.fadedFilm/200).toFixed(3)})`,`brightness(${(1+g.fadedFilm/300).toFixed(3)})`);
+  if(g.sharpen    > 0)  parts.push(`contrast(${(1+g.sharpen/200).toFixed(3)})`,`saturate(${(1+g.sharpen/300).toFixed(3)})`);
+  if(g.vibrance   > 0)  parts.push(`saturate(${(1+g.vibrance/150).toFixed(3)})`);
+  if(g.vibrance   < 0)  parts.push(`saturate(${(1+g.vibrance/300).toFixed(3)})`);
+
+  return parts.length ? parts.join(' ') : 'none';
+}
+window.buildColorFilterStr = buildColorFilterStr;
+
+
 function cutColorHTML() {
   return `<div class="psec"><div class="psec-label">Color Wheels</div>
     <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;margin-bottom:10px">
@@ -3288,7 +3327,76 @@ function updatePropsPanel(ci){
           }).join('')}
         </div>
       </div>
-    </div>`:''}
+    </div>
+    ${(c.type==='video'||c.type==='image') ? `
+    <div style="border:0.5px solid rgba(255,200,50,0.2);border-radius:8px;margin:4px 0;overflow:hidden;background:rgba(255,200,50,0.03)">
+      <div style="display:flex;align-items:center;padding:8px 10px;cursor:pointer;user-select:none;gap:8px"
+        onclick="const el=document.getElementById('acc-col-${ci}');el.hidden=!el.hidden;this.querySelector('.acc-chv').style.transform=el.hidden?'rotate(-90deg)':'rotate(0deg)'">
+        <div style="width:3px;height:28px;border-radius:2px;background:linear-gradient(180deg,#ffd43b,#ff922b);flex-shrink:0"></div>
+        <div style="flex:1;min-width:0">
+          <div style="font-size:11px;font-weight:700;color:#fff;letter-spacing:0.3px">🎨 Color</div>
+          <div style="font-size:10px;color:rgba(255,255,255,0.4);margin-top:1px">${(c.colorGrade&&Object.keys(c.colorGrade).some(k=>c.colorGrade[k]!==0))?'Grading active':'No grading applied'}</div>
+        </div>
+        <span class="acc-chv" style="font-size:9px;color:rgba(255,255,255,0.3);transition:transform 0.2s">▼</span>
+      </div>
+      <div id="acc-col-${ci}" hidden style="padding:0 6px 8px">
+
+        <div class="prop-section" style="color:rgba(255,220,50,0.9)">⚡ Basic Correction</div>
+        ${[
+          ['Exposure',    'exposure',    -100,100,0],
+          ['Contrast',    'contrast',    -100,100,0],
+          ['Highlights',  'highlights',  -100,100,0],
+          ['Shadows',     'shadows',     -100,100,0],
+          ['Whites',      'whites',      -100,100,0],
+          ['Blacks',      'blacks',      -100,100,0],
+          ['Saturation',  'saturation',  -100,100,0],
+          ['Temperature', 'temperature', -100,100,0],
+          ['Tint',        'tint',        -100,100,0],
+        ].map(([lbl,key,mn,mx,def])=>`
+          <div class="prop-row"><span class="prop-label">${lbl}</span>
+            <input type="range" min="${mn}" max="${mx}" step="1"
+              value="${(c.colorGrade&&c.colorGrade[key])||0}"
+              style="flex:1;accent-color:#ffd43b"
+              oninput="const _c=S.cut.clips[${ci}];if(!_c.colorGrade)_c.colorGrade={};_c.colorGrade['${key}']=parseFloat(this.value);this.nextElementSibling.textContent=this.value;if(window.syncCutVid)syncCutVid();">
+            <span style="font-size:10px;color:var(--mu);min-width:28px;text-align:right">${(c.colorGrade&&c.colorGrade[key])||0}</span>
+          </div>`).join('')}
+
+        <div class="prop-section" style="color:rgba(255,180,80,0.9);padding-top:6px">✨ Creative</div>
+        ${[
+          ['Faded Film','fadedFilm',0,100,0],
+          ['Sharpen',   'sharpen',  0,100,0],
+          ['Vibrance',  'vibrance',-100,100,0],
+        ].map(([lbl,key,mn,mx,def])=>`
+          <div class="prop-row"><span class="prop-label">${lbl}</span>
+            <input type="range" min="${mn}" max="${mx}" step="1"
+              value="${(c.colorGrade&&c.colorGrade[key])||0}"
+              style="flex:1;accent-color:#ff922b"
+              oninput="const _c=S.cut.clips[${ci}];if(!_c.colorGrade)_c.colorGrade={};_c.colorGrade['${key}']=parseFloat(this.value);this.nextElementSibling.textContent=this.value;if(window.syncCutVid)syncCutVid();">
+            <span style="font-size:10px;color:var(--mu);min-width:28px;text-align:right">${(c.colorGrade&&c.colorGrade[key])||0}</span>
+          </div>`).join('')}
+
+        <div class="prop-section" style="color:rgba(200,180,255,0.9);padding-top:6px">🌈 HSL</div>
+        <div style="font-size:10px;color:rgba(255,255,255,0.3);padding:2px 4px 4px">Hue shift per channel (°)</div>
+        ${['Reds','Oranges','Yellows','Greens','Cyans','Blues','Magentas'].map((ch,i)=>{
+          const key='hsl_h_'+i;
+          return `<div class="prop-row"><span class="prop-label" style="min-width:56px;font-size:10px">${ch}</span>
+            <input type="range" min="-180" max="180" step="1"
+              value="${(c.colorGrade&&c.colorGrade[key])||0}"
+              style="flex:1;accent-color:#da77f2"
+              oninput="const _c=S.cut.clips[${ci}];if(!_c.colorGrade)_c.colorGrade={};_c.colorGrade['${key}']=parseFloat(this.value);this.nextElementSibling.textContent=this.value+'°';if(window.syncCutVid)syncCutVid();">
+            <span style="font-size:10px;color:var(--mu);min-width:32px;text-align:right">${(c.colorGrade&&c.colorGrade['hsl_h_'+i])||0}°</span>
+          </div>`;}).join('')}
+
+        <div class="prop-row" style="padding-top:2px">
+          <button onclick="const _c=S.cut.clips[${ci}];_c.colorGrade={};updatePropsPanel(${ci});if(window.syncCutVid)syncCutVid();"
+            style="flex:1;padding:4px;background:rgba(255,255,255,0.04);border:0.5px solid rgba(255,255,255,0.08);border-radius:5px;color:rgba(255,255,255,0.4);font-size:10px;cursor:pointer;font-family:'DM Sans',sans-serif">
+            Reset Color
+          </button>
+        </div>
+
+      </div>
+    </div>` : ''}
+`:''}
   `;
 
   // _origDur is set in applyClipSpeed, not here
@@ -4043,14 +4151,6 @@ function renderCutTimeline() {
       row.style.width = _tlW + 'px';
       if(ph) rows.insertBefore(row,ph); else rows.appendChild(row);
     }
-    // Text overlay track row (dedicated, always present, just below video rows)
-    const _textRow = document.createElement('div');
-    _textRow.id = 'tl-row-text';
-    _textRow.className = 'clip-track-row text-overlay-row';
-    _textRow.setAttribute('data-track','text');
-    _textRow.style.width = _tlW + 'px';
-    if(ph) rows.insertBefore(_textRow, ph); else rows.appendChild(_textRow);
-
     // Audio rows: ascending
     for(let a=1; a<=S.cut.audioTracks; a++){
       const t = S.cut.videoTracks+(a-1);
@@ -4694,15 +4794,6 @@ function rebuildTrackLabels(){
     d.addEventListener('contextmenu',e=>trackLabelContextMenu(e,trackIdx));
     labels.appendChild(d);
   }
-  // Text track label — dedicated row for text overlays
-  (()=>{
-    const d=document.createElement('div');
-    d.className='track-label text-track-label';
-    d.style.cssText='height:30px;min-height:30px;box-sizing:border-box;display:flex;align-items:center;justify-content:center;gap:4px;padding:0 6px;background:rgba(255,200,50,0.06);border-top:0.5px solid rgba(255,200,50,0.15);cursor:default';
-    d.innerHTML='<span style="font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:rgba(255,200,50,0.85)">T</span><span style="font-size:9px;color:rgba(255,200,50,0.5);overflow:hidden;text-overflow:ellipsis">Text</span>';
-    d.title='Text Overlay Track';
-    labels.appendChild(d);
-  })();
 
   for(let a=1; a<=S.cut.audioTracks; a++){
     const trackIdx=S.cut.videoTracks+(a-1);
@@ -4746,15 +4837,6 @@ function rebuildTrackLabels(){
     row.style.cssText='height:30px;min-height:30px;box-sizing:border-box;width:'+_tlWidth+'px';
     if(phEl) rows.insertBefore(row,phEl); else rows.appendChild(row);
   }
-  // Text overlay track row — sits between video and audio rows
-  (()=>{
-    const row=document.createElement('div');
-    row.id='tl-row-text';
-    row.className='clip-track-row text-overlay-row';
-    row.setAttribute('data-track','text');
-    row.style.cssText='height:30px;min-height:30px;box-sizing:border-box;width:'+_tlWidth+'px;background:rgba(255,200,50,0.03);border-top:0.5px solid rgba(255,200,50,0.12)';
-    if(phEl) rows.insertBefore(row,phEl); else rows.appendChild(row);
-  })();
 
   // Audio rows in ascending order
   for(let a=1; a<=S.cut.audioTracks; a++){
@@ -6056,8 +6138,10 @@ function syncCutVid(){
           if(iAR > cAR){ dw = canvas.width * sx; dh = (canvas.width/iAR) * sy; }
           else          { dh = canvas.height * sy; dw = (canvas.height*iAR) * sx; }
           ctx.save();
-          if(tf.antiFlicker){ ctx.filter = (flt !== 'none' ? flt + ' ' : '') + 'blur(0.3px)'; }
-          else if(flt !== 'none') ctx.filter = flt;
+          const _colorFlt = window.buildColorFilterStr ? window.buildColorFilterStr(c) : 'none';
+          const _fullFlt = [flt, _colorFlt].filter(f=>f&&f!=='none').join(' ') || 'none';
+          if(tf.antiFlicker){ ctx.filter = (_fullFlt !== 'none' ? _fullFlt + ' ' : '') + 'blur(0.3px)'; }
+          else if(_fullFlt !== 'none') ctx.filter = _fullFlt;
           ctx.globalAlpha = opacity;
           ctx.globalCompositeOperation = blendMode;
           ctx.translate(canvas.width/2 + tx - axOff, canvas.height/2 + ty - ayOff);
@@ -6109,7 +6193,9 @@ function syncCutVid(){
 
           const flt3 = buildFilterStr(ci);
           ctx.save();
-          if(flt3 !== 'none') ctx.filter = flt3;
+          const _clrFlt3 = window.buildColorFilterStr ? window.buildColorFilterStr(c) : 'none';
+          const _fullFlt3 = [flt3, _clrFlt3].filter(f=>f&&f!=='none').join(' ') || 'none';
+          if(_fullFlt3 !== 'none') ctx.filter = _fullFlt3;
           ctx.globalCompositeOperation = c.blendMode || 'source-over';
           ctx.globalAlpha = (c.opacity !== undefined) ? Math.max(0, Math.min(1, c.opacity)) : 1;
           // Anti-flicker: very slight blur suppresses interlace artifacts

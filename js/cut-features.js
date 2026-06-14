@@ -342,7 +342,7 @@ function showTextDialog(editId){
     // Spec: x:50 y:85 = bottom-center default
     x: 50, y: 85, bw: 80,  // stored as 0-100
     _xPct: 50, _yPct: 85, _bwPct: 80,
-    track: 'text',
+    track: 0,  // text lives on video track V1, not a dedicated text row
   };
 
   const inputStyle = () =>
@@ -506,7 +506,7 @@ function showTextDialog(editId){
       type: 'text',
       startTime: start,
       endTime: start + dur,
-      track: 'text',
+      track: 0,  // text on V1 video track
       _editing: false,
     };
     if(editId){
@@ -1506,14 +1506,11 @@ function renderOverlayTimeline(){
   window._overlays.forEach(ov => {
     if(ov.track === undefined || ov.track === null) ov.track = 0;
     // Clamp only for DOM row display — do NOT mutate ov.track, preserve the real value
-    // Text overlays go on dedicated text track; other overlays on their video track
-    let _rowId;
-    if(ov.type === 'text' || ov.track === 'text'){
-      _rowId = 'tl-row-text';
-    } else {
-      const displayTrack = Math.max(0, Math.min(_videoTracks - 1, ov.track || 0));
-      _rowId = 'tl-row-' + displayTrack;
-    }
+    // All overlays (including text) go on their assigned video track row
+    const displayTrack = Math.max(0, Math.min(_videoTracks - 1,
+      (ov.track === 'text' || ov.track === undefined || ov.track === null) ? 0 : parseInt(ov.track) || 0
+    ));
+    const _rowId = 'tl-row-' + displayTrack;
     const row = document.getElementById(_rowId);
     if(!row) return;
     // per-overlay block
@@ -2478,7 +2475,7 @@ function cutAddTextClip(){
     type: 'text',
     startTime: ph,
     endTime: ph + 3,
-    track: 'text',
+    track: 0,  // text on V1 video track
     text: 'Caption',
     font: 'DM Sans', fontFamily: 'DM Sans',
     size: 32, fontSize: 32,
