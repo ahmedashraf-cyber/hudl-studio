@@ -4561,20 +4561,27 @@ function renderCutTimeline() {
         _selectClip(ci);
       }, true); // capture:true — fires before children
       el.addEventListener('contextmenu',e=>{e.stopPropagation();clipContextMenu(e,ci);});
-      // Double-click → jump playhead to first frame of this clip
-      // Use mousedown-based detection (capture) to avoid click handler interference
+      // Double-click → seek playhead to clip start and pause
+      // Uses mousedown timestamp detection; sets _dblClickBlocking flag so the
+      // second listener (clipMoveStart) skips drag initiation on that same event.
       el.addEventListener('mousedown', e => {
         if(e.button !== 0) return;
         if(e.target.classList.contains('clip-resize-l')) return;
         if(e.target.classList.contains('clip-resize-r')) return;
         const _now2 = Date.now();
         if(el._lastMdTime && _now2 - el._lastMdTime < 300){
-          // Double mousedown = double-click
+          // ── Double-click detected ──
           e.stopPropagation();
           el._lastMdTime = 0;
           el._lastClickTime = 0;
+          el._dblClickBlocking = true; // prevent sibling listener from starting drag
+          setTimeout(() => { el._dblClickBlocking = false; }, 50);
           const c2 = S.cut.clips[ci];
           if(!c2) return;
+          // Pause playback first
+          if(S.cut.playing && typeof stopCutPlay === 'function') stopCutPlay();
+          S.cut.playing = false;
+          // Seek to clip start
           S.cut.ph = c2.start;
           updateCutPH();
           syncCutVid();
@@ -4584,6 +4591,7 @@ function renderCutTimeline() {
       }, true);
       el.addEventListener('mousedown', e => {
         if(e.target.classList.contains('clip-resize-l')||e.target.classList.contains('clip-resize-r')) return;
+        if(el._dblClickBlocking) return; // double-click in progress — don't start drag
         // Select immediately on mousedown (before any drag), capture phase
         _selectClip(ci);
         clipMoveStart(e, ci);
