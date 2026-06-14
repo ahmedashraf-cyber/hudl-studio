@@ -3026,31 +3026,63 @@ function updatePropsPanel(ci){
       <div id="acc-tf-${ci}" style="padding:0 6px 8px">
         <div class="prop-row"><span class="prop-label">X</span>
           <input type="range" min="-100" max="100" step="0.5" value="${tf.x||0}" style="flex:1;accent-color:#E8590C"
-            oninput="const c2=S.cut.clips[${ci}];if(!c2.transform)c2.transform={x:0,y:0,scaleX:100,scaleY:100,rotation:0};c2.transform.x=parseFloat(this.value);this.nextElementSibling.textContent=parseFloat(this.value).toFixed(1)+'%';syncCutVid();renderBoundingBox(${ci});">
+            oninput="const c2=S.cut.clips[${ci}];if(!c2.transform)c2.transform={x:0,y:0,scaleX:100,scaleY:100,rotation:0,anchorX:50,anchorY:50,antiFlicker:false,uniformScale:true};c2.transform.x=parseFloat(this.value);this.nextElementSibling.textContent=parseFloat(this.value).toFixed(1)+'%';syncCutVid();renderBoundingBox(${ci});">
           <span style="font-size:10px;color:var(--mu);min-width:36px;text-align:right">${(tf.x||0).toFixed(1)}%</span>
         </div>
         <div class="prop-row"><span class="prop-label">Y</span>
           <input type="range" min="-100" max="100" step="0.5" value="${tf.y||0}" style="flex:1;accent-color:#E8590C"
-            oninput="const c2=S.cut.clips[${ci}];if(!c2.transform)c2.transform={x:0,y:0,scaleX:100,scaleY:100,rotation:0};c2.transform.y=parseFloat(this.value);this.nextElementSibling.textContent=parseFloat(this.value).toFixed(1)+'%';syncCutVid();renderBoundingBox(${ci});">
+            oninput="const c2=S.cut.clips[${ci}];if(!c2.transform)c2.transform={x:0,y:0,scaleX:100,scaleY:100,rotation:0,anchorX:50,anchorY:50,antiFlicker:false,uniformScale:true};c2.transform.y=parseFloat(this.value);this.nextElementSibling.textContent=parseFloat(this.value).toFixed(1)+'%';syncCutVid();renderBoundingBox(${ci});">
           <span style="font-size:10px;color:var(--mu);min-width:36px;text-align:right">${(tf.y||0).toFixed(1)}%</span>
         </div>
         <div class="prop-row"><span class="prop-label">Scale X</span>
           <input type="range" min="0" max="500" step="1" value="${tf.scaleX||100}" style="flex:1;accent-color:#E8590C"
-            oninput="const c2=S.cut.clips[${ci}];if(!c2.transform)c2.transform={x:0,y:0,scaleX:100,scaleY:100,rotation:0};c2.transform.scaleX=parseInt(this.value);this.nextElementSibling.textContent=this.value+'%';syncCutVid();renderBoundingBox(${ci});">
+            oninput="const c2=S.cut.clips[${ci}];if(!c2.transform)c2.transform={x:0,y:0,scaleX:100,scaleY:100,rotation:0,anchorX:50,anchorY:50,antiFlicker:false,uniformScale:true};c2.transform.scaleX=parseInt(this.value);if(c2.transform.uniformScale!==false){c2.transform.scaleY=c2.transform.scaleX;const syEl=document.getElementById('tf-sy-${ci}');if(syEl)syEl.value=this.value;}this.nextElementSibling.textContent=this.value+'%';syncCutVid();renderBoundingBox(${ci});">
           <span style="font-size:10px;color:var(--mu);min-width:36px;text-align:right">${tf.scaleX||100}%</span>
         </div>
         <div class="prop-row"><span class="prop-label">Scale Y</span>
-          <input type="range" min="0" max="500" step="1" value="${tf.scaleY||100}" style="flex:1;accent-color:#E8590C"
-            oninput="const c2=S.cut.clips[${ci}];if(!c2.transform)c2.transform={x:0,y:0,scaleX:100,scaleY:100,rotation:0};c2.transform.scaleY=parseInt(this.value);this.nextElementSibling.textContent=this.value+'%';syncCutVid();renderBoundingBox(${ci});">
+          <input type="range" id="tf-sy-${ci}" min="0" max="500" step="1" value="${tf.uniformScale!==false?(tf.scaleX||100):(tf.scaleY||100)}" style="flex:1;accent-color:#E8590C"
+            oninput="const c2=S.cut.clips[${ci}];if(!c2.transform)c2.transform={x:0,y:0,scaleX:100,scaleY:100,rotation:0,anchorX:50,anchorY:50,antiFlicker:false,uniformScale:true};c2.transform.scaleY=parseInt(this.value);this.nextElementSibling.textContent=this.value+'%';syncCutVid();renderBoundingBox(${ci});">
           <span style="font-size:10px;color:var(--mu);min-width:36px;text-align:right">${tf.scaleY||100}%</span>
         </div>
         <div class="prop-row"><span class="prop-label">Rotation</span>
           <input type="range" min="-180" max="180" step="1" value="${tf.rotation||0}" style="flex:1;accent-color:#E8590C"
-            oninput="const c2=S.cut.clips[${ci}];if(!c2.transform)c2.transform={x:0,y:0,scaleX:100,scaleY:100,rotation:0};c2.transform.rotation=parseInt(this.value);this.nextElementSibling.textContent=this.value+'°';syncCutVid();renderBoundingBox(${ci});">
+            oninput="const c2=S.cut.clips[${ci}];if(!c2.transform)c2.transform={x:0,y:0,scaleX:100,scaleY:100,rotation:0,anchorX:50,anchorY:50,antiFlicker:false,uniformScale:true};c2.transform.rotation=parseInt(this.value);this.nextElementSibling.textContent=this.value+'°';syncCutVid();renderBoundingBox(${ci});">
           <span style="font-size:10px;color:var(--mu);min-width:36px;text-align:right">${tf.rotation||0}°</span>
         </div>
+        <div class="prop-row">
+          <span class="prop-label">Uniform Scale</span>
+          <label style="display:flex;align-items:center;gap:6px;cursor:pointer">
+            <input type="checkbox" id="tf-uni-${ci}" ${(tf.uniformScale!==false)?'checked':''} style="accent-color:#E8590C;width:14px;height:14px"
+              onchange="const c2=S.cut.clips[${ci}];if(!c2.transform)c2.transform={x:0,y:0,scaleX:100,scaleY:100,rotation:0,anchorX:50,anchorY:50,antiFlicker:false,uniformScale:true};c2.transform.uniformScale=this.checked;if(this.checked){c2.transform.scaleY=c2.transform.scaleX;}updatePropsPanel(${ci});syncCutVid();">
+            <span style="font-size:10px;color:var(--mu)">Lock X=Y</span>
+          </label>
+        </div>
+        <div class="prop-row"><span class="prop-label">Anchor X</span>
+          <input type="range" min="0" max="100" step="0.5" value="${tf.anchorX!==undefined?tf.anchorX:50}" style="flex:1;accent-color:#E8590C"
+            oninput="const c2=S.cut.clips[${ci}];if(!c2.transform)c2.transform={x:0,y:0,scaleX:100,scaleY:100,rotation:0,anchorX:50,anchorY:50,antiFlicker:false,uniformScale:true};c2.transform.anchorX=parseFloat(this.value);this.nextElementSibling.textContent=parseFloat(this.value).toFixed(1)+'%';syncCutVid();">
+          <span style="font-size:10px;color:var(--mu);min-width:36px;text-align:right">${(tf.anchorX!==undefined?tf.anchorX:50).toFixed(1)}%</span>
+        </div>
+        <div class="prop-row"><span class="prop-label">Anchor Y</span>
+          <input type="range" min="0" max="100" step="0.5" value="${tf.anchorY!==undefined?tf.anchorY:50}" style="flex:1;accent-color:#E8590C"
+            oninput="const c2=S.cut.clips[${ci}];if(!c2.transform)c2.transform={x:0,y:0,scaleX:100,scaleY:100,rotation:0,anchorX:50,anchorY:50,antiFlicker:false,uniformScale:true};c2.transform.anchorY=parseFloat(this.value);this.nextElementSibling.textContent=parseFloat(this.value).toFixed(1)+'%';syncCutVid();">
+          <span style="font-size:10px;color:var(--mu);min-width:36px;text-align:right">${(tf.anchorY!==undefined?tf.anchorY:50).toFixed(1)}%</span>
+        </div>
+        <div class="prop-row">
+          <span class="prop-label">Anti-flicker</span>
+          <label style="display:flex;align-items:center;gap:6px;cursor:pointer">
+            <input type="checkbox" id="tf-af-${ci}" ${tf.antiFlicker?'checked':''} style="accent-color:#E8590C;width:14px;height:14px"
+              onchange="const c2=S.cut.clips[${ci}];if(!c2.transform)c2.transform={x:0,y:0,scaleX:100,scaleY:100,rotation:0,anchorX:50,anchorY:50,antiFlicker:false,uniformScale:true};c2.transform.antiFlicker=this.checked;syncCutVid();">
+            <span style="font-size:10px;color:var(--mu)">Blur 0.3px</span>
+          </label>
+        </div>
+        <div class="prop-row"><span class="prop-label">Blend Mode</span>
+          <select style="flex:1;background:#161616;border:0.5px solid rgba(255,255,255,0.1);border-radius:5px;color:var(--tx);font-size:10px;padding:2px 4px;outline:none"
+            onchange="S.cut.clips[${ci}].blendMode=this.value;syncCutVid();">
+            ${['source-over','multiply','screen','overlay','darken','lighten','color-dodge','color-burn','hard-light','soft-light','difference','exclusion','hue','saturation','color','luminosity'].map(m=>`<option value="${m}" ${(c.blendMode||'source-over')===m?'selected':''}>${m.replace(/-/g,' ').replace(/\b\w/g,l=>l.toUpperCase())}</option>`).join('')}
+          </select>
+        </div>
         <div class="prop-row" style="padding-top:4px">
-          <button onclick="const c2=S.cut.clips[${ci}];c2.transform={x:0,y:0,scaleX:100,scaleY:100,rotation:0};updatePropsPanel(${ci});syncCutVid();renderBoundingBox(${ci});"
+          <button onclick="const c2=S.cut.clips[${ci}];c2.transform={x:0,y:0,scaleX:100,scaleY:100,rotation:0,anchorX:50,anchorY:50,antiFlicker:false,uniformScale:true};c2.blendMode='source-over';updatePropsPanel(${ci});syncCutVid();renderBoundingBox(${ci});"
             style="flex:1;padding:4px;background:rgba(255,255,255,0.04);border:0.5px solid rgba(255,255,255,0.08);border-radius:5px;color:rgba(255,255,255,0.4);font-size:10px;cursor:pointer;font-family:'DM Sans',sans-serif">
             Reset Transform
           </button>
@@ -3877,7 +3909,7 @@ function cutAddToTL(i) {
     window._lastActiveVideoTrack = track;
   }
   S.cut.clips.push({mediaId:item.id,name:item.name,type:item.type,track,start:startSec,dur:Math.max(item.duration||5,0.5),fileStart:0,
-    transform:{x:0,y:0,scaleX:100,scaleY:100,rotation:0},
+    transform:{x:0,y:0,scaleX:100,scaleY:100,rotation:0,anchorX:50,anchorY:50,antiFlicker:false,uniformScale:true},
     color:item.type==='video'?'rgba(88,166,255,0.8)':item.type==='audio'?'rgba(210,153,34,0.8)':'rgba(63,185,80,0.8)'});
   // If video file, also add linked audio clip on first audio track
   if(item.type==='video'&&item.hasAudio!==false){
@@ -4027,7 +4059,7 @@ function renderCutTimeline() {
       const rect=row.getBoundingClientRect();
       const start=Math.max(0,(e.clientX-rect.left+document.getElementById('tl-scroll')?.scrollLeft||0)/PPS);
       S.cut.clips.push({mediaId:item.id,name:item.name,type:item.type,track:t,start,dur:Math.max(item.duration||5,0.5),fileStart:0,
-        transform:{x:0,y:0,scaleX:100,scaleY:100,rotation:0},
+        transform:{x:0,y:0,scaleX:100,scaleY:100,rotation:0,anchorX:50,anchorY:50,antiFlicker:false,uniformScale:true},
         color:item.type==='video'?'rgba(88,166,255,0.8)':item.type==='audio'?'rgba(210,153,34,0.8)':'rgba(63,185,80,0.8)'});
       // Auto-add audio track for video clips
       if(item.type==='video'&&item.hasAudio!==false){
@@ -5977,13 +6009,17 @@ function syncCutVid(){
           const imgSrc = getPoolImg(it.url);
           if(!imgSrc.complete) return;
           const flt = buildFilterStr(ci);
-          const tf = c.transform || {x:0, y:0, scaleX:100, scaleY:100, rotation:0};
-          const sx = (tf.scaleX||100)/100;
-          const sy = (tf.scaleY||100)/100;
+          const tf = c.transform || {x:0,y:0,scaleX:100,scaleY:100,rotation:0,anchorX:50,anchorY:50,antiFlicker:false,uniformScale:true};
+          const _uniScale = tf.uniformScale !== false;
+          const sx = (_uniScale ? (tf.scaleX||100) : (tf.scaleX||100))/100;
+          const sy = (_uniScale ? (tf.scaleX||100) : (tf.scaleY||100))/100;
           const tx = ((tf.x||0)/100) * canvas.width;
           const ty = ((tf.y||0)/100) * canvas.height;
           const rot = (tf.rotation||0) * Math.PI / 180;
+          const axOff = (((tf.anchorX||50)-50)/100) * canvas.width;
+          const ayOff = (((tf.anchorY||50)-50)/100) * canvas.height;
           const opacity = (c.opacity !== undefined) ? Math.max(0,Math.min(1,c.opacity)) : 1;
+          const blendMode = c.blendMode || 'source-over';
           // Fit image to canvas maintaining AR, then apply scale
           const iW = imgSrc.naturalWidth  || canvas.width;
           const iH = imgSrc.naturalHeight || canvas.height;
@@ -5992,13 +6028,14 @@ function syncCutVid(){
           if(iAR > cAR){ dw = canvas.width * sx; dh = (canvas.width/iAR) * sy; }
           else          { dh = canvas.height * sy; dw = (canvas.height*iAR) * sx; }
           ctx.save();
-          if(flt !== 'none') ctx.filter = flt;
+          if(tf.antiFlicker){ ctx.filter = (flt !== 'none' ? flt + ' ' : '') + 'blur(0.3px)'; }
+          else if(flt !== 'none') ctx.filter = flt;
           ctx.globalAlpha = opacity;
-          ctx.globalCompositeOperation = 'source-over';
-          ctx.translate(canvas.width/2 + tx, canvas.height/2 + ty);
+          ctx.globalCompositeOperation = blendMode;
+          ctx.translate(canvas.width/2 + tx - axOff, canvas.height/2 + ty - ayOff);
           if(rot) ctx.rotate(rot);
           try{ ctx.drawImage(imgSrc, -dw/2, -dh/2, dw, dh); _anythingDrawn = true; }catch(e){}
-          ctx.filter = 'none'; ctx.globalAlpha = 1; ctx.restore();
+          ctx.filter = 'none'; ctx.globalAlpha = 1; ctx.globalCompositeOperation = 'source-over'; ctx.restore();
           return;
         }
 
@@ -6045,8 +6082,10 @@ function syncCutVid(){
           const flt3 = buildFilterStr(ci);
           ctx.save();
           if(flt3 !== 'none') ctx.filter = flt3;
-          ctx.globalCompositeOperation = 'source-over';
+          ctx.globalCompositeOperation = c.blendMode || 'source-over';
           ctx.globalAlpha = (c.opacity !== undefined) ? Math.max(0, Math.min(1, c.opacity)) : 1;
+          // Anti-flicker: very slight blur suppresses interlace artifacts
+          if(c.transform?.antiFlicker && ctx.filter === 'none') ctx.filter = 'blur(0.3px)';
 
           if(!trW3){
             if(_drawFrame(vSrc, ctx, canvas.width, canvas.height)) _anythingDrawn = true;
@@ -7119,7 +7158,7 @@ function renderBoundingBox(ci){
       e.stopPropagation(); e.preventDefault();
       var cl = S.cut.clips[S.cut.sel];
       if(!cl) return;
-      if(!cl.transform) cl.transform={x:0,y:0,scaleX:100,scaleY:100,rotation:0};
+      if(!cl.transform) cl.transform={x:0,y:0,scaleX:100,scaleY:100,rotation:0,anchorX:50,anchorY:50,antiFlicker:false,uniformScale:true};
       _mode='scale';
       _startX=e.clientX; _startY=e.clientY;
       _origSX=cl.transform.scaleX||100;
@@ -7133,7 +7172,7 @@ function renderBoundingBox(ci){
     e.stopPropagation(); e.preventDefault();
     var cl = S.cut.clips[S.cut.sel];
     if(!cl) return;
-    if(!cl.transform) cl.transform={x:0,y:0,scaleX:100,scaleY:100,rotation:0};
+    if(!cl.transform) cl.transform={x:0,y:0,scaleX:100,scaleY:100,rotation:0,anchorX:50,anchorY:50,antiFlicker:false,uniformScale:true};
     _mode='move';
     _startX=e.clientX; _startY=e.clientY;
     _origTX=cl.transform.x||0;
