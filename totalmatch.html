@@ -439,14 +439,16 @@ const DEFAULT_TAG_GROUPS = [{
 }];
 const S = {
   btn: {
-    background: 'transparent',
-    border: '1px solid #1e2533',
-    color: '#8899aa',
-    borderRadius: 4,
+    background: 'rgba(255,255,255,0.04)',
+    border: '0.5px solid rgba(255,255,255,0.10)',
+    color: '#8b949e',
+    borderRadius: 6,
     cursor: 'pointer',
-    fontWeight: 'bold',
+    fontWeight: '600',
     fontSize: 11,
-    padding: '4px 8px'
+    padding: '5px 10px',
+    letterSpacing: '0.02em',
+    transition: 'all 0.18s cubic-bezier(0.4,0,0.2,1)'
   }
 };
 const PITCH_SVG = "data:image/svg+xml;utf8,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='-5 -5 115 78'%3E%3Crect x='-5' y='-5' width='115' height='78' fill='%23ffffff'/%3E%3Crect x='0' y='0' width='105' height='68' fill='none' stroke='%231a1a1a' stroke-width='0.3'/%3E%3Cline x1='52.5' y1='0' x2='52.5' y2='68' stroke='%231a1a1a' stroke-width='0.3'/%3E%3Ccircle cx='52.5' cy='34' r='9.15' fill='none' stroke='%231a1a1a' stroke-width='0.3'/%3E%3Ccircle cx='52.5' cy='34' r='0.4' fill='%231a1a1a'/%3E%3Crect x='0' y='13.84' width='16.5' height='40.32' fill='none' stroke='%231a1a1a' stroke-width='0.3'/%3E%3Crect x='0' y='26.9' width='5.5' height='14.2' fill='none' stroke='%231a1a1a' stroke-width='0.3'/%3E%3Ccircle cx='11' cy='34' r='0.4' fill='%231a1a1a'/%3E%3Cpath d='M 16.5 26.688 A 9.15 9.15 0 0 1 16.5 41.312' fill='none' stroke='%231a1a1a' stroke-width='0.3'/%3E%3Crect x='-2' y='30.34' width='2' height='7.32' fill='none' stroke='%231a1a1a' stroke-width='0.3'/%3E%3Crect x='88.5' y='13.84' width='16.5' height='40.32' fill='none' stroke='%231a1a1a' stroke-width='0.3'/%3E%3Crect x='99.5' y='26.9' width='5.5' height='14.2' fill='none' stroke='%231a1a1a' stroke-width='0.3'/%3E%3Ccircle cx='94' cy='34' r='0.4' fill='%231a1a1a'/%3E%3Cpath d='M 88.5 26.688 A 9.15 9.15 0 0 0 88.5 41.312' fill='none' stroke='%231a1a1a' stroke-width='0.3'/%3E%3Crect x='105' y='30.34' width='2' height='7.32' fill='none' stroke='%231a1a1a' stroke-width='0.3'/%3E%3C/svg%3E";
@@ -3214,9 +3216,11 @@ function TotalMatchAnalytics() {
     style: {
       display: 'flex',
       alignItems: 'center',
-      padding: '6px 14px',
-      background: '#0b1018',
-      borderBottom: '1px solid #161b24',
+      padding: '0 14px',
+      background: 'rgba(7,12,18,0.88)',
+      backdropFilter: 'saturate(180%) blur(24px)',
+      WebkitBackdropFilter: 'saturate(180%) blur(24px)',
+      borderBottom: '0.5px solid rgba(255,255,255,0.06)',
       height: 44
     }
   }, /*#__PURE__*/React.createElement("span", {
@@ -3225,7 +3229,7 @@ function TotalMatchAnalytics() {
       fontWeight: 'bold',
       fontSize: 13,
       letterSpacing: 2,
-      fontFamily: 'monospace',
+      fontFamily: "'DM Sans', sans-serif",
       display: 'flex',
       alignItems: 'center',
       gap: 7
@@ -3270,13 +3274,12 @@ function TotalMatchAnalytics() {
     title: "Reset to original tags"
   }, "\uD83D\uDD04 Default Dash"), /*#__PURE__*/React.createElement("button", {
     onClick: () => setShowShortcutsPanel(true),
-    style: {...S.btn, fontSize:10, color:'#FFEA00', borderColor:'#FFEA00'}
+    style: {...S.btn, fontSize:10, color:'#d29922', borderColor:'rgba(210,153,34,0.35)'}
   }, "⌨ Shortcuts"), /*#__PURE__*/React.createElement("label", {
     style: {
       ...S.btn,
       fontSize: 10,
-      color: '#E040FB',
-      borderColor: '#E040FB',
+      color: '#8b949e',
       cursor: 'pointer',
       margin: 0
     }
@@ -3291,8 +3294,8 @@ function TotalMatchAnalytics() {
     style: {
       ...S.btn,
       fontSize: 10,
-      color: '#2196F3',
-      borderColor: '#2196F3',
+      color: '#58a6ff',
+      borderColor: 'rgba(88,166,255,0.30)',
       cursor: 'pointer',
       margin: 0
     }
@@ -3306,10 +3309,16 @@ function TotalMatchAnalytics() {
   })), /*#__PURE__*/React.createElement("button", {
     onClick: exportEvents,
     style: {
-      ...S.btn,
-      fontSize: 10,
-      color: '#E8590C',
-      borderColor: '#E8590C'
+      background: 'linear-gradient(180deg,#FF6B1F 0%,#E8590C 100%)',
+      boxShadow: '0 1px 0 rgba(255,255,255,0.15) inset, 0 2px 8px rgba(232,89,12,0.35)',
+      border: 'none',
+      color: '#fff',
+      borderRadius: 6,
+      cursor: 'pointer',
+      fontWeight: '600',
+      fontSize: 11,
+      padding: '5px 12px',
+      letterSpacing: '0.02em'
     }
   }, "\u25B2 Export"))), /*#__PURE__*/React.createElement("div", {
     style: {
@@ -3330,11 +3339,11 @@ function TotalMatchAnalytics() {
     style: {
       width: 175,
       background: '#0b1018',
-      borderRight: '1px solid #161b24',
+      borderRight: '0.5px solid rgba(255,255,255,0.06)',
       display: 'flex',
       flexDirection: 'column',
       alignItems: 'center',
-      padding: '4px 3px',
+      padding: '6px 4px',
       gap: 2,
       overflowY: 'auto',
       overflowX: 'hidden',
@@ -3350,7 +3359,7 @@ function TotalMatchAnalytics() {
   },
   showShapesMenu && activeTool==='shape' && /*#__PURE__*/React.createElement("div",{style:{position:'fixed',left:183,top:90,zIndex:1000,display:'flex',flexWrap:'wrap',gap:4,padding:'8px',background:'#0f1218',border:'1px solid #1e2533',borderRadius:6,width:162,boxShadow:'0 4px 20px rgba(0,0,0,0.6)'}},
     [['rect','⬜','Rect'],['circle_shape','⏺','Circle'],['ellipse','⬭','Ellipse'],['triangle','△','Triangle'],['diamond','◇','Diamond']].map(([sh,ico,lbl])=>
-      /*#__PURE__*/React.createElement("button",{key:sh,onClick:()=>{setActiveShape(sh);setShowShapesMenu(false);},title:lbl,style:{padding:'3px 7px',fontSize:13,background:activeShape===sh?'#1e2533':'transparent',border:'1px solid '+(activeShape===sh?'#E8590C':'#1e2533'),borderRadius:3,cursor:'pointer',color:activeShape===sh?'#E8590C':'#8899aa'}},ico)
+      /*#__PURE__*/React.createElement("button",{key:sh,onClick:()=>{setActiveShape(sh);setShowShapesMenu(false);},title:lbl,style:{padding:'3px 7px',fontSize:13,background:activeShape===sh?'#1e2533':'transparent',border:'1px solid '+(activeShape===sh?'#E8590C':'#1e2533'),borderRadius:6,cursor:'pointer',color:activeShape===sh?'#E8590C':'#8899aa'}},ico)
     )
   ),
   TOOLS.map(t => /*#__PURE__*/React.createElement("button", {
@@ -3385,9 +3394,9 @@ function TotalMatchAnalytics() {
       flexDirection: 'column',
       alignItems: 'center',
       justifyContent: 'center',
-      background: activeTool === t ? 'rgba(0,230,118,0.12)' : 'transparent',
-      border: '1px solid ' + (activeTool === t ? '#E8590C' : '#161b24'),
-      borderRadius: 5,
+      background: activeTool === t ? 'rgba(232,89,12,0.12)' : 'transparent',
+      border: '1px solid ' + (activeTool === t ? '#E8590C' : 'rgba(255,255,255,0.06)'),
+      borderRadius: 8,
       cursor: 'pointer',
       color: activeTool === t ? '#E8590C' : '#8899aa',
       transition: 'all 0.1s'
@@ -3416,7 +3425,7 @@ function TotalMatchAnalytics() {
       padding: 8,
       background: '#0f1218',
       borderRadius: 6,
-      border: '1px solid #1E2830',
+      border: '1px solid rgba(255,255,255,0.08)',
       display: 'flex',
       flexDirection: 'column',
       gap: 4,
@@ -3471,7 +3480,7 @@ function TotalMatchAnalytics() {
       padding: 8,
       background: '#0f1218',
       borderRadius: 6,
-      border: '1px solid #1E2830',
+      border: '1px solid rgba(255,255,255,0.08)',
       display: 'flex',
       flexDirection: 'column',
       gap: 4,
@@ -3588,7 +3597,7 @@ function TotalMatchAnalytics() {
     style: {
       width: '85%',
       height: 22,
-      border: '1px solid #1E2830',
+      border: '1px solid rgba(255,255,255,0.08)',
       background: 'transparent',
       cursor: 'pointer',
       padding: 0
@@ -3635,7 +3644,7 @@ function TotalMatchAnalytics() {
             key:a,
             onClick:()=>{ setTextAlign(a); updateSelectedDrawingProp('textAlign',a); setToolPopupOpen(false); },
             style:{
-              flex:1, padding:'2px 0', fontSize:12, cursor:'pointer', borderRadius:3,
+              flex:1, padding:'2px 0', fontSize:12, cursor:'pointer', borderRadius:6,
               background: curAlign===a ? '#252d3d' : '#0b1018',
               border: curAlign===a ? '1px solid #E8590C' : '1px solid rgba(255,255,255,0.06)',
               color: curAlign===a ? '#E8590C' : '#8899aa'
@@ -3647,7 +3656,7 @@ function TotalMatchAnalytics() {
   ),
   /* Counter controls */
   rightPanelTab !== 'board' && (activeTool === 'counter_home' || activeTool === 'counter_away') && /*#__PURE__*/React.createElement("div", {
-    style: { width: '95%', padding: 6, background: '#0f1218', borderRadius: 4, border: '1px solid #1E2830', display: 'flex', flexDirection: 'column', gap: 6, alignItems: 'center' }
+    style: { width: '95%', padding: 6, background: '#0f1218', borderRadius: 4, border: '1px solid rgba(255,255,255,0.08)', display: 'flex', flexDirection: 'column', gap: 6, alignItems: 'center' }
   },
     /*#__PURE__*/React.createElement("span", { style: { fontSize: 9, color: '#8899aa', fontWeight: 'bold' } }, "PLAYER COUNTER"),
     /*#__PURE__*/React.createElement("div", { style: { display: 'flex', gap: 6, width: '100%' } },
@@ -3662,7 +3671,7 @@ function TotalMatchAnalytics() {
     ),
     /*#__PURE__*/React.createElement("button", {
       onClick: function() { setHomeCount(1); setAwayCount(1); counterSessionRef.current = null; },
-      style: { fontSize: 9, padding: '3px 10px', background: '#FF174422', border: '1px solid #FF1744', color: '#FF1744', borderRadius: 3, cursor: 'pointer', width: '80%' }
+      style: { fontSize: 9, padding: '3px 10px', background: '#FF174422', border: '1px solid #FF1744', color: '#FF1744', borderRadius: 6, cursor: 'pointer', width: '80%' }
     }, "Reset Both")
   ),
   rightPanelTab !== 'board' && activeTool !== 'select' && !selectedEvent && /*#__PURE__*/React.createElement("div", {
@@ -3882,7 +3891,7 @@ function TotalMatchAnalytics() {
         },
         style:{width:'100%', minHeight: ph-12, background:'transparent', border:'none', color: editObj.color||'#fff',
                outline:'none', resize:'none', fontSize: Math.max(10, Math.min(20, (editObj.h||60)*0.4)),
-               fontWeight:'bold', fontFamily:'Arial', lineHeight:1.2}
+               fontWeight:'bold', fontFamily:"'DM Sans', sans-serif", lineHeight:1.2}
       }),
       /*#__PURE__*/React.createElement("div", {style:{display:'flex',gap:4,marginTop:4}},
         /*#__PURE__*/React.createElement("span", {style:{fontSize:9,color:'#3E4A56',flex:1}},"Enter=save · Esc=cancel"),
@@ -3918,7 +3927,7 @@ function TotalMatchAnalytics() {
           ['↑ ↓','Next / Prev frame'],
         ].map(([k,v]) =>
           /*#__PURE__*/React.createElement("div",{key:k,style:{display:'flex',gap:8,marginBottom:3}},
-            /*#__PURE__*/React.createElement("span",{style:{fontFamily:'monospace',background:'#1e2533',color:'#FFEA00',borderRadius:3,padding:'1px 6px',fontSize:10,minWidth:90,textAlign:'center'}},k),
+            /*#__PURE__*/React.createElement("span",{style:{fontFamily:"'DM Sans', sans-serif",background:'#1e2533',color:'#FFEA00',borderRadius:6,padding:'1px 6px',fontSize:10,minWidth:90,textAlign:'center'}},k),
             /*#__PURE__*/React.createElement("span",{style:{fontSize:10,color:'#8899aa'}},v)
           )
         )
@@ -3933,7 +3942,7 @@ function TotalMatchAnalytics() {
           editingShortcut===sk
             ? /*#__PURE__*/React.createElement("input",{
                 autoFocus:true,placeholder:'Press key...',
-                style:{width:80,background:'#1e2533',border:'1px solid #E8590C',color:'#d8e4f0',borderRadius:3,padding:'2px 6px',fontSize:10},
+                style:{width:80,background:'#1e2533',border:'1px solid #E8590C',color:'#d8e4f0',borderRadius:6,padding:'2px 6px',fontSize:10},
                 onKeyDown:e2=>{
                   e2.preventDefault();
                   const mod=(e2.ctrlKey||e2.metaKey?'Ctrl+':'')+(e2.shiftKey?'Shift+':'');
@@ -3954,7 +3963,7 @@ function TotalMatchAnalytics() {
               })
             : /*#__PURE__*/React.createElement("button",{
                 onClick:()=>setEditingShortcut(sk),
-                style:{background:'#1e2533',border:'1px solid rgba(255,255,255,0.06)',color:shortcuts[sk]?'#FFEA00':'#3E4A56',borderRadius:3,padding:'1px 8px',fontSize:10,cursor:'pointer',fontFamily:'monospace',minWidth:60}
+                style:{background:'#1e2533',border:'1px solid rgba(255,255,255,0.06)',color:shortcuts[sk]?'#FFEA00':'#3E4A56',borderRadius:6,padding:'1px 8px',fontSize:10,cursor:'pointer',fontFamily:"'DM Sans', sans-serif",minWidth:60}
               },shortcuts[sk]||'—')
         );
       })
@@ -4017,7 +4026,7 @@ function TotalMatchAnalytics() {
     style: {
       background: '#E8590C',
       border: 'none',
-      borderRadius: 3,
+      borderRadius: 6,
       cursor: 'pointer'
     }
   }, "\u2713"))), rightPanelTab !== 'board' && /*#__PURE__*/React.createElement("div", {
@@ -4115,7 +4124,7 @@ function TotalMatchAnalytics() {
     style: {
       fontSize: 14,
       color: '#E8590C',
-      fontFamily: 'monospace',
+      fontFamily: "'DM Sans', sans-serif",
       padding: '0 8px',
       fontWeight: 'bold'
     }
@@ -4285,7 +4294,7 @@ function TotalMatchAnalytics() {
       /*#__PURE__*/React.createElement("span", {style:{fontSize:11,color:'#E8590C',fontWeight:'bold'}}, "\uD83D\uDCCB My Playlists"),
       /*#__PURE__*/React.createElement("button", {
         onClick: ()=>setShowNewPlaylistInput(p=>!p),
-        style:{fontSize:10,padding:'2px 8px',background:'#00E67222',border:'1px solid #E8590C',color:'#E8590C',borderRadius:3,cursor:'pointer'}
+        style:{fontSize:10,padding:'2px 8px',background:'#00E67222',border:'1px solid #E8590C',color:'#E8590C',borderRadius:6,cursor:'pointer'}
       }, showNewPlaylistInput ? "Cancel" : "+ New")
     ),
     showNewPlaylistInput && /*#__PURE__*/React.createElement("div", {style:{display:'flex',gap:4,marginBottom:6}},
@@ -4293,11 +4302,11 @@ function TotalMatchAnalytics() {
         type:"text", placeholder:"Playlist name...", value:newPlaylistName,
         onChange: e=>setNewPlaylistName(e.target.value),
         onKeyDown: e=>{if(e.key==='Enter'&&newPlaylistName.trim()){setCustomPlaylists(p=>[...p,{id:Date.now()+'',name:newPlaylistName.trim(),clipIds:[]}]);setNewPlaylistName('');setShowNewPlaylistInput(false);}},
-        style:{flex:1,background:'#0b1018',border:'1px solid #1E2830',color:'#d8e4f0',borderRadius:3,padding:'3px 6px',fontSize:11}
+        style:{flex:1,background:'#0b1018',border:'1px solid rgba(255,255,255,0.08)',color:'#d8e4f0',borderRadius:6,padding:'3px 6px',fontSize:11}
       }),
       /*#__PURE__*/React.createElement("button", {
         onClick:()=>{if(newPlaylistName.trim()){setCustomPlaylists(p=>[...p,{id:Date.now()+'',name:newPlaylistName.trim(),clipIds:[]}]);setNewPlaylistName('');setShowNewPlaylistInput(false);}},
-        style:{padding:'2px 8px',background:'#E8590C',border:'none',color:'#000',borderRadius:3,cursor:'pointer',fontSize:11,fontWeight:'bold'}
+        style:{padding:'2px 8px',background:'#E8590C',border:'none',color:'#000',borderRadius:6,cursor:'pointer',fontSize:11,fontWeight:'bold'}
       }, "Create")
     ),
     customPlaylists.length===0&&!showNewPlaylistInput && /*#__PURE__*/React.createElement("div",{style:{fontSize:10,color:'#3E4A56',fontStyle:'italic',padding:'2px 0 4px'}},"No playlists yet"),
@@ -4341,7 +4350,7 @@ function TotalMatchAnalytics() {
             background:autoplayPlaylistId===pl.id?'#E8590C33':'none',
             border:autoplayPlaylistId===pl.id?'1px solid #E8590C':'1px solid rgba(255,255,255,0.11)',
             color:autoplayPlaylistId===pl.id?'#E8590C':'#8899aa',
-            cursor:'pointer',fontSize:10,borderRadius:3,padding:'1px 5px',marginRight:2
+            cursor:'pointer',fontSize:10,borderRadius:6,padding:'1px 5px',marginRight:2
           }
         },autoplayPlaylistId===pl.id?"\u23F9 Stop":"\u25B6"),
         /*#__PURE__*/React.createElement("span",{style:{fontSize:10,color:'#8899aa'}},pl.clipIds.length+" clips"),
@@ -4368,7 +4377,7 @@ function TotalMatchAnalytics() {
                 setDragClipId(null);
               }
             },
-            style:{display:'flex',alignItems:'center',gap:4,padding:'3px 4px',marginBottom:2,background:'#0f1218',borderRadius:3,fontSize:10,color:'#d8e4f0'}
+            style:{display:'flex',alignItems:'center',gap:4,padding:'3px 4px',marginBottom:2,background:'#0f1218',borderRadius:6,fontSize:10,color:'#d8e4f0'}
           },
             /*#__PURE__*/React.createElement("span",{
               draggable:true,
@@ -4449,7 +4458,7 @@ function TotalMatchAnalytics() {
         background:autoplayPlaylistId==='tag:'+tagName?'#E8590C33':'none',
         border:autoplayPlaylistId==='tag:'+tagName?'1px solid #E8590C':'1px solid rgba(255,255,255,0.11)',
         color:autoplayPlaylistId==='tag:'+tagName?'#E8590C':'#8899aa',
-        cursor:'pointer',fontSize:10,borderRadius:3,padding:'1px 5px',marginRight:4
+        cursor:'pointer',fontSize:10,borderRadius:6,padding:'1px 5px',marginRight:4
       }
     },autoplayPlaylistId==='tag:'+tagName?"\u23F9":"\u25B6"),
     /*#__PURE__*/React.createElement("span", {
@@ -4547,7 +4556,7 @@ function TotalMatchAnalytics() {
         style: {
           fontSize: 9,
           color: '#8899aa',
-          fontFamily: 'monospace',
+          fontFamily: "'DM Sans', sans-serif",
           flexShrink: 0
         }
       }, dur, "s"), /*#__PURE__*/React.createElement("button", {
@@ -4696,7 +4705,7 @@ function TotalMatchAnalytics() {
     style: {
       fontSize: 9,
       color: '#8899aa',
-      fontFamily: 'monospace'
+      fontFamily: "'DM Mono', monospace"
     }
   }, "At ", formatTime(d.time || 0)), /*#__PURE__*/React.createElement("button", {
     onClick: e => {
@@ -4742,7 +4751,7 @@ function TotalMatchAnalytics() {
     style: {
       fontSize: 9,
       color: '#8899aa',
-      fontFamily: 'monospace'
+      fontFamily: "'DM Mono', monospace"
     }
   }, ((d.endTime || d.startTime + 2) - (d.startTime || d.time || 0)).toFixed(1), "s")), /*#__PURE__*/React.createElement("input", {
     type: "range",
@@ -4811,11 +4820,11 @@ function TotalMatchAnalytics() {
       ),
       /*#__PURE__*/React.createElement("button", {
         onClick: () => setShowBoardCatInput(p=>!p),
-        style:{fontSize:9,padding:'2px 6px',background:'#FFEA0022',border:'1px solid #FFEA00',color:'#FFEA00',borderRadius:3,cursor:'pointer',marginRight:2}
+        style:{fontSize:9,padding:'2px 6px',background:'#FFEA0022',border:'1px solid #FFEA00',color:'#FFEA00',borderRadius:6,cursor:'pointer',marginRight:2}
       }, "\uD83D\uDCC2 Cat"),
       /*#__PURE__*/React.createElement("button", {
         onClick: () => { const id='board_'+Date.now(); setBoards(p=>[...p.map(x=>x.id===activeBoardId?{...x,players:boardPlayers,ball:boardBall,frames:boardFrames,drawings:drawings.filter(d=>d.target==='board'&&d.boardId===activeBoardId)}:x),{id,name:'Board '+(p.length+1),players:[],ball:{visible:false,x:50,y:50,color:'#ffffff'},frames:[],drawings:[],category:boardCategories[0]?.name||'',homeDefaultColor:'#FF1744',awayDefaultColor:'#2196F3'}]); setActiveBoardId(id); setBoardPlayers([]); setBoardBall({visible:false,x:50,y:50,color:'#ffffff'}); setBoardFrames([]); },
-        style:{fontSize:9,padding:'2px 6px',background:'#00E67222',border:'1px solid #E8590C',color:'#E8590C',borderRadius:3,cursor:'pointer'}
+        style:{fontSize:9,padding:'2px 6px',background:'#00E67222',border:'1px solid #E8590C',color:'#E8590C',borderRadius:6,cursor:'pointer'}
       }, "+ New Board")
     ),
     /* Board categories + boards grouped */
@@ -4824,11 +4833,11 @@ function TotalMatchAnalytics() {
         type:"text", placeholder:"New category...", value:boardCatInput,
         onChange:e=>setBoardCatInput(e.target.value),
         onKeyDown:e=>{if(e.key==='Enter'&&boardCatInput.trim()){setBoardCategories(p=>[...p,{id:'cat_'+Date.now(),name:boardCatInput.trim()}]);setBoardCatInput('');setShowBoardCatInput(false);}},
-        style:{flex:1,background:'#0b1018',border:'1px solid #FFEA0066',color:'#d8e4f0',borderRadius:3,padding:'3px 6px',fontSize:10}
+        style:{flex:1,background:'#0b1018',border:'1px solid #FFEA0066',color:'#d8e4f0',borderRadius:6,padding:'3px 6px',fontSize:10}
       }),
       /*#__PURE__*/React.createElement("button", {
         onClick:()=>{if(boardCatInput.trim()){setBoardCategories(p=>[...p,{id:'cat_'+Date.now(),name:boardCatInput.trim()}]);setBoardCatInput('');setShowBoardCatInput(false);}},
-        style:{padding:'2px 8px',background:'#FFEA00',border:'none',color:'#000',borderRadius:3,cursor:'pointer',fontSize:10,fontWeight:'bold'}
+        style:{padding:'2px 8px',background:'#FFEA00',border:'none',color:'#000',borderRadius:6,cursor:'pointer',fontSize:10,fontWeight:'bold'}
       },"Add")
     ),
     showBoardsSection && boardCategories.map(cat => /*#__PURE__*/React.createElement("div", {key:cat.id, style:{marginBottom:4}},
@@ -4856,7 +4865,7 @@ function TotalMatchAnalytics() {
               },i*300);
             });
           },
-          style:{fontSize:9,padding:'1px 5px',background:'#00E67222',border:'1px solid #E8590C',color:'#E8590C',borderRadius:3,cursor:'pointer'}
+          style:{fontSize:9,padding:'1px 5px',background:'#00E67222',border:'1px solid #E8590C',color:'#E8590C',borderRadius:6,cursor:'pointer'}
         },"⬇ Snap All"),
         cat.name!=='General' && /*#__PURE__*/React.createElement("button",{
           onClick:e=>{e.stopPropagation();setBoardCategories(p=>p.filter(c=>c.id!==cat.id));setBoards(p=>p.map(b=>(b.category||'General')===cat.name?{...b,category:'General'}:b));},
@@ -4871,7 +4880,7 @@ function TotalMatchAnalytics() {
           onDragStart:()=>setDragBoardId(b.id),
           onDragOver:e=>e.preventDefault(),
           onDrop:()=>{if(dragBoardId&&dragBoardId!==b.id){setBoards(p=>{const from=p.findIndex(x=>x.id===dragBoardId);const to=p.findIndex(x=>x.id===b.id);const a=[...p];const dragged={...a[from],category:b.category||'General'};a.splice(from,1);const newTo=a.findIndex(x=>x.id===b.id);a.splice(newTo,0,dragged);return a;});setDragBoardId(null);}},
-          style:{display:'flex',alignItems:'center',gap:4,padding:'3px 6px',marginLeft:8,marginBottom:2,background:activeBoardId===b.id?'#1e2533':'#070c12',borderRadius:3,border:'1px solid '+(activeBoardId===b.id?'#E8590C':'#161b24'),cursor:'grab'}
+          style:{display:'flex',alignItems:'center',gap:4,padding:'3px 6px',marginLeft:8,marginBottom:2,background:activeBoardId===b.id?'#1e2533':'#070c12',borderRadius:6,border:'1px solid '+(activeBoardId===b.id?'#E8590C':'#161b24'),cursor:'grab'}
         },
           /*#__PURE__*/React.createElement("span",{style:{color:'#3E4A56',fontSize:10,cursor:'grab'}},"⠿"),
           /* Category assign dropdown */
@@ -4883,7 +4892,7 @@ function TotalMatchAnalytics() {
           }, boardCategories.map(c=>/*#__PURE__*/React.createElement("option",{key:c.id,value:c.name},c.name))),
           /* Name */
           renamingBoardId===b.id
-            ? /*#__PURE__*/React.createElement("input",{autoFocus:true,value:boardRenameVal,onChange:e=>setBoardRenameVal(e.target.value),onKeyDown:e=>{if(e.key==='Enter'||e.key==='Escape'){setBoards(p=>p.map(x=>x.id===b.id?{...x,name:boardRenameVal||x.name}:x));setRenamingBoardId(null);}},onBlur:()=>{setBoards(p=>p.map(x=>x.id===b.id?{...x,name:boardRenameVal||x.name}:x));setRenamingBoardId(null);},style:{flex:1,background:'#0b1018',border:'1px solid #E8590C',color:'#d8e4f0',borderRadius:3,padding:'1px 4px',fontSize:10}})
+            ? /*#__PURE__*/React.createElement("input",{autoFocus:true,value:boardRenameVal,onChange:e=>setBoardRenameVal(e.target.value),onKeyDown:e=>{if(e.key==='Enter'||e.key==='Escape'){setBoards(p=>p.map(x=>x.id===b.id?{...x,name:boardRenameVal||x.name}:x));setRenamingBoardId(null);}},onBlur:()=>{setBoards(p=>p.map(x=>x.id===b.id?{...x,name:boardRenameVal||x.name}:x));setRenamingBoardId(null);},style:{flex:1,background:'#0b1018',border:'1px solid #E8590C',color:'#d8e4f0',borderRadius:6,padding:'1px 4px',fontSize:10}})
             : /*#__PURE__*/React.createElement("span",{
                 style:{flex:1,fontSize:10,color:activeBoardId===b.id?'#E8590C':'#d8e4f0',cursor:'pointer'},
                 onClick:()=>{
@@ -5337,8 +5346,9 @@ function TotalMatchAnalytics() {
   }, /*#__PURE__*/React.createElement("div", {style:{position:'absolute',left:videoDuration?(isolatedEvent?Math.max(isolatedEvent.time,Math.min(isolatedEvent.endTime,videoTime)):videoTime)/videoDuration*100+'%':'0%',top:0,bottom:0,width:2.5,background:'#FF1744',pointerEvents:'none',zIndex:5}}), /*#__PURE__*/React.createElement("span", {
     style: {
       fontSize: 9,
-      color: '#3E4A56',
-      fontFamily: 'monospace'
+      color: '#6a737d',
+      fontFamily: "'DM Sans', sans-serif",
+      letterSpacing: '0.04em'
     }
   }, "Timeline Playhead Tracks Matrix View Room"))), /*#__PURE__*/React.createElement("div", {
     style: {
@@ -5412,7 +5422,7 @@ function TotalMatchAnalytics() {
             height: rowH,
             background: hexToRgba(group.color, 0.25),
             border: `1px solid ${isSelected ? '#E8590C' : group.color}`,
-            borderRadius: 3,
+            borderRadius: 6,
             cursor: 'pointer',
             display: 'flex',
             alignItems: 'center',
