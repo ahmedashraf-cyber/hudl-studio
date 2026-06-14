@@ -2156,7 +2156,7 @@ function buildCut() {
               Import Audio
             </button>
           </div>
-          <div style="flex:1;overflow-y:auto;padding:4px" id="cut-bin"></div>
+          <div style="flex:1;overflow-y:auto;padding:0;display:flex;flex-direction:column" id="cut-bin" onclick="if(event.target===this||event.target.id==='ml-scroll')$('cut-fi').click()"></div>
         </div>
         <div class="panel-body hidden" id="cut-p-effects">
           <div id="cut-eff-overlay-hint" style="display:none;margin:6px 8px 2px;padding:6px 8px;background:rgba(0,220,200,0.08);border:0.5px solid rgba(0,220,200,0.25);border-radius:7px;font-size:10px;color:rgba(0,220,200,0.9)">
@@ -2960,86 +2960,291 @@ function handleCutFiles(files) {
   buildBinList();
 }
 
-function buildBinList() {
-  const el=$('cut-bin'); if(!el) return;
+// ═══════════════════════════════════════════════════════════════
+// MEDIA LIBRARY — full Premiere Pro spec upgrade
+// State: S.cut._mlView ('grid'|'list'), S.cut._mlSort {key,dir},
+//        S.cut._mlSearch, S.cut._mlFilter, S.cut._mlGridSz,
+//        S.cut._mlSel (Set of mediaIds)
+// ═══════════════════════════════════════════════════════════════
 
-  // Initialize bins/folders state
+function _mlState(){
+  if(!S.cut._mlSel) S.cut._mlSel = new Set();
+  if(!S.cut._mlView) S.cut._mlView = 'grid';
+  if(!S.cut._mlSort) S.cut._mlSort = {key:'name',dir:1};
+  if(!S.cut._mlSearch) S.cut._mlSearch = '';
+  if(!S.cut._mlFilter) S.cut._mlFilter = 'all';
+  if(!S.cut._mlGridSz) S.cut._mlGridSz = 80;
   if(!S.cut.bins) S.cut.bins = [{id:'root',name:'All Media',open:true}];
   if(!S.cut.mediaBins) S.cut.mediaBins = {};
+}
 
-  if (!S.cut.media.length) {
-    el.innerHTML='<div style="padding:24px 12px;text-align:center"><div style="font-size:22px;opacity:0.25;margin-bottom:8px">📂</div><div style="font-size:11px;color:rgba(255,255,255,0.25);font-weight:500">No media yet</div><div style="font-size:10px;color:rgba(255,255,255,0.15);margin-top:3px">Drop files or click above</div></div>';
-    return;
+function buildBinList() {
+  const el=$('cut-bin'); if(!el) return;
+  _mlState();
+
+  // ── Filter + sort media (display-only — never reorders S.cut.media) ──
+  const q = S.cut._mlSearch.toLowerCase();
+  const ft = S.cut._mlFilter;
+  let displayed = S.cut.media
+    .map((item,i)=>({item,i}))
+    .filter(({item})=>{
+      if(q && !item.name.toLowerCase().includes(q)) return false;
+      if(ft==='video'   && item.type!=='video')  return false;
+      if(ft==='audio'   && item.type!=='audio')  return false;
+      if(ft==='image'   && item.type!=='image')  return false;
+      return true;
+    });
+
+  const sk = S.cut._mlSort.key, sd = S.cut._mlSort.dir;
+  displayed.sort((a,b)=>{
+    let av=a.item[sk]??'', bv=b.item[sk]??'';
+    if(typeof av==='string') av=av.toLowerCase(), bv=bv.toLowerCase();
+    return av<bv?-sd:av>bv?sd:0;
+  });
+
+  const isGrid = S.cut._mlView==='grid';
+  const sz = S.cut._mlGridSz;
+
+  // ── Header ─────────────────────────────────────────────────
+  const sortArrow = k => S.cut._mlSort.key===k?(S.cut._mlSort.dir>0?' ▲':' ▼'):'';
+  const sortBtn = (k,lbl) =>
+    `<span onclick="window._mlSetSort('${k}')" style="cursor:pointer;user-select:none;white-space:nowrap${S.cut._mlSort.key===k?';color:#E8590C':''}">${lbl}${sortArrow(k)}</span>`;
+
+  let html = `
+  <div id="ml-toolbar" style="flex-shrink:0;padding:4px 6px;border-bottom:0.5px solid rgba(255,255,255,0.07);display:flex;flex-direction:column;gap:4px">
+    <div style="display:flex;align-items:center;gap:4px">
+      <input id="ml-search" type="search" placeholder="Search…" value="${S.cut._mlSearch||''}"
+        oninput="S.cut._mlSearch=this.value;buildBinList()"
+        style="flex:1;min-width:0;background:#111;border:0.5px solid rgba(255,255,255,0.1);border-radius:5px;color:var(--tx);font-size:11px;padding:3px 7px;outline:none;font-family:'DM Sans',sans-serif">
+      <select onchange="S.cut._mlFilter=this.value;buildBinList()"
+        style="background:#111;border:0.5px solid rgba(255,255,255,0.1);border-radius:5px;color:var(--tx);font-size:10px;padding:2px 3px;outline:none">
+        ${['all','video','audio','image'].map(v=>`<option value="${v}"${S.cut._mlFilter===v?' selected':''}>${v.charAt(0).toUpperCase()+v.slice(1)}</option>`).join('')}
+      </select>
+    </div>
+    <div style="display:flex;align-items:center;gap:4px">
+      <span style="font-size:10px;color:rgba(255,255,255,0.3);flex:1">${displayed.length}/${S.cut.media.length} asset${S.cut.media.length!==1?'s':''}</span>
+      ${isGrid?`<input type="range" min="48" max="160" value="${sz}" title="Thumbnail size"
+          oninput="S.cut._mlGridSz=parseInt(this.value);buildBinList()"
+          style="width:60px;accent-color:#E8590C">`:``}
+      <button title="Grid view" onclick="S.cut._mlView='grid';buildBinList()"
+        style="background:${isGrid?'rgba(232,89,12,0.2)':'none'};border:0.5px solid ${isGrid?'rgba(232,89,12,0.5)':'rgba(255,255,255,0.1)'};border-radius:4px;color:${isGrid?'#E8590C':'rgba(255,255,255,0.4)'};cursor:pointer;font-size:12px;padding:2px 6px;line-height:1">⊞</button>
+      <button title="List view" onclick="S.cut._mlView='list';buildBinList()"
+        style="background:${!isGrid?'rgba(232,89,12,0.2)':'none'};border:0.5px solid ${!isGrid?'rgba(232,89,12,0.5)':'rgba(255,255,255,0.1)'};border-radius:4px;color:${!isGrid?'#E8590C':'rgba(255,255,255,0.4)'};cursor:pointer;font-size:12px;padding:2px 6px;line-height:1">☰</button>
+      <button onclick="cutMediaNewBin()" title="New folder" style="background:none;border:0.5px solid rgba(255,255,255,0.1);border-radius:4px;color:rgba(255,255,255,0.4);cursor:pointer;font-size:11px;padding:2px 6px;line-height:1" onmouseover="this.style.color='#E8590C'" onmouseout="this.style.color='rgba(255,255,255,0.4)'">+📁</button>
+    </div>
+  </div>`;
+
+  // ── Empty state ─────────────────────────────────────────────
+  if(!S.cut.media.length){
+    html += `<div style="padding:24px 12px;text-align:center"><div style="font-size:22px;opacity:0.25;margin-bottom:8px">📂</div><div style="font-size:11px;color:rgba(255,255,255,0.25);font-weight:500">No media yet</div><div style="font-size:10px;color:rgba(255,255,255,0.15);margin-top:3px">Drop files or click above</div></div>`;
+    el.innerHTML = html; return;
   }
 
-  // Group media by bin
+  // ── List view column headers ────────────────────────────────
+  if(!isGrid){
+    html += `<div style="display:flex;align-items:center;padding:3px 6px;border-bottom:0.5px solid rgba(255,255,255,0.07);font-size:10px;font-weight:700;color:rgba(255,255,255,0.3);gap:4px;flex-shrink:0">
+      <div style="width:18px;flex-shrink:0"></div>
+      <div style="flex:2;min-width:0">${sortBtn('name','Name')}</div>
+      <div style="width:42px;flex-shrink:0;text-align:right">${sortBtn('duration','Dur')}</div>
+      <div style="width:38px;flex-shrink:0;text-align:center">${sortBtn('type','Type')}</div>
+      <div style="width:52px;flex-shrink:0;text-align:right">Res</div>
+    </div>`;
+  }
+
+  // ── Scroll area ─────────────────────────────────────────────
+  html += `<div id="ml-scroll" style="flex:1;overflow-y:auto;padding:${isGrid?'4px':'0'}">`;
+
+  // ── Bins + items ─────────────────────────────────────────────
   const binItems = {};
-  S.cut.media.forEach((item,i) => {
+  displayed.forEach(({item,i}) => {
     const binId = S.cut.mediaBins?.[item.id] || 'root';
     if(!binItems[binId]) binItems[binId] = [];
     binItems[binId].push({item,i});
   });
 
-  // Bin toolbar
-  let html = `<div style="display:flex;align-items:center;gap:4px;padding:4px 6px 2px;border-bottom:0.5px solid rgba(255,255,255,0.06)">
-    <span style="font-size:10px;color:rgba(255,255,255,0.3);flex:1">${S.cut.media.length} file(s)</span>
-    <button onclick="cutMediaNewBin()" title="New folder" style="background:none;border:none;color:rgba(255,255,255,0.4);cursor:pointer;font-size:12px;padding:2px 5px;line-height:1;border-radius:4px;border:0.5px solid rgba(255,255,255,0.1)" onmouseover="this.style.color='#E8590C'" onmouseout="this.style.color='rgba(255,255,255,0.4)'">+ Folder</button>
-    <button onclick="document.getElementById('cut-fi-folder')?.click()" title="Import folder from disk" style="background:none;border:none;color:rgba(255,255,255,0.4);cursor:pointer;font-size:12px;padding:2px 5px;line-height:1;border-radius:4px;border:0.5px solid rgba(255,255,255,0.1)" onmouseover="this.style.color='#E8590C'" onmouseout="this.style.color='rgba(255,255,255,0.4)'">📁</button>
-  </div>`;
-
-  // Render each bin
   S.cut.bins.forEach(bin => {
     const items = binItems[bin.id] || [];
     const isRoot = bin.id === 'root';
+
     if(!isRoot){
       html += `<div style="display:flex;align-items:center;gap:4px;padding:4px 8px;cursor:pointer;user-select:none;background:rgba(255,255,255,0.03);border-bottom:0.5px solid rgba(255,255,255,0.04)"
         onclick="cutMediaToggleBin('${bin.id}')">
-        <span style="font-size:10px;color:rgba(255,255,255,0.4)">${bin.open!==false?'▼':'▶'}</span>
-        <span style="font-size:10px;font-weight:600;color:rgba(255,255,255,0.6);flex:1">📁 ${bin.name} (${items.length})</span>
+        <span style="font-size:10px;color:rgba(255,255,255,0.4);width:10px">${bin.open!==false?'▼':'▶'}</span>
+        <span style="font-size:${isGrid?'11':'10'}px;font-weight:600;color:rgba(255,255,255,0.6);flex:1">📁 ${bin.name} <span style="color:rgba(255,255,255,0.3)">(${items.length})</span></span>
+        <button onclick="event.stopPropagation();cutMediaRenameBin('${bin.id}')" title="Rename" style="background:none;border:none;color:rgba(255,255,255,0.3);cursor:pointer;font-size:10px;padding:0 3px">✏️</button>
         <button onclick="event.stopPropagation();cutMediaDeleteBin('${bin.id}')" style="background:none;border:none;color:rgba(255,69,58,0.5);cursor:pointer;font-size:10px;padding:0" title="Delete folder">✕</button>
       </div>`;
     }
+
     if(bin.open !== false || isRoot){
-      items.forEach(({item,i}) => {
-        const icon = item.type==='video'?'🎬':item.type==='audio'?'🎵':'🖼️';
-        const indent = isRoot ? '' : 'padding-left:16px;';
-        html += `<div class="mbin-item${S.cut.selMedia===i?' sel':''}" id="mbi-${i}" draggable="true"
-          ondragstart="cutBinDragStart(event,${i})" onclick="cutSelMedia(${i})" ondblclick="cutAddToTL(${i})"
-          oncontextmenu="cutMediaContextMenu(event,${i})"
-          title="Double-click to add · Right-click for options" style="${indent}position:relative">
-          <div class="mbin-thumb">${item.thumbnail?`<img src="${item.thumbnail}">`:(item.type==='image'&&item.url?`<img src="${item.url}">`:icon)}</div>
-          <div style="flex:1;min-width:0"><div class="mbin-name">${item.name}</div>
-          <div class="mbin-dur">${item.duration>0?fmtTC(item.duration):'--'}</div></div>
-          <button onclick="event.stopPropagation();cutMediaDelete(${i})" title="Delete" style="background:none;border:none;color:rgba(255,69,58,0.6);cursor:pointer;font-size:13px;padding:2px 4px;opacity:0;transition:opacity .15s;position:absolute;right:4px;top:50%;transform:translateY(-50%)" class="mbin-del">🗑</button>
-        </div>`;
-      });
+      if(isGrid){
+        // ── Grid view ──────────────────────────────────────────
+        if(items.length){
+          html += `<div style="display:flex;flex-wrap:wrap;gap:6px;padding:${isRoot?4:8}px ${isRoot?4:12}px">`;
+          items.forEach(({item,i}) => {
+            const sel = S.cut._mlSel.has(item.id)||S.cut.selMedia===item.id;
+            const icon = item.type==='video'?'🎬':item.type==='audio'?'🎵':'🖼️';
+            html += `<div class="mbin-item${sel?' sel':''}" id="mbi-${item.id}" data-media-id="${item.id}" data-mi="${i}"
+              draggable="true" ondragstart="cutBinDragStart(event,${i})"
+              onclick="window._mlClickItem(event,${i},'${item.id}')"
+              ondblclick="cutAddToTL(${i})"
+              oncontextmenu="cutMediaContextMenu(event,${i})"
+              title="${item.name}&#10;Double-click to add"
+              style="width:${sz}px;flex-direction:column;align-items:center;padding:4px;border-radius:6px;
+                     background:${sel?'rgba(232,89,12,0.15)':'rgba(255,255,255,0.03)'};
+                     border:0.5px solid ${sel?'rgba(232,89,12,0.5)':'rgba(255,255,255,0.06)'};
+                     cursor:pointer;user-select:none;position:relative">
+              <div style="width:${sz-8}px;height:${Math.round((sz-8)*9/16)}px;border-radius:4px;overflow:hidden;background:#111;display:flex;align-items:center;justify-content:center;flex-shrink:0">
+                ${item.thumbnail?`<img src="${item.thumbnail}" style="width:100%;height:100%;object-fit:cover">`:
+                  item.type==='image'&&item.url?`<img src="${item.url}" style="width:100%;height:100%;object-fit:cover">`:
+                  `<span style="font-size:${Math.round(sz*0.3)}px;opacity:0.5">${icon}</span>`}
+              </div>
+              <div style="font-size:9px;color:rgba(255,255,255,0.7);margin-top:3px;width:100%;text-align:center;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${item.name}</div>
+              ${item.duration>0?`<div style="font-size:8px;color:rgba(255,255,255,0.3)">${fmtTC(item.duration)}</div>`:''}
+            </div>`;
+          });
+          html += `</div>`;
+        }
+      } else {
+        // ── List view ──────────────────────────────────────────
+        const indent = isRoot ? '' : 'padding-left:14px;';
+        items.forEach(({item,i}) => {
+          const sel = S.cut._mlSel.has(item.id)||S.cut.selMedia===item.id;
+          const icon = item.type==='video'?'🎬':item.type==='audio'?'🎵':'🖼️';
+          const res = (item.width&&item.height)?`${item.width}×${item.height}`:'';
+          html += `<div class="mbin-item${sel?' sel':''}" id="mbi-${item.id}" data-media-id="${item.id}" data-mi="${i}"
+            draggable="true" ondragstart="cutBinDragStart(event,${i})"
+            onclick="window._mlClickItem(event,${i},'${item.id}')"
+            ondblclick="cutAddToTL(${i})"
+            oncontextmenu="cutMediaContextMenu(event,${i})"
+            title="${item.name}&#10;Double-click to add"
+            style="${indent}display:flex;align-items:center;gap:4px;padding:3px 6px;
+                   background:${sel?'rgba(232,89,12,0.1)':'transparent'};
+                   border-bottom:0.5px solid rgba(255,255,255,0.04);
+                   cursor:pointer;user-select:none;position:relative">
+            <span style="font-size:12px;flex-shrink:0;width:18px;text-align:center">${icon}</span>
+            <span style="flex:2;min-width:0;font-size:11px;color:${sel?'#fff':'rgba(255,255,255,0.8)'};overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${item.name}</span>
+            <span style="width:42px;flex-shrink:0;text-align:right;font-size:10px;color:rgba(255,255,255,0.4);font-family:'DM Mono',monospace">${item.duration>0?fmtTC(item.duration):'--'}</span>
+            <span style="width:38px;flex-shrink:0;text-align:center;font-size:9px;color:rgba(255,255,255,0.35);text-transform:uppercase">${item.type}</span>
+            <span style="width:52px;flex-shrink:0;text-align:right;font-size:9px;color:rgba(255,255,255,0.3)">${res}</span>
+          </div>`;
+        });
+      }
     }
   });
 
+  html += `</div>`;
   el.innerHTML = html;
 
-  // Show delete button on hover
-  el.querySelectorAll('.mbin-item').forEach(el2 => {
-    const del = el2.querySelector('.mbin-del');
-    if(!del) return;
-    el2.addEventListener('mouseenter', ()=>{ del.style.opacity='1'; });
-    el2.addEventListener('mouseleave', ()=>{ del.style.opacity='0'; });
-  });
+  // Re-attach search focus if it was focused
+  const sinp = document.getElementById('ml-search');
+  if(sinp && document.activeElement?.id==='ml-search') setTimeout(()=>sinp.focus(),0);
 
-  const inf=$('cut-info'); if(inf) inf.textContent=S.cut.media.length+' file(s) — drag to timeline or double-click';
+  const inf=$('cut-info');
+  if(inf) inf.textContent=S.cut.media.length+' file(s) — drag to timeline or double-click';
 }
 
+// ── Sort toggle ────────────────────────────────────────────────
+window._mlSetSort = function(key){
+  _mlState();
+  if(S.cut._mlSort.key===key) S.cut._mlSort.dir *= -1;
+  else S.cut._mlSort = {key, dir:1};
+  buildBinList();
+};
+
+// ── Multi-select click handler ─────────────────────────────────
+window._mlClickItem = function(e, i, mediaId){
+  _mlState();
+  if(e.ctrlKey || e.metaKey){
+    // CTRL+click: toggle item in selection set
+    if(S.cut._mlSel.has(mediaId)) S.cut._mlSel.delete(mediaId);
+    else S.cut._mlSel.add(mediaId);
+  } else if(e.shiftKey && S.cut.selMedia){
+    // SHIFT+click: select range between last selected and this
+    const ids = S.cut.media.map(m=>m.id);
+    const lastIdx = ids.indexOf(S.cut.selMedia);
+    const thisIdx = ids.indexOf(mediaId);
+    const lo = Math.min(lastIdx,thisIdx), hi = Math.max(lastIdx,thisIdx);
+    S.cut._mlSel.clear();
+    for(let x=lo;x<=hi;x++) S.cut._mlSel.add(ids[x]);
+  } else {
+    S.cut._mlSel.clear();
+    S.cut._mlSel.add(mediaId);
+    S.cut.selMedia = mediaId;
+  }
+  cutSelMedia(i);
+  buildBinList();
+};
+
+// ── Bin rename ─────────────────────────────────────────────────
+window.cutMediaRenameBin = function(binId){
+  const bin = (S.cut.bins||[]).find(b=>b.id===binId);
+  if(!bin) return;
+  const n = prompt('Rename folder:',bin.name);
+  if(n&&n.trim()) { bin.name=n.trim(); buildBinList(); scheduleSave(); }
+};
+
+// ── Context menu (expanded) ─────────────────────────────────────
 function cutMediaContextMenu(e, i){
   e.preventDefault(); e.stopPropagation();
-  cutSelMedia(i);
+  const item = typeof i==='string' ? S.cut.media.find(m=>m.id===i) : S.cut.media[i];
+  if(!item) return;
+  const idx = S.cut.media.indexOf(item);
+  cutSelMedia(idx);
+  _mlState(); S.cut._mlSel.add(item.id);
   const bins = (S.cut.bins||[]).filter(b=>b.id!=='root');
-  showContextMenu(e, [
-    {icon:'🗑️', label:'Delete from project', danger:true, fn:()=>cutMediaDelete(i)},
+
+  showContextMenu(e,[
+    {icon:'▶', label:'Open in Source Monitor', fn:()=>{
+      // Switch to preview and show asset thumbnail/info
+      const body = document.getElementById('cut-props-body');
+      if(body) body.innerHTML = `<div style="padding:8px"><div style="font-size:10px;font-weight:700;color:var(--mu2);margin-bottom:6px">Source Monitor</div>`
+        +(item.thumbnail||item.url?`<img src="${item.thumbnail||item.url}" style="width:100%;border-radius:6px;margin-bottom:6px">`:'' )
+        +`<div class="prop-row"><span class="prop-label">Name</span><span class="prop-val">${item.name}</span></div>`
+        +`<div class="prop-row"><span class="prop-label">Type</span><span class="prop-val">${item.type}</span></div>`
+        +`<div class="prop-row"><span class="prop-label">Duration</span><span class="prop-val">${item.duration>0?fmtTC(item.duration):'--'}</span></div>`
+        +(item.width?`<div class="prop-row"><span class="prop-label">Size</span><span class="prop-val">${item.width}×${item.height}</span></div>`:'')
+        +`</div>`; }},
+    {icon:'📂', label:'Reveal in Explorer', fn:()=>notify('Reveal: '+item.name+' (file path not available in browser)','#d29922')},
+    {icon:'✏️', label:'Rename', fn:()=>{
+      const n=prompt('Rename asset:',item.name);
+      if(n&&n.trim()){item.name=n.trim();buildBinList();scheduleSave();notify('Renamed','#3fb950');}
+    }},
+    {icon:'⧉', label:'Duplicate', fn:()=>{
+      const dup={...item, id:'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g,c=>{const r=Math.random()*16|0;return(c==='x'?r:(r&0x3|0x8)).toString(16);}), name:item.name+' copy'};
+      S.cut.media.push(dup);
+      if(item.url) dup.url=item.url;
+      buildBinList();scheduleSave();notify('Duplicated','#3fb950');
+    }},
     {sep:true},
-    ...bins.map(b=>({icon:'📁', label:'Move to: '+b.name, fn:()=>{ if(!S.cut.mediaBins)S.cut.mediaBins={}; S.cut.mediaBins[item.id]=b.id; buildBinList(); }})),
-    ...(bins.length?[{icon:'📂', label:'Move to: All Media', fn:()=>{ if(S.cut.mediaBins)delete S.cut.mediaBins[item.id]; buildBinList(); }}]:[]),
+    {icon:'🗑️', label:'Remove from Project', danger:true, fn:()=>cutMediaDelete(idx)},
     {sep:true},
-    {icon:'📁', label:'New folder', fn:()=>cutMediaNewBin()},
+    {icon:'📁', label:'New Bin', fn:()=>cutMediaNewBin()},
+    ...(bins.length?[
+      {sep:true},
+      ...bins.map(b=>({icon:'📁', label:'Move to: '+b.name, fn:()=>{
+        if(!S.cut.mediaBins) S.cut.mediaBins={};
+        // Move all selected items
+        S.cut._mlSel.forEach(mid=>{ S.cut.mediaBins[mid]=b.id; });
+        buildBinList(); scheduleSave();
+      }})),
+      {icon:'📂', label:'Move to: All Media', fn:()=>{
+        S.cut._mlSel.forEach(mid=>{ if(S.cut.mediaBins) delete S.cut.mediaBins[mid]; });
+        buildBinList(); scheduleSave();
+      }},
+    ]:[]),
+    {sep:true},
+    {icon:'ℹ️', label:'Get Properties', fn:()=>{
+      const body=document.getElementById('cut-props-body');
+      if(!body) return;
+      body.innerHTML=`<div style="padding:8px"><div style="font-size:10px;font-weight:700;color:var(--mu2);text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px">Properties</div>`
+        +`<div class="prop-row"><span class="prop-label">Name</span><span class="prop-val">${item.name}</span></div>`
+        +`<div class="prop-row"><span class="prop-label">Type</span><span class="prop-val">${item.type}</span></div>`
+        +`<div class="prop-row"><span class="prop-label">Duration</span><span class="prop-val">${item.duration>0?fmtTC(item.duration):'--'}</span></div>`
+        +(item.width?`<div class="prop-row"><span class="prop-label">Resolution</span><span class="prop-val">${item.width}×${item.height}</span></div>`:'')
+        +`<div class="prop-row"><span class="prop-label">UUID</span><span class="prop-val" style="font-family:'DM Mono',monospace;font-size:9px;word-break:break-all">${item.id}</span></div>`
+        +`</div>`;
+    }},
   ]);
 }
 window.cutMediaContextMenu = cutMediaContextMenu;
@@ -4199,7 +4404,16 @@ window.toggleTrackVisibility = toggleTrackVisibility;
 
 function cutBinDragStart(e,i){S.cut._drag=i;e.dataTransfer.setData('text/plain',''+i);e.dataTransfer.effectAllowed='copy';}
 function cutBinDragStart(e,i){S.cut._drag=i;e.dataTransfer.setData('text/plain',''+i);e.dataTransfer.effectAllowed='copy';}
-function cutSelMedia(i){S.cut.selMedia=i;document.querySelectorAll('.mbin-item').forEach((el,idx)=>el.classList.toggle('sel',idx===i));}
+function cutSelMedia(i){
+  // i = array index — store the mediaId as the stable identity
+  const item = S.cut.media[i];
+  S.cut.selMedia = item ? item.id : i;
+  document.querySelectorAll('.mbin-item').forEach(el=>{
+    const mid = el.dataset.mediaId;
+    const sel = mid ? (mid===S.cut.selMedia) : (parseInt(el.dataset.mi)===i);
+    el.classList.toggle('sel', sel);
+  });
+}
 function cutAddToTL(i) {
   const item=S.cut.media[i]; if(!item) return;
   // Progressive bottom-up placement: scan from V1 (trackIdx=0) upward
