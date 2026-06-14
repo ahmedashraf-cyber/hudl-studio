@@ -3195,7 +3195,7 @@ function updatePropsPanel(ci){
       <span id="op-pct-${ci}" style="font-size:10px;color:var(--mu);min-width:32px;text-align:right">${Math.round((c.opacity !== undefined ? c.opacity : 1) * 100)}%</span>
     </div>
 
-    ${(c.type==='video'||c.type==='image') ? `
+    ${(c.type==='video'||c.type==='image'||c.type==='frame_hold'||c.type==='text'||c.type==='image_bg'||c.type==='shape') ? `
     <div style="border:0.5px solid rgba(232,89,12,0.25);border-radius:8px;margin:4px 0;overflow:hidden;background:rgba(232,89,12,0.04)">
       <div style="display:flex;align-items:center;padding:8px 10px;cursor:pointer;user-select:none;gap:8px"
         onclick="const el=document.getElementById('acc-tf-${ci}');el.hidden=!el.hidden;this.querySelector('.acc-chv').style.transform=el.hidden?'rotate(-90deg)':'rotate(0deg)'">
@@ -3455,7 +3455,7 @@ function updatePropsPanel(ci){
         </div>
       </div>
     </div>
-    ${(c.type==='video'||c.type==='image') ? `
+    ${(c.type==='video'||c.type==='image'||c.type==='frame_hold'||c.type==='text'||c.type==='image_bg'||c.type==='shape') ? `
     <div style="border:0.5px solid rgba(88,166,255,0.2);border-radius:8px;margin:4px 0;overflow:hidden;background:rgba(88,166,255,0.03)">
       <div style="display:flex;align-items:center;padding:8px 10px;cursor:pointer;user-select:none;gap:8px"
         onclick="const el=document.getElementById('acc-fx-${ci}');el.hidden=!el.hidden;this.querySelector('.acc-chv').style.transform=el.hidden?'rotate(-90deg)':'rotate(0deg)'">
@@ -3531,7 +3531,7 @@ function updatePropsPanel(ci){
 
       </div>
     </div>` : ''}
-    ${(c.type==='video'||c.type==='image') ? `
+    ${(c.type==='video'||c.type==='image'||c.type==='frame_hold'||c.type==='text'||c.type==='image_bg'||c.type==='shape') ? `
     <div style="border:0.5px solid rgba(255,200,50,0.2);border-radius:8px;margin:4px 0;overflow:hidden;background:rgba(255,200,50,0.03)">
       <div style="display:flex;align-items:center;padding:8px 10px;cursor:pointer;user-select:none;gap:8px"
         onclick="const el=document.getElementById('acc-col-${ci}');el.hidden=!el.hidden;this.querySelector('.acc-chv').style.transform=el.hidden?'rotate(-90deg)':'rotate(0deg)'">
