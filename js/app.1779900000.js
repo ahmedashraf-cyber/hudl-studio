@@ -6173,7 +6173,23 @@ function setupPlayheadDrag(){
     if(!dragging)return;
     const rect=scroll.getBoundingClientRect();
     const x=getX(e)-rect.left+scroll.scrollLeft;
-    S.cut.ph=Math.max(0,Math.min(Math.max(S.proj.dur,S.cut.clips.length?Math.max(...S.cut.clips.map(c=>c.start+c.dur)):0),x/PPS));
+    const _rawTime = x/PPS;
+    const _maxPh = Math.max(S.proj.dur, S.cut.clips.length?Math.max(...S.cut.clips.map(c=>c.start+c.dur)):0);
+    // ── Snap to clip edges during scrub ────────────────────────────────
+    // Uses the existing snap engine (getSnapPoint) — excludeIdx=-1 means
+    // snap to ALL clip/overlay edges, including the playhead's own position.
+    // This is additive: it doesn't change how clip snapping works.
+    let _snappedTime = _rawTime;
+    if(window._snapEnabled !== false && window.getSnapPoint){
+      const _snap = window.getSnapPoint(x, -1, 'start');
+      if(_snap !== null){
+        _snappedTime = _snap;
+        window.showSnapLine && window.showSnapLine(_snap);
+      } else {
+        window.hideSnapLine && window.hideSnapLine();
+      }
+    }
+    S.cut.ph=Math.max(0,Math.min(_maxPh, _snappedTime));
     // Update playhead position display
     const phEl=$('cut-ph');
     if(phEl) phEl.style.left=Math.round(S.cut.ph*PPS)+'px';
@@ -6208,6 +6224,7 @@ function setupPlayheadDrag(){
     dragging=false;
     window._seekLockUntil = Date.now() + 800;
     S.cut._scrubbing=false;
+    window.hideSnapLine && window.hideSnapLine(); // clear snap indicator on release
     document.removeEventListener('mousemove',onDrag);
     document.removeEventListener('mouseup',stopDrag);
     document.removeEventListener('touchmove',onDragTouch);
@@ -6299,7 +6316,21 @@ function setupPlayheadDrag(){
       if(mv2&&!mv2.paused) mv2.pause();
       document.addEventListener('mousemove',function moveRuler(e){
         if(!dragging)return;
-        S.cut.ph=Math.max(0,Math.min(Math.max(S.proj.dur,S.cut.clips.length?Math.max(...S.cut.clips.map(c=>c.start+c.dur)):0),_getRulerTime(e)));
+        const _rawRulerTime = _getRulerTime(e);
+        const _maxRulerPh = Math.max(S.proj.dur, S.cut.clips.length?Math.max(...S.cut.clips.map(c=>c.start+c.dur)):0);
+        // ── Snap to clip edges during ruler scrub ──────────────────────────
+        let _snappedRulerTime = _rawRulerTime;
+        if(window._snapEnabled !== false && window.getSnapPoint){
+          const _rulerX = _rawRulerTime * (window.PPS||60);
+          const _rulerSnap = window.getSnapPoint(_rulerX, -1, 'start');
+          if(_rulerSnap !== null){
+            _snappedRulerTime = _rulerSnap;
+            window.showSnapLine && window.showSnapLine(_rulerSnap);
+          } else {
+            window.hideSnapLine && window.hideSnapLine();
+          }
+        }
+        S.cut.ph=Math.max(0,Math.min(_maxRulerPh, _snappedRulerTime));
         const phEl=$('cut-ph');if(phEl)phEl.style.left=Math.round(S.cut.ph*PPS)+'px';
         const tc2=fmtFull(S.cut.ph,S.proj.fps);
         const a2=$('cut-pv-tc');if(a2)a2.textContent=tc2;
@@ -6310,7 +6341,7 @@ function setupPlayheadDrag(){
           if(nc){const item3=getMediaById(nc.mediaId);if(item3?.url){if(mv3.dataset.mediaId!==nc.mediaId){mv3.dataset.mediaId=nc.mediaId;mv3.src=item3.url;}mv3.dataset.clipIdx=String(S.cut.clips.indexOf(nc));mv3.currentTime=(nc.fileStart||0)+Math.max(0,(S.cut.ph-nc.start)*(nc.speed||1));mv3.style.display='block';}}
         }
       });
-      document.addEventListener('mouseup',function(){dragging=false;S.cut._scrubbing=false;},{once:true});
+      document.addEventListener('mouseup',function(){dragging=false;S.cut._scrubbing=false;window.hideSnapLine&&window.hideSnapLine();},{once:true});
     });
   }
 }
