@@ -85,11 +85,10 @@ async function autoSave() {
         // _imgData = base64 frame-hold image (can be 100-500KB per clip)
         // _img = Image element reference (not serializable)
         clips: S.cut.clips.map(c => {
-          if(c._imgData || c._img) {
-            const {_imgData, _img, ...rest} = c;
-            return rest;
-          }
-          return c;
+          // Always return a shallow clone — never the live reference.
+          // Prevents mutations between state-object creation and JSON.stringify.
+          const {_imgData, _img, ...rest} = c;
+          return rest;
         }),
         // BUG4 FIX: save effects keyed by clip UUID not array index
         // so they survive any reordering of the clips array on reload
@@ -492,17 +491,20 @@ window.openProject = async function(id) {
       S.cut.audioTracks = Math.max(1, _maxA - S.cut.videoTracks + 1);
     }
 
-    // Validate clip tracks: ensure video clips stay on video rows, audio on audio rows
-    // This fixes any misassignment from saved state or old default mismatch
-    S.cut.clips.forEach(c => {
-      const isVisual = c.type==='video'||c.type==='image'||c.type==='frame_hold';
-      const isAudio  = c.type==='audio';
-      if (isVisual && c.track >= S.cut.videoTracks) {
-        c.track = Math.min(c.track, S.cut.videoTracks - 1);
-      } else if (isAudio && c.track < S.cut.videoTracks) {
-        c.track = S.cut.videoTracks;  // bump to first audio row
-      }
-    });
+    // Validate clip tracks ONLY when videoTracks was inferred (not explicitly saved).
+    // When videoTracks is explicitly saved, we trust clip.track exactly as stored —
+    // re-clamping it would corrupt intentional multi-track layouts.
+    if (!cs.videoTracks) {
+      S.cut.clips.forEach(c => {
+        const isVisual = c.type==='video'||c.type==='image'||c.type==='frame_hold';
+        const isAudio  = c.type==='audio';
+        if (isVisual && c.track >= S.cut.videoTracks) {
+          c.track = Math.min(c.track, S.cut.videoTracks - 1);
+        } else if (isAudio && c.track < S.cut.videoTracks) {
+          c.track = S.cut.videoTracks;
+        }
+      });
+    }
     // BUG4 FIX: remap effects from UUID-keyed back to array-index-keyed
     // Handles both old format (numeric keys) and new format (UUID_idx keys)
     if(S.cut.effects && S.cut.clips.length){
@@ -1012,10 +1014,7 @@ window.doSave = async function() {
   try {
     await saveProjectState(S.currentProject.id, {
       cut: {
-        clips: S.cut.clips.map(c => {
-          if(c._imgData || c._img) { const {_imgData, _img, ...rest} = c; return rest; }
-          return c;
-        }),
+        clips: S.cut.clips.map(c => { const {_imgData, _img, ...rest} = c; return rest; }),
         // BUG4 FIX: save effects keyed by clip UUID not array index
         // so they survive any reordering of the clips array on reload
         effects: (()=>{
@@ -1215,9 +1214,120 @@ window.moveMediaToFolder = moveMediaToFolder;
 // ══════════════════════════════════════════════════════════════
 // F2: Folder directory import (webkitdirectory)
 // ══════════════════════════════════════════════════════════════
+// ── Supported extensions for folder import ──────────────────────
+const _FOLDER_EXTS = new Set(['mp4','mov','avi','mkv','webm','m4v','flv','wmv','3gp',
+  'mp3','wav','aac','ogg','m4a','flac','opus','wma','aiff',
+  'jpg','jpeg','png','gif','webp','bmp','tiff','avif']);
+
+// ── UUID generator (reused from handleCutFiles) ───────────────────
+function _genUUID(){
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g,c=>{
+    const r=Math.random()*16|0; return(c==='x'?r:(r&0x3|0x8)).toString(16);
+  });
+}
+
+// ── Import a flat list of File objects into a named bin ───────────
+function _importFilesIntoBin(files, binId){
+  const SUPPORTED = _FOLDER_EXTS;
+  let added=0;
+  Array.from(files).forEach(f=>{
+    const ext=f.name.split('.').pop().toLowerCase();
+    if(!SUPPORTED.has(ext)) return;
+    const isVid=/^video\//.test(f.type)||['mp4','mov','avi','mkv','webm','m4v','flv','wmv','3gp'].includes(ext);
+    const isAud=/^audio\//.test(f.type)||['mp3','wav','aac','ogg','m4a','flac','opus','wma','aiff'].includes(ext);
+    const isImg=/^image\//.test(f.type)||['jpg','jpeg','png','gif','webp','bmp','tiff','avif'].includes(ext);
+    if(!isVid&&!isAud&&!isImg) return;
+    const url=URL.createObjectURL(f);
+    const _uuid=_genUUID();
+    const item={name:f.name,id:_uuid,mediaId:_uuid,
+      type:isVid?'video':isAud?'audio':'image',
+      file:f,url,duration:isImg?5:0,thumbnail:null};
+    if(isVid){
+      const v=document.createElement('video');v.src=url;
+      v.onloadedmetadata=()=>{
+        item.duration=v.duration;item.width=v.videoWidth;item.height=v.videoHeight;
+        v.currentTime=0.5;
+        v.onseeked=()=>{const tc=document.createElement('canvas');tc.width=64;tc.height=36;
+          tc.getContext('2d').drawImage(v,0,0,64,36);item.thumbnail=tc.toDataURL();buildBinList();};
+      };
+    } else if(isAud){
+      const a=document.createElement('audio');a.src=url;
+      a.onloadedmetadata=()=>{item.duration=a.duration;buildBinList();};
+    }
+    S.cut.media.push(item);
+    if(binId){ if(!S.cut.mediaBins)S.cut.mediaBins={}; S.cut.mediaBins[_uuid]=binId; }
+    if(S.currentProject?.id)
+      saveMediaFile(S.currentProject.id,f,_uuid).catch(e=>console.warn('MediaStore save failed:',e));
+    added++;
+  });
+  return added;
+}
+
+// ── Import folder structure from webkitRelativePath (input[webkitdirectory]) ─
+function _importFolderFiles(files){
+  // Group files by their top-level folder name
+  const byFolder={};
+  Array.from(files).forEach(f=>{
+    const parts=f.webkitRelativePath.split('/');
+    const topFolder=parts[0]||'Imported Folder';
+    if(!byFolder[topFolder]) byFolder[topFolder]=[];
+    byFolder[topFolder].push({file:f,parts});
+  });
+  let totalAdded=0;
+  Object.entries(byFolder).forEach(([folderName,entries])=>{
+    // Create top-level bin for this folder
+    if(!S.cut.bins) S.cut.bins=[{id:'root',name:'All Media',open:true}];
+    const topBinId='bin_'+_genUUID();
+    S.cut.bins.push({id:topBinId,name:folderName,open:true});
+    // Create sub-bins for subdirectories
+    const subBins={};
+    entries.forEach(({file,parts})=>{
+      // parts[0]=topFolder, parts[parts.length-1]=filename
+      if(parts.length>2){
+        // file is in a subdirectory
+        const subPath=parts.slice(1,-1).join('/');
+        if(!subBins[subPath]){
+          const subBinId='bin_'+_genUUID();
+          const subName=parts[parts.length-2];
+          S.cut.bins.push({id:subBinId,name:subName,open:true,parent:topBinId});
+          subBins[subPath]=subBinId;
+        }
+        totalAdded+=_importFilesIntoBin([file],subBins[subPath]);
+      } else {
+        totalAdded+=_importFilesIntoBin([file],topBinId);
+      }
+    });
+  });
+  if(totalAdded) notify(totalAdded+' file'+(totalAdded>1?'s':'')+' imported','#3fb950');
+  buildBinList(); scheduleSave();
+}
+
+// ── Recursive folder read via dataTransfer.items (drag-drop) ──────
+async function _readDropEntry(entry, binId){
+  if(entry.isFile){
+    return new Promise(res=>{
+      entry.file(f=>{ _importFilesIntoBin([f],binId); res(); });
+    });
+  }
+  if(entry.isDirectory){
+    if(!S.cut.bins) S.cut.bins=[{id:'root',name:'All Media',open:true}];
+    const subBinId='bin_'+_genUUID();
+    S.cut.bins.push({id:subBinId,name:entry.name,open:true});
+    const reader=entry.createReader();
+    return new Promise(res=>{
+      const readAll=()=>reader.readEntries(async entries=>{
+        if(!entries.length){res();return;}
+        await Promise.all(entries.map(e=>_readDropEntry(e,subBinId)));
+        readAll();
+      });
+      readAll();
+    });
+  }
+}
+
 function setupFolderImport(){
   let fi = document.getElementById('cut-fi-folder');
-  if(fi) return; // already set up
+  if(fi) return;
   fi = document.createElement('input');
   fi.type = 'file';
   fi.id = 'cut-fi-folder';
@@ -1228,14 +1338,38 @@ function setupFolderImport(){
   document.body.appendChild(fi);
   fi.addEventListener('change', () => {
     if(!fi.files?.length) return;
-    // Create a folder with the directory name
-    const folderName = fi.files[0].webkitRelativePath?.split('/')[0] || 'Imported Folder';
-    const folder = createMediaFolder(folderName);
-    // Import all files in the folder
-    const filesToImport = Array.from(fi.files).filter(f => !f.webkitRelativePath.includes('/.'));
-    handleCutFiles(filesToImport, folder.id);
+    _importFolderFiles(fi.files);
     fi.value = '';
   });
+
+  // ── Also wire drag-drop folder support on the media bin panel ───
+  const _setupBinDrop = () => {
+    const binEl = document.getElementById('cut-bin');
+    if(!binEl || binEl._folderDropSetup) return;
+    binEl._folderDropSetup = true;
+    binEl.addEventListener('dragover', e=>{
+      if([...e.dataTransfer.items].some(i=>i.kind==='file')) e.preventDefault();
+    });
+    binEl.addEventListener('drop', async e=>{
+      e.preventDefault();
+      const items=[...e.dataTransfer.items];
+      if(!items.length) return;
+      let hasFolder=false;
+      for(const item of items){
+        const entry=item.webkitGetAsEntry?.();
+        if(!entry) continue;
+        if(entry.isDirectory){ hasFolder=true; await _readDropEntry(entry,null); }
+        else if(entry.isFile){
+          // Single file drop — use existing handleCutFiles
+          entry.file(f=>handleCutFiles([f]));
+        }
+      }
+      if(hasFolder){ buildBinList(); scheduleSave(); }
+    });
+  };
+  // Attach now if DOM ready, or after buildBinList
+  setTimeout(_setupBinDrop, 500);
+  window._setupBinDrop = _setupBinDrop;
 }
 window.setupFolderImport = setupFolderImport;
 
@@ -2156,7 +2290,7 @@ function buildCut() {
               Import Audio
             </button>
           </div>
-          <div style="flex:1;overflow-y:auto;padding:0;display:flex;flex-direction:column" id="cut-bin" onclick="if(event.target===this||event.target.id==='ml-scroll')$('cut-fi').click()"></div>
+          <div style="flex:1;overflow-y:auto;padding:0;display:flex;flex-direction:column" id="cut-bin"></div>
         </div>
         <div class="panel-body hidden" id="cut-p-effects">
           <div id="cut-eff-overlay-hint" style="display:none;margin:6px 8px 2px;padding:6px 8px;background:rgba(0,220,200,0.08);border:0.5px solid rgba(0,220,200,0.25);border-radius:7px;font-size:10px;color:rgba(0,220,200,0.9)">
@@ -3142,6 +3276,17 @@ function buildBinList() {
 
   const inf=$('cut-info');
   if(inf) inf.textContent=S.cut.media.length+' file(s) — drag to timeline or double-click';
+
+  // ── Click-on-empty: any click on the bin or scroll area that doesn't hit
+  // an asset item or button opens the file browser ──────────────────────────
+  const _binEl = document.getElementById('cut-bin');
+  if(_binEl && !_binEl._clickSetup){
+    _binEl._clickSetup = true;
+    _binEl.addEventListener('click', e => {
+      const _hit = e.target.closest('.mbin-item, button, select, input, [onclick]');
+      if(!_hit) document.getElementById('cut-fi')?.click();
+    });
+  }
 }
 
 // ── Sort toggle ────────────────────────────────────────────────
