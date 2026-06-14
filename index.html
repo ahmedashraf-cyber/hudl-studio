@@ -8,7 +8,11 @@
     // Cache guard: localStorage version check + bfcache reload
     // No Service Worker — it was intercepting JS module requests
     (function() {
+<<<<<<< HEAD
       var V = '1781431564';
+=======
+      var V = '1787800000';
+>>>>>>> 752c3fb05623267b4b6b0545d5db51f988aae0e7
       try {
         if (localStorage.getItem('fstudio_v') !== V) {
           var hadOld = localStorage.getItem('fstudio_v') !== null;
