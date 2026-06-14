@@ -1139,7 +1139,12 @@ function renderSingleOverlayOnCanvas(ctx, W, H, currentTime, ov, playedFreezes){
     const cx=(ov.x||0.5)*W, cy=(ov.y||0.5)*H;
     ctx.translate(cx,cy); ctx.scale(tr.scaleX,tr.scaleY); ctx.translate(-cx,-cy);
   }
-  ctx.globalAlpha = Math.max(0, Math.min(1, tr.alpha));
+  // BUG1 FIX: multiply transition alpha by user-set overlay opacity
+  // ov.opacity: 0-100 (new format) or 0-1 (legacy) — normalise to 0-1
+  const _ovOpacity = ov.opacity !== undefined
+    ? (ov.opacity > 1 ? ov.opacity / 100 : ov.opacity)
+    : 1;
+  ctx.globalAlpha = Math.max(0, Math.min(1, tr.alpha * _ovOpacity));
   if(ov.type==='freeze'){
     if(ov._img && ov._img.complete){ ctx.globalAlpha=1; ctx.drawImage(ov._img,0,0,W,H); }
     else if(!ov._img){
@@ -1892,6 +1897,14 @@ window.updateOverlayProps = function(id){
     </div>
     <div class="prop-row"><span class="prop-label">Duration</span>
       <span class="prop-val">${fmtN(ov.endTime-ov.startTime)}s</span>
+    </div>
+    <div class="prop-row">
+      <span class="prop-label">Opacity</span>
+      <input type="range" min="0" max="100"
+        value="${ov.opacity!==undefined?(ov.opacity>1?ov.opacity:Math.round(ov.opacity*100)):100}"
+        style="flex:1;accent-color:#E8590C"
+        oninput="const o=window._overlays.find(o=>o.id==='${ov.id}');if(o){o.opacity=parseInt(this.value);}document.getElementById('ov-op-pct-${ov.id}').textContent=this.value+'%';if(window.syncCutVid)syncCutVid();">
+      <span id="ov-op-pct-${ov.id}" style="font-size:10px;color:var(--mu);min-width:30px;text-align:right">${ov.opacity!==undefined?(ov.opacity>1?ov.opacity:Math.round(ov.opacity*100)):100}%</span>
     </div>
     <div class="prop-section" style="color:rgba(0,220,200,0.9)">🎬 Transitions</div>
     <div class="prop-row"><span class="prop-label" style="color:rgba(0,220,200,0.8)">In</span>

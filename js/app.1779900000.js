@@ -91,9 +91,20 @@ async function autoSave() {
           }
           return c;
         }),
-        effects: S.cut.effects,
+        // BUG4 FIX: save effects keyed by clip UUID not array index
+        // so they survive any reordering of the clips array on reload
+        effects: (()=>{
+          const byId = {};
+          Object.entries(S.cut.effects || {}).forEach(([idx, efArr]) => {
+            const clip = S.cut.clips[parseInt(idx)];
+            const key = clip?.mediaId ? (clip.mediaId + '_' + idx) : String(idx);
+            byId[key] = efArr;
+          });
+          return byId;
+        })(),
         videoTracks: S.cut.videoTracks,
         audioTracks: S.cut.audioTracks,
+        mutedTracks: S.cut.mutedTracks || {},   // BUG2 FIX: persist muted state
         overlays: (window._overlays || []).map(o => ({...o, _img: undefined, _imgData: undefined})),
         media: S.cut.media.map(m => ({
           name: m.name,
@@ -419,15 +430,16 @@ window.openProject = async function(id) {
       });
 
       // Add any orphaned IndexedDB files not already in meta
+      // BUG3 FIX: only match by UUID — name-based matching caused wrong clips
+      // to merge when two files shared the same filename
       storedFiles.forEach(sf => {
         const alreadyRestored = restoredMedia.some(m =>
-          (sf.mediaId && (m.id === sf.mediaId || m.mediaId === sf.mediaId)) ||
-          m.name === sf.name
+          sf.mediaId && (m.id === sf.mediaId || m.mediaId === sf.mediaId)
         );
-        if (!alreadyRestored) {
-          const newId = id + '_orph_' + Date.now() + '_' + Math.random().toString(36).slice(2,5);
+        if (!alreadyRestored && sf.mediaId) {
+          // Only add if it has a UUID we can track — ignore name-only entries
           restoredMedia.push({
-            name: sf.name, id: newId, mediaId: newId,
+            name: sf.name, id: sf.mediaId, mediaId: sf.mediaId,
             type: sf.type.startsWith('video') ? 'video' : sf.type.startsWith('audio') ? 'audio' : 'image',
             url: sf.url, file: sf.blob, duration: 0, thumbnail: null
           });
@@ -441,11 +453,39 @@ window.openProject = async function(id) {
     S.cut = {
       clips:       cs.clips       || [],
       effects:     cs.effects     || {},
-      videoTracks: cs.videoTracks || 2,
+      videoTracks: cs.videoTracks || 1,
       audioTracks: cs.audioTracks || 2,
+      mutedTracks: cs.mutedTracks || {},   // BUG2 FIX: restore muted state
       media:       restoredMedia,
       sel: null, ph: 0, playing: false, tick: null, _hist: [], _histIdx: -1
     };
+    // BUG4 FIX: remap effects from UUID-keyed back to array-index-keyed
+    // Handles both old format (numeric keys) and new format (UUID_idx keys)
+    if(S.cut.effects && S.cut.clips.length){
+      const remapped = {};
+      Object.entries(S.cut.effects).forEach(([key, efArr]) => {
+        // New format: "mediaId_idx" — extract the index part
+        if(key.includes('_') && isNaN(parseInt(key))){
+          // Find clip by matching the UUID prefix
+          const [uuid, ...rest] = key.split('_');
+          // Try to find by exact clip UUID match first
+          const ci = S.cut.clips.findIndex(c => c.mediaId === uuid ||
+            key.startsWith(c.mediaId + '_'));
+          if(ci >= 0) remapped[ci] = efArr;
+          else {
+            // Fallback: try numeric index from end of key
+            const numIdx = parseInt(rest[rest.length-1]);
+            if(!isNaN(numIdx) && numIdx < S.cut.clips.length) remapped[numIdx] = efArr;
+          }
+        } else {
+          // Old format: pure numeric index — keep as-is
+          const numIdx = parseInt(key);
+          if(!isNaN(numIdx)) remapped[numIdx] = efArr;
+        }
+      });
+      S.cut.effects = remapped;
+    }
+
     // Restore overlays
     window._overlays = (cs.overlays || []).map(o => ({...o, _img: undefined, _imgData: undefined}));
     window._overlayIdCounter = window._overlays.reduce((max, o) => {
@@ -932,9 +972,20 @@ window.doSave = async function() {
           if(c._imgData || c._img) { const {_imgData, _img, ...rest} = c; return rest; }
           return c;
         }),
-        effects: S.cut.effects,
+        // BUG4 FIX: save effects keyed by clip UUID not array index
+        // so they survive any reordering of the clips array on reload
+        effects: (()=>{
+          const byId = {};
+          Object.entries(S.cut.effects || {}).forEach(([idx, efArr]) => {
+            const clip = S.cut.clips[parseInt(idx)];
+            const key = clip?.mediaId ? (clip.mediaId + '_' + idx) : String(idx);
+            byId[key] = efArr;
+          });
+          return byId;
+        })(),
         videoTracks: S.cut.videoTracks,
         audioTracks: S.cut.audioTracks,
+        mutedTracks: S.cut.mutedTracks || {},   // BUG2 FIX: persist muted state
         overlays: (window._overlays || []).map(o => ({...o, _img: undefined, _imgData: undefined})),
         media: S.cut.media.map(m => ({
           name: m.name,
