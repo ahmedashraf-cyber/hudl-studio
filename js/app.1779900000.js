@@ -395,84 +395,69 @@ window.openProject = async function(id) {
     // ── Restore media files from IndexedDB ──
     let restoredMedia = [];
     try {
+      // ── PHASE 1: Fast restore — metadata + IDB stubs, NO binary loaded into RAM ──
+      // loadMediaFiles now returns stubs with url=null and _idbKey for lazy loading.
+      // This makes project open instant regardless of how large the video files are.
       const storedFiles = await loadMediaFiles(id);
       const savedMeta = cs.media || [];
 
-      // ── ID-FIRST restore with consumption pool ────────────────────────────
-      // BUG3 FIX: use a mutable pool so two savedMeta entries with the same
-      // filename each get their own distinct IDB blob, not both the first match.
-      const _pool = storedFiles.slice();
+      // Build lookup: mediaId → stub
+      const _stubByMediaId = {};
+      const _stubByName    = {};
+      storedFiles.forEach(sf => {
+        if(sf.mediaId) _stubByMediaId[sf.mediaId] = sf;
+        if(sf.name && !_stubByName[sf.name]) _stubByName[sf.name] = sf;
+      });
 
       restoredMedia = savedMeta.map(m => {
         const savedId = m.id || m.mediaId;
-        // 1. UUID match — exact, collision-free
-        let idx = savedId ? _pool.findIndex(sf => sf.mediaId === savedId) : -1;
-        // 2. Legacy name fallback — consume the match so next same-name entry
-        //    gets the next IDB record, not the same first one again
-        if (idx === -1) idx = _pool.findIndex(sf => sf.name === m.name);
-        const base = { ...m, id: savedId || null, mediaId: savedId || null };
-        if (idx !== -1) {
-          const sf = _pool.splice(idx, 1)[0];
-          return { ...base, url: sf.url, file: sf.blob };
-        }
-        return { ...base, url: null };
+        const stub = (savedId && _stubByMediaId[savedId]) || _stubByName[m.name] || null;
+        return {
+          ...m,
+          id:      savedId || null,
+          mediaId: savedId || null,
+          url:     null,   // populated lazily in Phase 2
+          blob:    null,
+          _idbKey: stub?._idbKey || null,
+          _offline: !stub,  // true = file not in IDB, show offline indicator
+        };
       });
 
-      // ── Migration: assign permanent UUIDs to any items that still lack one ──
+      // Add orphaned IDB stubs not referenced by savedMeta
+      storedFiles.forEach(sf => {
+        const already = restoredMedia.some(m => m.mediaId && m.mediaId === sf.mediaId);
+        if(!already && sf.mediaId){
+          restoredMedia.push({
+            name: sf.name, id: sf.mediaId, mediaId: sf.mediaId,
+            type: sf.type.startsWith('video') ? 'video' : sf.type.startsWith('audio') ? 'audio' : 'image',
+            url: null, blob: null, _idbKey: sf._idbKey, duration: 0, thumbnail: null,
+          });
+        }
+      });
+
+      // UUID migration for items still lacking id
       const _now = Date.now();
-      const _migratedItems = []; // track which items got new UUIDs so we can re-save to IDB
       restoredMedia.forEach((m, idx) => {
-        if (!m.id) {
+        if(!m.id){
           m.id = id + '_migr_' + _now + '_' + idx + '_' + Math.random().toString(36).slice(2,5);
           m.mediaId = m.id;
-          if (m.file) _migratedItems.push(m); // has blob — re-save with UUID key
         }
       });
 
-      // BUG3 ROOT FIX: re-save migrated blobs to IDB under their new UUID keys.
-      // Without this, next reload falls back to name-matching again because IDB
-      // only has the legacy key (projectId/filename) with no mediaId — not the
-      // migration UUID. Re-saving under UUID key makes all future reloads use
-      // the exact UUID path, permanently breaking the name-collision chain.
-      if (_migratedItems.length > 0 && window.saveMediaFile) {
-        _migratedItems.forEach(m => {
-          // Re-save blob under UUID key — fire-and-forget (don't block UI)
-          const _blob = m.file instanceof Blob ? m.file : new Blob([m.file]);
-          const _file = new File([_blob], m.name, { type: _blob.type || 'video/mp4' });
-          saveMediaFile(id, _file, m.id).catch(e =>
-            console.warn('[BUG3] UUID re-save failed for', m.name, e)
-          );
-        });
-      }
-
-      // Also remap any clips that still reference numeric mediaIdx → migrate to mediaId
+      // Remap clips: mediaIdx → mediaId (legacy)
       const _savedClips = cs.clips || [];
       _savedClips.forEach(c => {
-        if (c.mediaIdx !== undefined && c.mediaIdx !== null && !c.mediaId) {
+        if(c.mediaIdx !== undefined && c.mediaIdx !== null && !c.mediaId){
           const m = restoredMedia[c.mediaIdx];
-          if (m) { c.mediaId = m.id; }
+          if(m){ c.mediaId = m.id; }
           delete c.mediaIdx;
         }
       });
 
-      // Add any orphaned IndexedDB files not already in meta (UUID-only, no name match)
-      storedFiles.forEach(sf => {
-        const alreadyRestored = restoredMedia.some(m =>
-          sf.mediaId && (m.id === sf.mediaId || m.mediaId === sf.mediaId)
-        );
-        if (!alreadyRestored && sf.mediaId) {
-          restoredMedia.push({
-            name: sf.name, id: sf.mediaId, mediaId: sf.mediaId,
-            type: sf.type.startsWith('video') ? 'video' : sf.type.startsWith('audio') ? 'audio' : 'image',
-            url: sf.url, file: sf.blob, duration: 0, thumbnail: null
-          });
-        }
-      });
     } catch(e) {
       console.warn('Could not restore media from IndexedDB:', e);
-      restoredMedia = (cs.media || []).map(m => ({...m, url: null}));
+      restoredMedia = (cs.media || []).map(m => ({...m, url: null, _offline: true}));
     }
-
     S.cut = {
       clips:       cs.clips       || [],
       effects:     cs.effects     || {},
@@ -584,14 +569,14 @@ window.openProject = async function(id) {
 
     window._vpZoom = 1; // reset viewport zoom on project open
     openApp(project.appType || 'cut');
-    const missingFiles = restoredMedia.filter(m => !m.url).length;
-    if (missingFiles > 0) {
-      notify('Opened — ' + missingFiles + ' file(s) need re-importing', '#d29922');
-    } else {
-      notify('Opened: ' + project.name, '#3fb950');
-    }
+    // All media starts with url=null — lazy loaded in background
+    const offlineCount = restoredMedia.filter(m => m._offline).length;
+    if(offlineCount > 0) notify('Opened — ' + offlineCount + ' file(s) offline (re-import to restore)', '#d29922');
+    else notify('Opened: ' + project.name, '#3fb950');
     // Regenerate _imgData for frame_hold clips (stripped on save, must be rebuilt on load)
     _regenerateFrameHolds();
+    // ── PHASE 2: Lazy-load media blobs in background, one at a time ──
+    _lazyLoadMediaUrls(S.currentProject.id);
   } catch (e) {
     notify('Could not open project', '#E31837');
     console.error('openProject error:', e);
@@ -2246,6 +2231,82 @@ function newCanvas(){S.cv={layers:[{name:'Background',visible:true},{name:'Layer
 // ═══════════════════════════════════════
 // ── CUT APP ──
 // ═══════════════════════════════════════
+
+// ── _lazyLoadMediaUrls: background media loader ──────────────────────────────
+// Loads IDB files one at a time after UI is visible.
+// Prioritises clips near the current playhead, then loads the rest.
+// Never loads more than one file at a time to keep RAM usage flat.
+async function _lazyLoadMediaUrls(projectId) {
+  if(!projectId || !S.cut?.media) return;
+  const items = S.cut.media.filter(m => !m.url && m._idbKey && !m._offline);
+  if(!items.length){ buildBinList(); return; }
+
+  // Sort: items referenced by clips near playhead first
+  const ph = S.cut.ph || 0;
+  const clipMediaIds = new Set(
+    S.cut.clips
+      .filter(c => Math.abs((c.start + c.dur/2) - ph) < 30) // within 30s
+      .map(c => c.mediaId).filter(Boolean)
+  );
+  items.sort((a, b) => {
+    const aClose = clipMediaIds.has(a.id||a.mediaId) ? 0 : 1;
+    const bClose = clipMediaIds.has(b.id||b.mediaId) ? 0 : 1;
+    return aClose - bClose;
+  });
+
+  let loaded = 0;
+  for(const item of items){
+    if(!item._idbKey) continue;
+    try{
+      const result = await window.loadMediaFileByKey(item._idbKey);
+      if(result){
+        item.url  = result.url;
+        item.blob = result.blob;
+        loaded++;
+        // Refresh thumbnail for video items that don't have one yet
+        if(!item.thumbnail && item.type === 'video' && item.url){
+          const v = document.createElement('video');
+          v.src = item.url; v.muted = true; v.preload = 'metadata';
+          v.addEventListener('seeked', () => {
+            const tc = document.createElement('canvas'); tc.width=64; tc.height=36;
+            tc.getContext('2d').drawImage(v,0,0,64,36);
+            item.thumbnail = tc.toDataURL('image/jpeg', 0.7);
+            v.src = ''; // release
+            clearTimeout(window._binRebuildTimer);
+            window._binRebuildTimer = setTimeout(buildBinList, 200);
+          }, {once:true});
+          v.addEventListener('loadedmetadata', () => {
+            if(!item.duration) item.duration = v.duration;
+            if(!item.width)    item.width    = v.videoWidth;
+            if(!item.height)   item.height   = v.videoHeight;
+            v.currentTime = Math.min(0.5, v.duration * 0.1);
+          }, {once:true});
+          v.load();
+        }
+        // Refresh canvas for the first near-playhead clip to show video immediately
+        if(loaded === 1 && window.syncCutVid) syncCutVid();
+        // Rebuild bin list every 5 files to show progress
+        if(loaded % 5 === 0){
+          clearTimeout(window._binRebuildTimer);
+          window._binRebuildTimer = setTimeout(buildBinList, 100);
+        }
+      }
+    } catch(e){
+      console.warn('[LazyLoad] failed for', item.name, e);
+      item._offline = true;
+    }
+    // Yield to UI thread between each file load
+    await new Promise(r => setTimeout(r, 10));
+  }
+  // Final rebuild
+  clearTimeout(window._binRebuildTimer);
+  buildBinList();
+  if(loaded > 0 && window.syncCutVid) syncCutVid();
+  if(loaded > 0) console.log('[LazyLoad] loaded', loaded, 'media files');
+}
+window._lazyLoadMediaUrls = _lazyLoadMediaUrls;
+
+
 function buildCut() {
   const app = $('cut-app'); app.innerHTML = '';
   app.style.cssText = 'flex:1;display:flex;flex-direction:column;overflow:hidden';
@@ -3257,9 +3318,11 @@ function buildBinList() {
                      background:${sel?'rgba(232,89,12,0.15)':'rgba(255,255,255,0.03)'};
                      border:0.5px solid ${sel?'rgba(232,89,12,0.5)':'rgba(255,255,255,0.06)'};
                      cursor:pointer;user-select:none;position:relative">
-              <div style="width:${sz-8}px;height:${Math.round((sz-8)*9/16)}px;border-radius:4px;overflow:hidden;background:#111;display:flex;align-items:center;justify-content:center;flex-shrink:0">
+              <div style="width:${sz-8}px;height:${Math.round((sz-8)*9/16)}px;border-radius:4px;overflow:hidden;background:#111;display:flex;align-items:center;justify-content:center;flex-shrink:0;position:relative">
                 ${item.thumbnail?`<img src="${item.thumbnail}" style="width:100%;height:100%;object-fit:cover">`:
                   item.type==='image'&&item.url?`<img src="${item.url}" style="width:100%;height:100%;object-fit:cover">`:
+                  item._offline?`<span style="font-size:9px;color:#ff453a;text-align:center;padding:2px">⚠ Offline</span>`:
+                  !item.url?`<span style="font-size:9px;color:#d29922;text-align:center">⏳</span>`:
                   `<span style="font-size:${Math.round(sz*0.3)}px;opacity:0.5">${icon}</span>`}
               </div>
               <div style="font-size:9px;color:rgba(255,255,255,0.7);margin-top:3px;width:100%;text-align:center;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${item.name}</div>
