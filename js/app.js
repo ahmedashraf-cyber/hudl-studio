@@ -71,8 +71,10 @@ function fmtFull(s, fps) {
 }
 
 function scheduleSave() {
+  // Don't save while dragging — state is mid-flight
+  if(window._mv || window._rz) return;
   clearTimeout(_saveTimer);
-  _saveTimer = setTimeout(autoSave, 3000);
+  _saveTimer = setTimeout(autoSave, 4000);
 }
 
 async function autoSave() {
@@ -3097,11 +3099,14 @@ function handleCutFiles(files) {
         v.onseeked = () => {
           const tc=document.createElement('canvas');tc.width=64;tc.height=36;
           tc.getContext('2d').drawImage(v,0,0,64,36);
-          item.thumbnail=tc.toDataURL();buildBinList();renderCutTimeline();
+          item.thumbnail=tc.toDataURL();
+          // Debounce: don't rebuild entire library on every thumbnail load
+          clearTimeout(window._binRebuildTimer);
+          window._binRebuildTimer = setTimeout(buildBinList, 150);
         };
       };
     } else if (isAud) {
-      const a=document.createElement('audio');a.src=url;a.onloadedmetadata=()=>{item.duration=a.duration;buildBinList();};
+      const a=document.createElement('audio');a.src=url;a.onloadedmetadata=()=>{item.duration=a.duration;clearTimeout(window._binRebuildTimer);window._binRebuildTimer=setTimeout(buildBinList,150);};
     }
     S.cut.media.push(item); added++;
     // Persist file bytes in IndexedDB so it survives page reload
@@ -4696,6 +4701,9 @@ function cutAddToTL(i) {
 }
 
 function renderCutTimeline() {
+  if(window._svcInvalidate) _svcInvalidate(); // invalidate syncCutVid clip cache
+  // During active playback, skip non-essential rebuilds to avoid stuttering
+  // (playFrame itself never calls renderCutTimeline, but drag handlers might)
   const totalTk=S.cut.videoTracks+S.cut.audioTracks;
   // Update timeline shell height
   const shell=$('cut-tl');
@@ -5193,7 +5201,7 @@ function clipMoveMove(e){
   const _maxTrack = grabbedIsVideo ? S.cut.videoTracks-1 : totalTracks-1;
   const newTrack=Math.max(_minTrack, Math.min(_maxTrack, _mv.origTrack+trackDelta));
   S.cut.clips[_mv.ci].track=newTrack;
-  if(newTrack !== _mv.origTrack) console.log('[Drag] clip track:', _mv.origTrack,'→',newTrack,'(dy='+Math.round(dy)+')');
+  // track changed — visual update handled by fast DOM path below
   // No color mutation during drag - preserve original colors
   // GROUP MOVE: apply BOTH horizontal AND vertical delta to all selected clips
   if(window._selectedClips?.size > 1 && _mv._multiOrigins){
@@ -5213,8 +5221,47 @@ function clipMoveMove(e){
       _sc.track = Math.max(_scMin, Math.min(_scMax, _origTrack + _vDelta));
     });
   }
-  renderCutTimeline();
-  if(window._selectedClips?.size > 1) _highlightSelected();
+  // ── FAST DRAG: update clip element positions directly — skip full DOM rebuild ──
+  // renderCutTimeline() is called once on mouseup for final state.
+  const _rowH = 30;
+  const _totalTkM = S.cut.videoTracks + S.cut.audioTracks;
+
+  // Update dragged clip
+  const _dragEl = _mv.el || document.querySelector('[data-ci="'+_mv.ci+'"]');
+  if(_dragEl){
+    _dragEl.style.left = Math.round(S.cut.clips[_mv.ci].start * PPS) + 'px';
+    // Track row: Vn at top (track 0 = bottom video row, inverted display)
+    const _tk = S.cut.clips[_mv.ci].track || 0;
+    const _isV = grabbedIsVideo;
+    const _rowTop = _isV
+      ? (S.cut.videoTracks - 1 - _tk) * _rowH
+      : (S.cut.videoTracks + (_tk - S.cut.videoTracks)) * _rowH;
+    // Move to correct row by reparenting if track changed
+    const _newRowId = _isV ? 'tl-row-'+_tk : 'tl-row-'+_tk;
+    const _newRow = document.getElementById(_newRowId);
+    if(_newRow && _dragEl.parentElement !== _newRow){
+      _newRow.appendChild(_dragEl);
+    }
+  }
+
+  // Update all other selected clips
+  if(window._selectedClips?.size > 1 && _mv._multiOrigins){
+    window._selectedClips.forEach(_sidx => {
+      if(_sidx === _mv.ci) return;
+      const _sc = S.cut.clips[_sidx];
+      if(!_sc) return;
+      const _sEl = document.querySelector('[data-ci="'+_sidx+'"]');
+      if(_sEl){
+        _sEl.style.left = Math.round(_sc.start * PPS) + 'px';
+        const _sTk = _sc.track || 0;
+        const _sIsV = _sc.type==='video'||_sc.type==='image'||_sc.type==='frame_hold';
+        const _sRowId = 'tl-row-'+_sTk;
+        const _sRow = document.getElementById(_sRowId);
+        if(_sRow && _sEl.parentElement !== _sRow) _sRow.appendChild(_sEl);
+      }
+    });
+    _highlightSelected();
+  }
 
   // Cross-type group move: also move any selected overlays by the same horizontal delta
   if(window._selectedOverlays?.size > 0 && _mv._multiOverlayOrigins){
@@ -5225,7 +5272,6 @@ function clipMoveMove(e){
       const _oDur = o.endTime - o.startTime;
       o.startTime = Math.max(0, _mv._multiOverlayOrigins[o.id] + _hDelta);
       o.endTime   = o.startTime + _oDur;
-      // Update DOM position directly — no renderOverlayTimeline to avoid listener rebuild
       const _ovEl = document.querySelector('[data-ov-id="'+o.id+'"]');
       if(_ovEl){
         _ovEl.style.left  = Math.round(o.startTime * PPS) + 'px';
@@ -5328,7 +5374,22 @@ function clipRzMove(e){
       }
     });
   }
-  renderCutTimeline();
+  // ── FAST RESIZE: update clip element CSS directly — skip full DOM rebuild ──
+  const _rzEl = document.querySelector('[data-ci="'+_rz.ci+'"]');
+  if(_rzEl){
+    _rzEl.style.left  = Math.round(c.start * PPS) + 'px';
+    _rzEl.style.width = Math.max(2, Math.round(c.dur * PPS)) + 'px';
+  }
+  // Update other selected clips in multi-trim
+  if(_rz._multiRzOrigins && Object.keys(_rz._multiRzOrigins).length > 1){
+    Object.keys(_rz._multiRzOrigins).forEach(idxStr => {
+      const idx = parseInt(idxStr);
+      if(idx === _rz.ci) return;
+      const oc = S.cut.clips[idx]; if(!oc) return;
+      const _oel = document.querySelector('[data-ci="'+idx+'"]');
+      if(_oel){ _oel.style.left=Math.round(oc.start*PPS)+'px'; _oel.style.width=Math.max(2,Math.round(oc.dur*PPS))+'px'; }
+    });
+  }
 }
 function clipRzUp(){
   S.cut._isResizing=false;
@@ -5536,6 +5597,7 @@ function rebuildTrackLabels(){
 }
 // ── CUT UNDO / REDO ──
 function cutSaveHistory(label) {
+  if(window._svcInvalidate) _svcInvalidate(); // clips changed
   // Deep-clone to prevent future mutations affecting history entries
   const clips    = JSON.parse(JSON.stringify(S.cut.clips));
   const effects  = JSON.parse(JSON.stringify(S.cut.effects));
@@ -6429,21 +6491,42 @@ function _applyEasing(t, mode){
   }
   return t;
 }
+// ── syncCutVid cache — avoid refiltering/resorting on every frame ──
+let _svcCache = null; // { clipsVer, videoClips, lastPh, _allAtPh }
+function _svcInvalidate(){ _svcCache = null; }
+window._svcInvalidate = _svcInvalidate;
+
 function syncCutVid(){
   const ph = S.cut.ph;
   const screen = $('cut-screen');
   if(!screen) return;
 
-  // Find ALL active video/image clips at playhead, sorted by track index (V1=0 bottom, V(n) top)
-  const videoClips = S.cut.clips.filter(c => !c.disabled && (c.type === 'video' || c.type === 'frame_hold' || c.type === 'image'));
-  const _allAtPh = videoClips
-    .filter(c => ph >= c.start && ph < c.start + Math.max(c.dur, 0.1) && !S.cut.hiddenTracks?.[c.track])
-    .sort((a,b) => (a.track||0) - (b.track||0)); // lower track index = drawn first (underneath)
+  // Rebuild videoClips only when clips array changes (version check via length+content hash)
+  const _clipsVer = S.cut.clips.length + '|' + (S.cut.clips[0]?.start||0) + '|' + (S.cut.clips[S.cut.clips.length-1]?.start||0);
+  if(!_svcCache || _svcCache.clipsVer !== _clipsVer){
+    _svcCache = {
+      clipsVer: _clipsVer,
+      videoClips: S.cut.clips.filter(c => !c.disabled && (c.type === 'video' || c.type === 'frame_hold' || c.type === 'image')),
+      lastPh: -999,
+      _allAtPh: [],
+    };
+  }
+  const videoClips = _svcCache.videoClips;
+
+  // Rebuild _allAtPh only when ph moves to a different clip boundary
+  // Round ph to 2 decimal places to avoid floating point noise
+  const _phKey = Math.round(ph * 100);
+  if(_phKey !== _svcCache.lastPh){
+    _svcCache.lastPh = _phKey;
+    _svcCache._allAtPh = videoClips
+      .filter(c => ph >= c.start && ph < c.start + Math.max(c.dur, 0.1) && !S.cut.hiddenTracks?.[c.track])
+      .sort((a,b) => (a.track||0) - (b.track||0));
+  }
+  const _allAtPh = _svcCache._allAtPh;
   const active = _allAtPh.find(c => c.type === 'frame_hold') ||
                  _allAtPh[0] || null;
 
   // Only pool clips near the playhead (active or within 5s lookahead)
-  // Don't eagerly pool ALL clips — that creates <video> elements for the entire timeline
   const _lookahead = 5;
   _allAtPh.concat(videoClips.filter(c => c.start > ph && c.start < ph + _lookahead)).forEach(c => {
     const item = getMediaById(c.mediaId);
@@ -7172,7 +7255,7 @@ function setupPlayheadDrag(){
           }
         }
       }
-      updateCutPH(); syncCutVid();
+      updateCutPH(); if(!window._rctRafPending){window._rctRafPending=true;requestAnimationFrame(()=>{window._rctRafPending=false;syncCutVid();});}
       dragging=true;
       S.cut._scrubbing=true;
       const mv2=$('cut-main-vid');
