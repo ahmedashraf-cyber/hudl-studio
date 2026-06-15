@@ -480,7 +480,12 @@ window.openProject = async function(id) {
       media:       restoredMedia,
       bins:      cs.bins      || [{id:'root',name:'All Media',open:true}],
       mediaBins: cs.mediaBins || {},
-      sel: null, ph: 0, playing: false, tick: null, _hist: [], _histIdx: -1
+      sel: null, ph: 0, playing: false, tick: null, _hist: [], _histIdx: -1,
+      // Reset media library view state on every project open
+      // so filter/sort from a previous session doesn't hide assets
+      _mlFilter: 'all',
+      _mlSearch: '',
+      _mlSort:   {key:'dateAdded', dir:-1},
     };
 
     // BUG2 FIX: infer videoTracks/audioTracks from clip data for old projects
@@ -6233,6 +6238,8 @@ function stopAudioPlayback(){
   if (mv && !mv.paused) mv.pause();
   // Purge audio elements whose URL is no longer used by any clip on the timeline
   purgeStaleAudioEls();
+  // Purge video/image pool elements whose media is no longer on timeline
+  if(window.purgeStalePoolEls) purgeStalePoolEls();
 }
 
 function purgeStaleAudioEls(){
@@ -6253,6 +6260,31 @@ function purgeStaleAudioEls(){
     }
   });
 }
+
+function purgeStalePoolEls(){
+  // Remove _vidPool and _imgPool entries not referenced by any clip on timeline
+  const usedUrls = new Set(
+    S.cut.clips.map(c => getMediaById(c.mediaId)?.url).filter(Boolean)
+  );
+  // Purge video pool
+  Object.keys(_vidPool).forEach(url => {
+    if(!usedUrls.has(url)){
+      const v = _vidPool[url];
+      v.pause(); v.src = ''; v.load();
+      if(document.body.contains(v)) document.body.removeChild(v);
+      delete _vidPool[url];
+    }
+  });
+  // Purge image pool
+  Object.keys(_imgPool).forEach(url => {
+    if(!usedUrls.has(url)){
+      const img = _imgPool[url];
+      img.onload = null; img.src = '';
+      delete _imgPool[url];
+    }
+  });
+}
+window.purgeStalePoolEls = purgeStalePoolEls;
 
 // Compute gain (0-1) for a clip at a given playhead position, accounting for fade in/out
 function getClipGainAtPh(c, ph){
@@ -6410,8 +6442,10 @@ function syncCutVid(){
   const active = _allAtPh.find(c => c.type === 'frame_hold') ||
                  _allAtPh[0] || null;
 
-  // Ensure pool elements exist for all clips
-  videoClips.forEach(c => {
+  // Only pool clips near the playhead (active or within 5s lookahead)
+  // Don't eagerly pool ALL clips — that creates <video> elements for the entire timeline
+  const _lookahead = 5;
+  _allAtPh.concat(videoClips.filter(c => c.start > ph && c.start < ph + _lookahead)).forEach(c => {
     const item = getMediaById(c.mediaId);
     if(item?.url){
       if(c.type === 'image') getPoolImg(item.url);
@@ -6605,17 +6639,6 @@ function syncCutVid(){
     }
     return 0;
   });
-
-  // Debug trace — visible in browser console (F12 → Console)
-  if(_masterList.length > 1 && !window._dbgLastLog || window._dbgPh !== ph){
-    window._dbgPh = ph;
-    const _dbgStr = _masterList.map(e =>
-      e.kind==='clip'
-        ? `V${(e.track||0)+1}:[${e.clip.type}:${e.clip.name||'clip'}]`
-        : `V${(e.track||0)+1}:[overlay:${e.overlay.type}]`
-    ).join(' → ');
-    console.log('[Compositor] draw order:', _dbgStr);
-  }
 
   // 2. Decide render mode:
   //    - Single plain video clip with no overlays → use <video> element directly (best perf)
@@ -6913,19 +6936,18 @@ function syncCutVid(){
           window.renderSingleOverlayOnCanvas(ctx, canvas.width, canvas.height, ph, entry.overlay, _playedFreezes);
       }
     });
-    // If nothing was drawn this frame (video not ready), preserve last good frame
-    if(!_anythingDrawn && canvas._lastGoodFrame){
-      try{ ctx.putImageData(canvas._lastGoodFrame, 0, 0); }catch(e){}
-    } else if(_anythingDrawn){
-      try{ canvas._lastGoodFrame = ctx.getImageData(0, 0, Math.min(canvas.width,2560), Math.min(canvas.height,1440)); }catch(e){}
-    }
+    // If nothing drawn this frame, just leave canvas as-is (don't readback GPU memory)
     S.cut._vid = mv;
   }
 
   S.cut._vid = mv;
-  // Refresh bounding box handles
+  // Refresh bounding box handles only when selection changed (not every frame)
   if(typeof renderBoundingBox==="function"&&S.cut.sel!==null&&S.cut.sel!==undefined){
-    requestAnimationFrame(()=>renderBoundingBox(S.cut.sel));
+    if(window._lastBboxSel !== S.cut.sel || window._lastBboxPh !== ph){
+      window._lastBboxSel = S.cut.sel;
+      window._lastBboxPh  = ph;
+      renderBoundingBox(S.cut.sel);
+    }
   }
 }
 
