@@ -108,15 +108,18 @@ async function autoSave() {
         mutedTracks: S.cut.mutedTracks || {},   // BUG2 FIX: persist muted state
         overlays: (window._overlays || []).map(o => ({...o, _img: undefined, _imgData: undefined})),
         media: S.cut.media.map(m => ({
-          name: m.name,
-          id: m.id || m.mediaId || null,      // UUID — permanent identity
-          mediaId: m.mediaId || m.id || null, // kept for compat
-          type: m.type,
-          duration: m.duration || 0,
-          width: m.width || null,
-          height: m.height || null,
+          name:      m.name,
+          id:        m.id      || m.mediaId || null,  // UUID — permanent identity
+          mediaId:   m.mediaId || m.id      || null,  // compat
+          type:      m.type,
+          duration:  m.duration  || 0,
+          width:     m.width     || null,
+          height:    m.height    || null,
           thumbnail: m.thumbnail || null,
           dateAdded: m.dateAdded || null,
+          // File identity fields — allow re-linking on reload even if IDB was cleared
+          fileName:  m.file?.name || m.name || null,
+          fileSize:  m.file?.size || m.fileSize || null,
         })),
         bins:      S.cut.bins      || [{id:'root',name:'All Media',open:true}],
         mediaBins: S.cut.mediaBins || {}
@@ -529,8 +532,18 @@ window.openProject = async function(id) {
       S.cut.effects = remapped;
     }
 
-    // Restore overlays
-    window._overlays = (cs.overlays || []).map(o => ({...o, _img: undefined, _imgData: undefined}));
+    // Restore overlays — preserve startTime/endTime/track exactly as saved
+    window._overlays = (cs.overlays || []).map(o => {
+      const restored = {...o, _img: undefined, _imgData: undefined};
+      // Normalize legacy track:'text' → 0 (V1) so overlay renders on correct row
+      if(restored.track === 'text' || restored.track === null || restored.track === undefined){
+        restored.track = 0;
+      }
+      // Ensure startTime and endTime are numbers (never strings)
+      if(typeof restored.startTime === 'string') restored.startTime = parseFloat(restored.startTime) || 0;
+      if(typeof restored.endTime   === 'string') restored.endTime   = parseFloat(restored.endTime)   || restored.startTime + 3;
+      return restored;
+    });
     window._overlayIdCounter = window._overlays.reduce((max, o) => {
       const n = parseInt((o.id||'').replace('ov_',''))||0; return Math.max(max,n);
     }, window._overlayIdCounter||0);
@@ -1028,15 +1041,18 @@ window.doSave = async function() {
         mutedTracks: S.cut.mutedTracks || {},   // BUG2 FIX: persist muted state
         overlays: (window._overlays || []).map(o => ({...o, _img: undefined, _imgData: undefined})),
         media: S.cut.media.map(m => ({
-          name: m.name,
-          id: m.id || m.mediaId || null,      // UUID — permanent identity
-          mediaId: m.mediaId || m.id || null, // kept for compat
-          type: m.type,
-          duration: m.duration || 0,
-          width: m.width || null,
-          height: m.height || null,
+          name:      m.name,
+          id:        m.id      || m.mediaId || null,  // UUID — permanent identity
+          mediaId:   m.mediaId || m.id      || null,  // compat
+          type:      m.type,
+          duration:  m.duration  || 0,
+          width:     m.width     || null,
+          height:    m.height    || null,
           thumbnail: m.thumbnail || null,
           dateAdded: m.dateAdded || null,
+          // File identity fields — allow re-linking on reload even if IDB was cleared
+          fileName:  m.file?.name || m.name || null,
+          fileSize:  m.file?.size || m.fileSize || null,
         })),
         bins:      S.cut.bins      || [{id:'root',name:'All Media',open:true}],
         mediaBins: S.cut.mediaBins || {}
@@ -3175,7 +3191,13 @@ function handleCutFiles(files) {
       saveMediaFile(S.currentProject.id, f, item.mediaId).catch(e => console.warn('MediaStore save failed:', e));
     }
   });
-  if (added) notify(added+' file'+(added>1?'s':'')+' imported','#3fb950');
+  if (added) {
+    notify(added+' file'+(added>1?'s':'')+' imported','#3fb950');
+    // Immediately schedule Firestore save so media metadata persists even if
+    // the user closes the tab before the next auto-save fires.
+    // The 4s debounce means at most one save per burst of imports.
+    if(typeof scheduleSave === 'function') scheduleSave();
+  }
   buildBinList();
 }
 
