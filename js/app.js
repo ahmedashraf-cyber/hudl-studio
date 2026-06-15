@@ -3682,30 +3682,21 @@ function updatePropsPanel(ci){
         <span class="acc-chv" style="font-size:9px;color:rgba(255,255,255,0.3);transition:transform 0.2s">▼</span>
       </div>
       <div id="acc-tf-${ci}" style="padding:0 6px 8px">
+        ${c.type==='image'?`
+        <div class="prop-row" style="font-size:9px;color:rgba(232,89,12,0.6);padding:2px 0 4px;letter-spacing:.4px;text-transform:uppercase">Motion Transform</div>
+        `:''}
+
         <div class="prop-row"><span class="prop-label">X</span>
           <input type="range" min="-100" max="100" step="0.5" value="${tf.x||0}" style="flex:1;accent-color:#E8590C"
-            oninput="const c2=S.cut.clips[${ci}];if(!c2.transform)c2.transform={x:0,y:0,scaleX:100,scaleY:100,rotation:0,anchorX:50,anchorY:50,antiFlicker:false,uniformScale:true};c2.transform.x=parseFloat(this.value);this.nextElementSibling.textContent=parseFloat(this.value).toFixed(1)+'%';syncCutVid();renderBoundingBox(${ci});">
-          <span style="font-size:10px;color:var(--mu);min-width:36px;text-align:right">${(tf.x||0).toFixed(1)}%</span>
+            oninput="const c2=S.cut.clips[${ci}];if(!c2.transform)c2.transform={x:0,y:0,scaleX:100,scaleY:100,rotation:0,anchorX:50,anchorY:50,antiFlicker:false,uniformScale:true};c2.transform.x=parseFloat(this.value);this.nextElementSibling.value=parseFloat(this.value).toFixed(1);syncCutVid();renderBoundingBox(${ci});">
+          <input type="number" value="${(tf.x||0).toFixed(1)}" step="0.5" style="width:46px;background:#111;border:0.5px solid rgba(255,255,255,0.1);border-radius:4px;color:var(--tx);font-size:10px;padding:2px 4px;text-align:right"
+            onchange="const c2=S.cut.clips[${ci}];if(!c2.transform)c2.transform={x:0,y:0,scaleX:100,scaleY:100,rotation:0,anchorX:50,anchorY:50,antiFlicker:false,uniformScale:true};c2.transform.x=parseFloat(this.value)||0;this.previousElementSibling.value=this.value;syncCutVid();renderBoundingBox(${ci});">
         </div>
         <div class="prop-row"><span class="prop-label">Y</span>
           <input type="range" min="-100" max="100" step="0.5" value="${tf.y||0}" style="flex:1;accent-color:#E8590C"
-            oninput="const c2=S.cut.clips[${ci}];if(!c2.transform)c2.transform={x:0,y:0,scaleX:100,scaleY:100,rotation:0,anchorX:50,anchorY:50,antiFlicker:false,uniformScale:true};c2.transform.y=parseFloat(this.value);this.nextElementSibling.textContent=parseFloat(this.value).toFixed(1)+'%';syncCutVid();renderBoundingBox(${ci});">
-          <span style="font-size:10px;color:var(--mu);min-width:36px;text-align:right">${(tf.y||0).toFixed(1)}%</span>
-        </div>
-        <div class="prop-row"><span class="prop-label">Scale X</span>
-          <input type="range" min="0" max="500" step="1" value="${tf.scaleX||100}" style="flex:1;accent-color:#E8590C"
-            oninput="const c2=S.cut.clips[${ci}];if(!c2.transform)c2.transform={x:0,y:0,scaleX:100,scaleY:100,rotation:0,anchorX:50,anchorY:50,antiFlicker:false,uniformScale:true};c2.transform.scaleX=parseInt(this.value);if(c2.transform.uniformScale!==false){c2.transform.scaleY=c2.transform.scaleX;const syEl=document.getElementById('tf-sy-${ci}');if(syEl)syEl.value=this.value;}this.nextElementSibling.textContent=this.value+'%';syncCutVid();renderBoundingBox(${ci});">
-          <span style="font-size:10px;color:var(--mu);min-width:36px;text-align:right">${tf.scaleX||100}%</span>
-        </div>
-        <div class="prop-row"><span class="prop-label">Scale Y</span>
-          <input type="range" id="tf-sy-${ci}" min="0" max="500" step="1" value="${tf.uniformScale!==false?(tf.scaleX||100):(tf.scaleY||100)}" style="flex:1;accent-color:#E8590C"
-            oninput="const c2=S.cut.clips[${ci}];if(!c2.transform)c2.transform={x:0,y:0,scaleX:100,scaleY:100,rotation:0,anchorX:50,anchorY:50,antiFlicker:false,uniformScale:true};c2.transform.scaleY=parseInt(this.value);this.nextElementSibling.textContent=this.value+'%';syncCutVid();renderBoundingBox(${ci});">
-          <span style="font-size:10px;color:var(--mu);min-width:36px;text-align:right">${tf.scaleY||100}%</span>
-        </div>
-        <div class="prop-row"><span class="prop-label">Rotation</span>
-          <input type="range" min="-180" max="180" step="1" value="${tf.rotation||0}" style="flex:1;accent-color:#E8590C"
-            oninput="const c2=S.cut.clips[${ci}];if(!c2.transform)c2.transform={x:0,y:0,scaleX:100,scaleY:100,rotation:0,anchorX:50,anchorY:50,antiFlicker:false,uniformScale:true};c2.transform.rotation=parseInt(this.value);this.nextElementSibling.textContent=this.value+'°';syncCutVid();renderBoundingBox(${ci});">
-          <span style="font-size:10px;color:var(--mu);min-width:36px;text-align:right">${tf.rotation||0}°</span>
+            oninput="const c2=S.cut.clips[${ci}];if(!c2.transform)c2.transform={x:0,y:0,scaleX:100,scaleY:100,rotation:0,anchorX:50,anchorY:50,antiFlicker:false,uniformScale:true};c2.transform.y=parseFloat(this.value);this.nextElementSibling.value=parseFloat(this.value).toFixed(1);syncCutVid();renderBoundingBox(${ci});">
+          <input type="number" value="${(tf.y||0).toFixed(1)}" step="0.5" style="width:46px;background:#111;border:0.5px solid rgba(255,255,255,0.1);border-radius:4px;color:var(--tx);font-size:10px;padding:2px 4px;text-align:right"
+            onchange="const c2=S.cut.clips[${ci}];if(!c2.transform)c2.transform={x:0,y:0,scaleX:100,scaleY:100,rotation:0,anchorX:50,anchorY:50,antiFlicker:false,uniformScale:true};c2.transform.y=parseFloat(this.value)||0;this.previousElementSibling.value=this.value;syncCutVid();renderBoundingBox(${ci});">
         </div>
         <div class="prop-row">
           <span class="prop-label">Uniform Scale</span>
@@ -3715,15 +3706,35 @@ function updatePropsPanel(ci){
             <span style="font-size:10px;color:var(--mu)">Lock X=Y</span>
           </label>
         </div>
+        <div class="prop-row"><span class="prop-label">Scale X</span>
+          <input type="range" min="0" max="500" step="1" value="${tf.scaleX||100}" style="flex:1;accent-color:#E8590C"
+            oninput="const c2=S.cut.clips[${ci}];if(!c2.transform)c2.transform={x:0,y:0,scaleX:100,scaleY:100,rotation:0,anchorX:50,anchorY:50,antiFlicker:false,uniformScale:true};c2.transform.scaleX=parseInt(this.value);if(c2.transform.uniformScale!==false){c2.transform.scaleY=c2.transform.scaleX;const syEl=document.getElementById('tf-sy-${ci}');if(syEl)syEl.value=this.value;}this.nextElementSibling.value=this.value;syncCutVid();renderBoundingBox(${ci});">
+          <input type="number" value="${tf.scaleX||100}" step="1" min="0" max="500" style="width:46px;background:#111;border:0.5px solid rgba(255,255,255,0.1);border-radius:4px;color:var(--tx);font-size:10px;padding:2px 4px;text-align:right"
+            onchange="const c2=S.cut.clips[${ci}];if(!c2.transform)c2.transform={x:0,y:0,scaleX:100,scaleY:100,rotation:0,anchorX:50,anchorY:50,antiFlicker:false,uniformScale:true};c2.transform.scaleX=parseInt(this.value)||1;if(c2.transform.uniformScale!==false){c2.transform.scaleY=c2.transform.scaleX;const syEl=document.getElementById('tf-sy-${ci}');if(syEl)syEl.value=this.value;}this.previousElementSibling.value=this.value;syncCutVid();renderBoundingBox(${ci});">
+        </div>
+        <div class="prop-row"><span class="prop-label">Scale Y</span>
+          <input type="range" id="tf-sy-${ci}" min="0" max="500" step="1" value="${tf.uniformScale!==false?(tf.scaleX||100):(tf.scaleY||100)}" style="flex:1;accent-color:#E8590C"
+            oninput="const c2=S.cut.clips[${ci}];if(!c2.transform)c2.transform={x:0,y:0,scaleX:100,scaleY:100,rotation:0,anchorX:50,anchorY:50,antiFlicker:false,uniformScale:true};c2.transform.scaleY=parseInt(this.value);this.nextElementSibling.value=this.value;syncCutVid();renderBoundingBox(${ci});">
+          <input type="number" value="${tf.uniformScale!==false?(tf.scaleX||100):(tf.scaleY||100)}" step="1" min="0" max="500" style="width:46px;background:#111;border:0.5px solid rgba(255,255,255,0.1);border-radius:4px;color:var(--tx);font-size:10px;padding:2px 4px;text-align:right"
+            onchange="const c2=S.cut.clips[${ci}];if(!c2.transform)c2.transform={x:0,y:0,scaleX:100,scaleY:100,rotation:0,anchorX:50,anchorY:50,antiFlicker:false,uniformScale:true};c2.transform.scaleY=parseInt(this.value)||1;this.previousElementSibling.value=this.value;syncCutVid();renderBoundingBox(${ci});">
+        </div>
+        <div class="prop-row"><span class="prop-label">Rotation</span>
+          <input type="range" min="-360" max="360" step="0.5" value="${tf.rotation||0}" style="flex:1;accent-color:#E8590C"
+            oninput="const c2=S.cut.clips[${ci}];if(!c2.transform)c2.transform={x:0,y:0,scaleX:100,scaleY:100,rotation:0,anchorX:50,anchorY:50,antiFlicker:false,uniformScale:true};c2.transform.rotation=parseFloat(this.value);this.nextElementSibling.value=parseFloat(this.value).toFixed(1);syncCutVid();renderBoundingBox(${ci});">
+          <input type="number" value="${(tf.rotation||0).toFixed(1)}" step="0.5" style="width:46px;background:#111;border:0.5px solid rgba(255,255,255,0.1);border-radius:4px;color:var(--tx);font-size:10px;padding:2px 4px;text-align:right"
+            onchange="const c2=S.cut.clips[${ci}];if(!c2.transform)c2.transform={x:0,y:0,scaleX:100,scaleY:100,rotation:0,anchorX:50,anchorY:50,antiFlicker:false,uniformScale:true};c2.transform.rotation=parseFloat(this.value)||0;this.previousElementSibling.value=this.value;syncCutVid();renderBoundingBox(${ci});">
+        </div>
         <div class="prop-row"><span class="prop-label">Anchor X</span>
           <input type="range" min="0" max="100" step="0.5" value="${tf.anchorX!==undefined?tf.anchorX:50}" style="flex:1;accent-color:#E8590C"
-            oninput="const c2=S.cut.clips[${ci}];if(!c2.transform)c2.transform={x:0,y:0,scaleX:100,scaleY:100,rotation:0,anchorX:50,anchorY:50,antiFlicker:false,uniformScale:true};c2.transform.anchorX=parseFloat(this.value);this.nextElementSibling.textContent=parseFloat(this.value).toFixed(1)+'%';syncCutVid();">
-          <span style="font-size:10px;color:var(--mu);min-width:36px;text-align:right">${(tf.anchorX!==undefined?tf.anchorX:50).toFixed(1)}%</span>
+            oninput="const c2=S.cut.clips[${ci}];if(!c2.transform)c2.transform={x:0,y:0,scaleX:100,scaleY:100,rotation:0,anchorX:50,anchorY:50,antiFlicker:false,uniformScale:true};c2.transform.anchorX=parseFloat(this.value);this.nextElementSibling.value=parseFloat(this.value).toFixed(1);syncCutVid();">
+          <input type="number" value="${(tf.anchorX!==undefined?tf.anchorX:50).toFixed(1)}" step="0.5" min="0" max="100" style="width:46px;background:#111;border:0.5px solid rgba(255,255,255,0.1);border-radius:4px;color:var(--tx);font-size:10px;padding:2px 4px;text-align:right"
+            onchange="const c2=S.cut.clips[${ci}];if(!c2.transform)c2.transform={x:0,y:0,scaleX:100,scaleY:100,rotation:0,anchorX:50,anchorY:50,antiFlicker:false,uniformScale:true};c2.transform.anchorX=parseFloat(this.value)||0;this.previousElementSibling.value=this.value;syncCutVid();">
         </div>
         <div class="prop-row"><span class="prop-label">Anchor Y</span>
           <input type="range" min="0" max="100" step="0.5" value="${tf.anchorY!==undefined?tf.anchorY:50}" style="flex:1;accent-color:#E8590C"
-            oninput="const c2=S.cut.clips[${ci}];if(!c2.transform)c2.transform={x:0,y:0,scaleX:100,scaleY:100,rotation:0,anchorX:50,anchorY:50,antiFlicker:false,uniformScale:true};c2.transform.anchorY=parseFloat(this.value);this.nextElementSibling.textContent=parseFloat(this.value).toFixed(1)+'%';syncCutVid();">
-          <span style="font-size:10px;color:var(--mu);min-width:36px;text-align:right">${(tf.anchorY!==undefined?tf.anchorY:50).toFixed(1)}%</span>
+            oninput="const c2=S.cut.clips[${ci}];if(!c2.transform)c2.transform={x:0,y:0,scaleX:100,scaleY:100,rotation:0,anchorX:50,anchorY:50,antiFlicker:false,uniformScale:true};c2.transform.anchorY=parseFloat(this.value);this.nextElementSibling.value=parseFloat(this.value).toFixed(1);syncCutVid();">
+          <input type="number" value="${(tf.anchorY!==undefined?tf.anchorY:50).toFixed(1)}" step="0.5" min="0" max="100" style="width:46px;background:#111;border:0.5px solid rgba(255,255,255,0.1);border-radius:4px;color:var(--tx);font-size:10px;padding:2px 4px;text-align:right"
+            onchange="const c2=S.cut.clips[${ci}];if(!c2.transform)c2.transform={x:0,y:0,scaleX:100,scaleY:100,rotation:0,anchorX:50,anchorY:50,antiFlicker:false,uniformScale:true};c2.transform.anchorY=parseFloat(this.value)||0;this.previousElementSibling.value=this.value;syncCutVid();">
         </div>
         <div class="prop-row">
           <span class="prop-label">Anti-flicker</span>
@@ -3744,8 +3755,7 @@ function updatePropsPanel(ci){
             style="flex:1;padding:4px;background:rgba(255,255,255,0.04);border:0.5px solid rgba(255,255,255,0.08);border-radius:5px;color:rgba(255,255,255,0.4);font-size:10px;cursor:pointer;font-family:'DM Sans',sans-serif">
             Reset Transform
           </button>
-        </div>
-      </div>
+        </div>      </div>
     </div>` : ''}
 
     <div style="border:0.5px solid rgba(88,166,255,0.2);border-radius:8px;margin:4px 0;overflow:hidden;background:rgba(88,166,255,0.03)">
@@ -8192,7 +8202,8 @@ function renderBoundingBox(ci){
   box.style.cssText = 'position:absolute;inset:0;pointer-events:none;z-index:10;overflow:visible;';
 
   const svg = document.createElementNS('http://www.w3.org/2000/svg','svg');
-  svg.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;overflow:visible;pointer-events:none;';
+  // pointer-events:all on SVG background for rotate-outside-border (image only)
+  svg.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;overflow:visible;pointer-events:'+(clip.type==='image'?'all':'none')+';';
 
   // Dashed border
   const borderRect = document.createElementNS('http://www.w3.org/2000/svg','rect');
@@ -8220,6 +8231,7 @@ function renderBoundingBox(ci){
     var g = document.createElementNS('http://www.w3.org/2000/svg','g');
     g.setAttribute('transform','rotate('+rot+','+cx+','+cy+')');
     g.setAttribute('data-handle', name);
+    g.setAttribute('data-axis',   'both');
     g.setAttribute('data-sign',   corner[4]);
     g.style.cssText = 'cursor:'+cur+';pointer-events:all;';
     var r = document.createElementNS('http://www.w3.org/2000/svg','rect');
@@ -8230,12 +8242,23 @@ function renderBoundingBox(ci){
     g.appendChild(r); svg.appendChild(g);
   });
 
-  // Midpoint handles
-  [[cx,cy-bH/2],[cx+bW/2,cy],[cx,cy+bH/2],[cx-bW/2,cy]].forEach(function(m){
+  // Edge handles (midpoints) — scale one axis, data-axis marks which
+  // top, right, bottom, left → y,-,y,- axes; sign: top=-1, right=+1, bottom=+1, left=-1
+  var _edgeHandles = [
+    {x:cx,       y:cy-bH/2, axis:'y', sign:-1, cur:'n-resize'},
+    {x:cx+bW/2,  y:cy,      axis:'x', sign:+1, cur:'e-resize'},
+    {x:cx,       y:cy+bH/2, axis:'y', sign:+1, cur:'s-resize'},
+    {x:cx-bW/2,  y:cy,      axis:'x', sign:-1, cur:'w-resize'},
+  ];
+  _edgeHandles.forEach(function(eh){
     var g = document.createElementNS('http://www.w3.org/2000/svg','g');
     g.setAttribute('transform','rotate('+rot+','+cx+','+cy+')');
+    g.setAttribute('data-handle', 'edge-'+eh.axis);
+    g.setAttribute('data-axis',    eh.axis);
+    g.setAttribute('data-sign',    eh.sign);
+    g.style.cssText = 'cursor:'+eh.cur+';pointer-events:all;';
     var c2 = document.createElementNS('http://www.w3.org/2000/svg','circle');
-    c2.setAttribute('cx',m[0]); c2.setAttribute('cy',m[1]); c2.setAttribute('r',4);
+    c2.setAttribute('cx',eh.x); c2.setAttribute('cy',eh.y); c2.setAttribute('r',5);
     c2.setAttribute('fill','#fff'); c2.setAttribute('stroke','#E8590C'); c2.setAttribute('stroke-width','1.5');
     g.appendChild(c2); svg.appendChild(g);
   });
@@ -8264,17 +8287,26 @@ function renderBoundingBox(ci){
 
   // ── Interaction ───────────────────────────────────────────────────────────
   var _mode=null, _startX=0, _startY=0;
-  var _origTX=0, _origTY=0, _origSX=100, _origSY=100, _scaleSign=1;
+  var _origTX=0, _origTY=0, _origSX=100, _origSY=100, _origRot=0;
+  var _scaleSign=1, _scaleAxis='both'; // 'both','x','y'
   var _rafPending=false;
+  var _shiftHeld=false;
 
-  // Corner mousedown → scale
+  // ── Track Shift key globally during drag ──
+  function _onKeyDown(e){ if(e.key==='Shift') _shiftHeld=true; }
+  function _onKeyUp(e)  { if(e.key==='Shift') _shiftHeld=false; }
+  window.addEventListener('keydown', _onKeyDown);
+  window.addEventListener('keyup',   _onKeyUp);
+
+  // ── Corner handles → scale (both axes, Shift=lock aspect ratio) ──
   box.querySelectorAll('[data-handle]').forEach(function(h){
     h.addEventListener('mousedown', function(e){
       e.stopPropagation(); e.preventDefault();
       var cl = S.cut.clips[S.cut.sel];
       if(!cl) return;
       if(!cl.transform) cl.transform={x:0,y:0,scaleX:100,scaleY:100,rotation:0,anchorX:50,anchorY:50,antiFlicker:false,uniformScale:true};
-      _mode='scale';
+      var axis = h.getAttribute('data-axis')||'both';
+      _mode='scale'; _scaleAxis=axis;
       _startX=e.clientX; _startY=e.clientY;
       _origSX=cl.transform.scaleX||100;
       _origSY=cl.transform.scaleY||100;
@@ -8282,7 +8314,7 @@ function renderBoundingBox(ci){
     });
   });
 
-  // Interior hit-rect mousedown → move
+  // ── Interior hit-rect → move ──
   hitRect.addEventListener('mousedown', function(e){
     e.stopPropagation(); e.preventDefault();
     var cl = S.cut.clips[S.cut.sel];
@@ -8292,6 +8324,26 @@ function renderBoundingBox(ci){
     _startX=e.clientX; _startY=e.clientY;
     _origTX=cl.transform.x||0;
     _origTY=cl.transform.y||0;
+  });
+
+  // ── Outer SVG mousedown → rotate (click outside selection border) ──
+  svg.addEventListener('mousedown', function(e){
+    // Only fires if click reaches the SVG background (not a handle or hitRect)
+    e.stopPropagation(); e.preventDefault();
+    var cl = S.cut.clips[S.cut.sel];
+    if(!cl) return;
+    if(!cl.transform) cl.transform={x:0,y:0,scaleX:100,scaleY:100,rotation:0,anchorX:50,anchorY:50,antiFlicker:false,uniformScale:true};
+    _mode='rotate';
+    _startX=e.clientX; _startY=e.clientY;
+    _origRot=cl.transform.rotation||0;
+    // Store center in client coords for angle calculation
+    var fr=document.getElementById('cut-viewport-frame');
+    var rect=fr.getBoundingClientRect();
+    var fW=fr.offsetWidth, fH=fr.offsetHeight;
+    var tf2=cl.transform;
+    svg._rotCX = rect.left + fW/2 + (tf2.x||0)/100*fW;
+    svg._rotCY = rect.top  + fH/2 + (tf2.y||0)/100*fH;
+    svg._rotStartAngle = Math.atan2(_startY - svg._rotCY, _startX - svg._rotCX) * 180/Math.PI;
   });
 
   function _onMove(e){
@@ -8305,24 +8357,50 @@ function renderBoundingBox(ci){
       if(!fr2) return;
       var dx=(e.clientX-_startX)/fr2.offsetWidth*100;
       var dy=(e.clientY-_startY)/fr2.offsetHeight*100;
+
       if(_mode==='move'){
         cl2.transform.x=Math.max(-200,Math.min(200,_origTX+dx));
         cl2.transform.y=Math.max(-200,Math.min(200,_origTY+dy));
-      } else {
-        var delta=(Math.abs(dx)>=Math.abs(dy)?dx:dy)*_scaleSign;
-        cl2.transform.scaleX=Math.max(1,Math.round(_origSX+delta));
-        cl2.transform.scaleY=Math.max(1,Math.round(_origSY+delta));
+
+      } else if(_mode==='rotate'){
+        var rect2=fr2.getBoundingClientRect();
+        var angle=Math.atan2(e.clientY-svg._rotCY, e.clientX-svg._rotCX)*180/Math.PI;
+        var delta=angle-svg._rotStartAngle;
+        cl2.transform.rotation=(_origRot+delta+360)%360;
+        // Snap to 45° increments when Shift held
+        if(_shiftHeld) cl2.transform.rotation=Math.round(cl2.transform.rotation/45)*45;
+
+      } else if(_mode==='scale'){
+        var primaryDelta=(Math.abs(dx)>=Math.abs(dy)?dx:dy)*_scaleSign;
+        if(_scaleAxis==='x'){
+          cl2.transform.scaleX=Math.max(1,Math.round(_origSX+primaryDelta));
+        } else if(_scaleAxis==='y'){
+          cl2.transform.scaleY=Math.max(1,Math.round(_origSY+dy*_scaleSign));
+        } else {
+          // Corner scale — Shift OR uniformScale = lock AR
+          var lockAR = _shiftHeld || cl2.transform.uniformScale!==false;
+          cl2.transform.scaleX=Math.max(1,Math.round(_origSX+primaryDelta));
+          if(lockAR) cl2.transform.scaleY=cl2.transform.scaleX;
+          else       cl2.transform.scaleY=Math.max(1,Math.round(_origSY+primaryDelta));
+        }
       }
+
       syncCutVid();
       renderBoundingBox(S.cut.sel);
-      var xSl=document.querySelector('#cut-props-body input[oninput*=".x="]');
-      var ySl=document.querySelector('#cut-props-body input[oninput*=".y="]');
-      var sxSl=document.querySelector('#cut-props-body input[oninput*=".scaleX="]');
-      var sySl=document.querySelector('#cut-props-body input[oninput*=".scaleY="]');
-      if(xSl){xSl.value=cl2.transform.x.toFixed(1);xSl.nextElementSibling.textContent=cl2.transform.x.toFixed(1)+'%';}
-      if(ySl){ySl.value=cl2.transform.y.toFixed(1);ySl.nextElementSibling.textContent=cl2.transform.y.toFixed(1)+'%';}
-      if(sxSl){sxSl.value=cl2.transform.scaleX;sxSl.nextElementSibling.textContent=cl2.transform.scaleX+'%';}
-      if(sySl){sySl.value=cl2.transform.scaleY;sySl.nextElementSibling.textContent=cl2.transform.scaleY+'%';}
+
+      // Live-update props panel inputs
+      var _pfx='#cut-props-body ';
+      var xSl=document.querySelector(_pfx+'input[oninput*=".x="]');
+      var ySl=document.querySelector(_pfx+'input[oninput*=".y="]');
+      var sxSl=document.querySelector(_pfx+'input[oninput*=".scaleX="]');
+      var sySl=document.querySelector(_pfx+'input[oninput*=".scaleY="]');
+      var rSl =document.querySelector(_pfx+'input[oninput*=".rotation="]');
+      var tf3=cl2.transform;
+      if(xSl) { xSl.value=tf3.x.toFixed(1);  xSl.nextElementSibling.value=tf3.x.toFixed(1); }
+      if(ySl) { ySl.value=tf3.y.toFixed(1);  ySl.nextElementSibling.value=tf3.y.toFixed(1); }
+      if(sxSl){ sxSl.value=tf3.scaleX; sxSl.nextElementSibling.value=tf3.scaleX; }
+      if(sySl){ sySl.value=tf3.scaleY; sySl.nextElementSibling.value=tf3.scaleY; }
+      if(rSl) { rSl.value=tf3.rotation.toFixed(1); rSl.nextElementSibling.value=tf3.rotation.toFixed(1); }
     });
   }
 
@@ -8334,14 +8412,17 @@ function renderBoundingBox(ci){
   window.addEventListener('mousemove', _onMove);
   window.addEventListener('mouseup',   _onUp);
 
-  // Store cleanup so it runs exactly once when box is replaced
+  // Store cleanup — runs exactly once when box is replaced
   box._cleanup = function(){
-    window.removeEventListener('mousemove', _onMove);
-    window.removeEventListener('mouseup',   _onUp);
+    window.removeEventListener('mousemove',  _onMove);
+    window.removeEventListener('mouseup',    _onUp);
+    window.removeEventListener('keydown',    _onKeyDown);
+    window.removeEventListener('keyup',      _onKeyUp);
   };
   var _origRemove = box.remove.bind(box);
   box.remove = function(){ if(box._cleanup){box._cleanup();box._cleanup=null;} _origRemove(); };
 }
+
 window.renderBoundingBox = renderBoundingBox;
 
 // Auto-show/hide bounding box when selection changes
