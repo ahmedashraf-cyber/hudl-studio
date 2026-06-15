@@ -118,8 +118,9 @@ async function autoSave() {
           thumbnail: m.thumbnail || null,
           dateAdded: m.dateAdded || null,
           // File identity fields — allow re-linking on reload even if IDB was cleared
-          fileName:  m.file?.name || m.name || null,
-          fileSize:  m.file?.size || m.fileSize || null,
+          fileName:     m.file?.name || m.fileName || m.name || null,
+          fileSize:     m.file?.size || m.fileSize || null,
+          lastModified: m.file?.lastModified || m.lastModified || null,
         })),
         bins:      S.cut.bins      || [{id:'root',name:'All Media',open:true}],
         mediaBins: S.cut.mediaBins || {}
@@ -1051,8 +1052,9 @@ window.doSave = async function() {
           thumbnail: m.thumbnail || null,
           dateAdded: m.dateAdded || null,
           // File identity fields — allow re-linking on reload even if IDB was cleared
-          fileName:  m.file?.name || m.name || null,
-          fileSize:  m.file?.size || m.fileSize || null,
+          fileName:     m.file?.name || m.fileName || m.name || null,
+          fileSize:     m.file?.size || m.fileSize || null,
+          lastModified: m.file?.lastModified || m.lastModified || null,
         })),
         bins:      S.cut.bins      || [{id:'root',name:'All Media',open:true}],
         mediaBins: S.cut.mediaBins || {}
@@ -2323,6 +2325,96 @@ async function _lazyLoadMediaUrls(projectId) {
 window._lazyLoadMediaUrls = _lazyLoadMediaUrls;
 
 
+// ── cutMediaRelink: relink an offline asset by opening a file browser ──────
+window.cutMediaRelink = function(mediaId){
+  const item = S.cut.media.find(m => (m.id||m.mediaId) === mediaId);
+  if(!item){ notify('Asset not found','#E31837'); return; }
+
+  const fi = document.createElement('input');
+  fi.type = 'file';
+  // Accept the same type as the original
+  fi.accept = item.type==='video' ? 'video/*' :
+              item.type==='audio' ? 'audio/*' :
+              item.type==='image' ? 'image/*' : '*/*';
+  fi.style.display = 'none';
+  document.body.appendChild(fi);
+
+  fi.addEventListener('change', async () => {
+    const f = fi.files?.[0];
+    fi.remove();
+    if(!f) return;
+
+    // Verify match by filename and size — warn if different, allow anyway
+    const nameMismatch = item.fileName && f.name !== item.fileName;
+    const sizeMismatch = item.fileSize && Math.abs(f.size - item.fileSize) > 1024;
+    if(nameMismatch || sizeMismatch){
+      const msg = (nameMismatch ? 'Name mismatch: got '+f.name : '') + (sizeMismatch ? ' | Size mismatch: '+Math.round(f.size/1024)+'KB vs expected '+Math.round((item.fileSize||0)/1024)+'KB' : '');
+      if(!confirm('File may not match original. ' + msg + ' — Use this file anyway?')) return;
+    }
+
+    // Store updated file to IDB
+    if(S.currentProject?.id && window.saveMediaFile){
+      try{
+        await saveMediaFile(S.currentProject.id, f, item.id||item.mediaId);
+      } catch(e){ console.warn('Relink IDB write failed:', e); }
+    }
+
+    // Create fresh blob URL
+    const newUrl = URL.createObjectURL(f);
+    item.url    = newUrl;
+    item.blob   = f;
+    item.file   = f;
+    item._offline = false;
+    item._idbKey  = S.currentProject?.id ? (S.currentProject.id + '/__uuid__' + (item.id||item.mediaId)) : null;
+
+    // Update metadata from new file
+    item.fileName    = f.name;
+    item.fileSize    = f.size;
+    item.lastModified = f.lastModified;
+
+    // Reload duration/dimensions from new file
+    if(item.type==='video'){
+      const v = document.createElement('video'); v.src = newUrl;
+      v.onloadedmetadata = () => {
+        item.duration = v.duration;
+        item.width    = v.videoWidth;
+        item.height   = v.videoHeight;
+        v.currentTime = Math.min(0.5, v.duration*0.1);
+        v.onseeked = () => {
+          const tc=document.createElement('canvas');tc.width=64;tc.height=36;
+          tc.getContext('2d').drawImage(v,0,0,64,36);
+          item.thumbnail = tc.toDataURL('image/jpeg',0.7);
+          v.src='';
+          buildBinList();
+        };
+      };
+    } else if(item.type==='image'){
+      const img = new Image(); img.src = newUrl;
+      img.onload = () => { item.width=img.naturalWidth; item.height=img.naturalHeight; buildBinList(); };
+    }
+
+    // FIX 4: Refresh all clips referencing this mediaId
+    const mid = item.id||item.mediaId;
+    // Invalidate pool so it recreates from new URL
+    if(window._vidPool && _vidPool[item.url]) delete _vidPool[item.url];
+    if(window._imgPool && _imgPool[item.url]) delete _imgPool[item.url];
+    // The pool uses URL as key — clear by old URL if known
+    const mv = document.getElementById('cut-main-vid');
+    if(mv){
+      const activeClip = S.cut.clips.find(c=>c.mediaId===mid && S.cut.ph>=c.start && S.cut.ph<c.start+c.dur);
+      if(activeClip){ mv.src = newUrl; mv.dataset.mediaId = mid; }
+    }
+
+    buildBinList();
+    if(window.syncCutVid) syncCutVid();
+    scheduleSave();
+    notify('Relinked: '+item.name,'#3fb950');
+  });
+
+  fi.click();
+};
+
+
 function buildCut() {
   const app = $('cut-app'); app.innerHTML = '';
   app.style.cssText = 'flex:1;display:flex;flex-direction:column;overflow:hidden';
@@ -3349,7 +3441,10 @@ function buildBinList() {
               <div style="width:${sz-8}px;height:${Math.round((sz-8)*9/16)}px;border-radius:4px;overflow:hidden;background:#111;display:flex;align-items:center;justify-content:center;flex-shrink:0;position:relative">
                 ${item.thumbnail?`<img src="${item.thumbnail}" style="width:100%;height:100%;object-fit:cover">`:
                   item.type==='image'&&item.url?`<img src="${item.url}" style="width:100%;height:100%;object-fit:cover">`:
-                  item._offline?`<span style="font-size:9px;color:#ff453a;text-align:center;padding:2px">⚠ Offline</span>`:
+                  item._offline?`<div style="display:flex;flex-direction:column;align-items:center;gap:3px;padding:4px">
+                    <span style="font-size:9px;color:#ff453a">⚠ Offline</span>
+                    <button onclick="event.stopPropagation();window.cutMediaRelink('${item.id||item.mediaId}')" style="font-size:8px;padding:2px 5px;background:rgba(232,89,12,0.2);border:0.5px solid rgba(232,89,12,0.5);border-radius:3px;color:#E8590C;cursor:pointer;font-family:'DM Sans',sans-serif">Relink</button>
+                  </div>`:
                   !item.url?`<span style="font-size:9px;color:#d29922;text-align:center">⏳</span>`:
                   `<span style="font-size:${Math.round(sz*0.3)}px;opacity:0.5">${icon}</span>`}
               </div>
@@ -3373,11 +3468,12 @@ function buildBinList() {
             oncontextmenu="cutMediaContextMenu(event,${i})"
             title="${item.name}&#10;Double-click to add"
             style="${indent}display:flex;align-items:center;gap:4px;padding:3px 6px;
-                   background:${sel?'rgba(232,89,12,0.1)':'transparent'};
+                   background:${sel?'rgba(232,89,12,0.1)':item._offline?'rgba(255,69,58,0.04)':'transparent'};
                    border-bottom:0.5px solid rgba(255,255,255,0.04);
                    cursor:pointer;user-select:none;position:relative">
-            <span style="font-size:12px;flex-shrink:0;width:18px;text-align:center">${icon}</span>
-            <span style="flex:2;min-width:0;font-size:11px;color:${sel?'#fff':'rgba(255,255,255,0.8)'};overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${item.name}</span>
+            <span style="font-size:12px;flex-shrink:0;width:18px;text-align:center">${item._offline?'⚠':icon}</span>
+            <span style="flex:2;min-width:0;font-size:11px;color:${item._offline?'#ff453a':sel?'#fff':'rgba(255,255,255,0.8)'};overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${item.name}</span>
+            ${item._offline?`<button onclick="event.stopPropagation();window.cutMediaRelink('${item.id||item.mediaId}')" style="flex-shrink:0;font-size:9px;padding:1px 5px;background:rgba(232,89,12,0.2);border:0.5px solid rgba(232,89,12,0.5);border-radius:3px;color:#E8590C;cursor:pointer;font-family:'DM Sans',sans-serif">Relink</button>`:''}
             <span style="width:42px;flex-shrink:0;text-align:right;font-size:10px;color:rgba(255,255,255,0.4);font-family:'DM Mono',monospace">${item.duration>0?fmtTC(item.duration):'--'}</span>
             <span style="width:38px;flex-shrink:0;text-align:center;font-size:9px;color:rgba(255,255,255,0.35);text-transform:uppercase">${item.type}</span>
             <span style="width:52px;flex-shrink:0;text-align:right;font-size:9px;color:rgba(255,255,255,0.3)">${res}</span>
@@ -8385,11 +8481,17 @@ function renderBoundingBox(ci){
         if(_shiftHeld) cl2.transform.rotation=Math.round(cl2.transform.rotation/45)*45;
 
       } else if(_mode==='scale'){
-        var primaryDelta=(Math.abs(dx)>=Math.abs(dy)?dx:dy)*_scaleSign;
+        // Scale delta mapped to image BASE dimensions (not frame dimensions).
+        // baseW/baseH are the contain-fit pixel size of the image inside the frame.
+        // Using them makes 1px mouse drag = 1px visual change regardless of image AR.
+        // dx/dy are already in % of frame; convert to % of base image:
+        var dxBase = dx * (_fr2Rect.width  / Math.max(1, baseW));
+        var dyBase = dy * (_fr2Rect.height / Math.max(1, baseH));
+        var primaryDelta=(Math.abs(dxBase)>=Math.abs(dyBase)?dxBase:dyBase)*_scaleSign;
         if(_scaleAxis==='x'){
           cl2.transform.scaleX=Math.max(1,Math.round(_origSX+primaryDelta));
         } else if(_scaleAxis==='y'){
-          cl2.transform.scaleY=Math.max(1,Math.round(_origSY+dy*_scaleSign));
+          cl2.transform.scaleY=Math.max(1,Math.round(_origSY+dyBase*_scaleSign));
         } else {
           // Corner scale — Shift OR uniformScale = lock AR
           var lockAR = _shiftHeld || cl2.transform.uniformScale!==false;
