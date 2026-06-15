@@ -113,8 +113,11 @@ async function autoSave() {
           duration: m.duration || 0,
           width: m.width || null,
           height: m.height || null,
-          thumbnail: m.thumbnail || null
-        }))
+          thumbnail: m.thumbnail || null,
+          dateAdded: m.dateAdded || null,
+        })),
+        bins:      S.cut.bins      || [{id:'root',name:'All Media',open:true}],
+        mediaBins: S.cut.mediaBins || {}
       }
     });
     if (ind) { ind.textContent = '● Saved'; ind.style.color = 'var(--grn)'; }
@@ -475,6 +478,8 @@ window.openProject = async function(id) {
       audioTracks: cs.audioTracks || 2,
       mutedTracks: cs.mutedTracks || {},
       media:       restoredMedia,
+      bins:      cs.bins      || [{id:'root',name:'All Media',open:true}],
+      mediaBins: cs.mediaBins || {},
       sel: null, ph: 0, playing: false, tick: null, _hist: [], _histIdx: -1
     };
 
@@ -1038,8 +1043,11 @@ window.doSave = async function() {
           duration: m.duration || 0,
           width: m.width || null,
           height: m.height || null,
-          thumbnail: m.thumbnail || null
-        }))
+          thumbnail: m.thumbnail || null,
+          dateAdded: m.dateAdded || null,
+        })),
+        bins:      S.cut.bins      || [{id:'root',name:'All Media',open:true}],
+        mediaBins: S.cut.mediaBins || {}
       }
     }, {
       // Persist workspace settings so refresh restores exact state
@@ -1241,7 +1249,7 @@ function _importFilesIntoBin(files, binId){
     const _uuid=_genUUID();
     const item={name:f.name,id:_uuid,mediaId:_uuid,
       type:isVid?'video':isAud?'audio':'image',
-      file:f,url,duration:isImg?5:0,thumbnail:null};
+      file:f,url,duration:isImg?5:0,thumbnail:null,dateAdded:Date.now()};
     if(isVid){
       const v=document.createElement('video');v.src=url;
       v.onloadedmetadata=()=>{
@@ -2283,12 +2291,7 @@ function buildCut() {
           </div>
           <input type="file" id="cut-fi" style="display:none" multiple accept="video/*,audio/*,image/*,.mp3,.aac,.wav,.ogg,.m4a,.flac,.opus,.wma,.aiff,.mp4,.mov,.avi,.mkv,.webm">
           <input type="file" id="cut-fi-audio" style="display:none" multiple accept="audio/*,.mp3,.aac,.wav,.ogg,.m4a,.flac,.opus,.wma,.aiff">
-          <div style="padding:6px 10px 0;display:flex;flex-direction:column;gap:4px">
-            <button onclick="$('cut-fi-audio').click()" style="width:100%;padding:7px 10px;background:rgba(210,153,34,0.06);border:0.5px solid rgba(210,153,34,0.15);border-radius:7px;color:rgba(210,153,34,0.85);font-size:10px;font-weight:700;font-family:'DM Sans',sans-serif;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:6px;transition:all .15s;letter-spacing:0.03em;text-transform:uppercase"
-              onmouseover="this.style.background='rgba(210,153,34,0.12)'" onmouseout="this.style.background='rgba(210,153,34,0.06)'">
-              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg>
-              Import Audio
-            </button>
+          <div style="padding:6px 10px 0">
             <button onclick="document.getElementById('cut-fi-folder')?.click()" style="width:100%;padding:7px 10px;background:rgba(88,166,255,0.06);border:0.5px solid rgba(88,166,255,0.15);border-radius:7px;color:rgba(88,166,255,0.85);font-size:10px;font-weight:700;font-family:'DM Sans',sans-serif;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:6px;transition:all .15s;letter-spacing:0.03em;text-transform:uppercase"
               onmouseover="this.style.background='rgba(88,166,255,0.12)'" onmouseout="this.style.background='rgba(88,166,255,0.06)'">
               📁 Import Folder
@@ -3063,7 +3066,7 @@ function handleCutFiles(files) {
       const r = Math.random() * 16 | 0;
       return (c === 'x' ? r : (r & 0x3 | 0x8)).toString(16);
     });
-    const item = { name:f.name, id:_uuid, mediaId:_uuid, type:isVid?'video':isAud?'audio':'image', file:f, url, duration:isImg?5:0, thumbnail:null };
+    const item = { name:f.name, id:_uuid, mediaId:_uuid, type:isVid?'video':isAud?'audio':'image', file:f, url, duration:isImg?5:0, thumbnail:null, dateAdded: Date.now() };
     if (isVid) {
       const v = document.createElement('video'); v.src = url;
       v.onloadedmetadata = () => {
@@ -3115,7 +3118,7 @@ function handleCutFiles(files) {
 function _mlState(){
   if(!S.cut._mlSel) S.cut._mlSel = new Set();
   if(!S.cut._mlView) S.cut._mlView = 'grid';
-  if(!S.cut._mlSort) S.cut._mlSort = {key:'name',dir:1};
+  if(!S.cut._mlSort) S.cut._mlSort = {key:'dateAdded',dir:-1}; // newest first by default
   if(!S.cut._mlSearch) S.cut._mlSearch = '';
   if(!S.cut._mlFilter) S.cut._mlFilter = 'all';
   if(!S.cut._mlGridSz) S.cut._mlGridSz = 80;
@@ -3165,6 +3168,10 @@ function buildBinList() {
         style="background:#111;border:0.5px solid rgba(255,255,255,0.1);border-radius:5px;color:var(--tx);font-size:10px;padding:2px 3px;outline:none">
         ${['all','video','audio','image'].map(v=>`<option value="${v}"${S.cut._mlFilter===v?' selected':''}>${v.charAt(0).toUpperCase()+v.slice(1)}</option>`).join('')}
       </select>
+      <select onchange="window._mlSetSort(this.value)"
+        style="background:#111;border:0.5px solid rgba(255,255,255,0.1);border-radius:5px;color:var(--tx);font-size:10px;padding:2px 3px;outline:none">
+        ${[['name','Name'],['dateAdded','Date'],['duration','Dur'],['type','Type']].map(([v,l])=>`<option value="${v}"${S.cut._mlSort?.key===v?' selected':''}>${l}</option>`).join('')}
+      </select>
     </div>
     <div style="display:flex;align-items:center;gap:4px">
       <span style="font-size:10px;color:rgba(255,255,255,0.3);flex:1">${displayed.length}/${S.cut.media.length} asset${S.cut.media.length!==1?'s':''}</span>
@@ -3192,7 +3199,8 @@ function buildBinList() {
       <div style="flex:2;min-width:0">${sortBtn('name','Name')}</div>
       <div style="width:42px;flex-shrink:0;text-align:right">${sortBtn('duration','Dur')}</div>
       <div style="width:38px;flex-shrink:0;text-align:center">${sortBtn('type','Type')}</div>
-      <div style="width:52px;flex-shrink:0;text-align:right">Res</div>
+      <div style="width:38px;flex-shrink:0;text-align:center">${sortBtn('dateAdded','Date')}</div>
+      <div style="width:40px;flex-shrink:0;text-align:right">Res</div>
     </div>`;
   }
 
