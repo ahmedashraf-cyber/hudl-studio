@@ -3687,13 +3687,13 @@ function updatePropsPanel(ci){
         `:''}
 
         <div class="prop-row"><span class="prop-label">X</span>
-          <input type="range" min="-100" max="100" step="0.5" value="${tf.x||0}" style="flex:1;accent-color:#E8590C"
+          <input type="range" min="-500" max="500" step="0.5" value="${tf.x||0}" style="flex:1;accent-color:#E8590C"
             oninput="const c2=S.cut.clips[${ci}];if(!c2.transform)c2.transform={x:0,y:0,scaleX:100,scaleY:100,rotation:0,anchorX:50,anchorY:50,antiFlicker:false,uniformScale:true};c2.transform.x=parseFloat(this.value);this.nextElementSibling.value=parseFloat(this.value).toFixed(1);syncCutVid();renderBoundingBox(${ci});">
           <input type="number" value="${(tf.x||0).toFixed(1)}" step="0.5" style="width:46px;background:#111;border:0.5px solid rgba(255,255,255,0.1);border-radius:4px;color:var(--tx);font-size:10px;padding:2px 4px;text-align:right"
             onchange="const c2=S.cut.clips[${ci}];if(!c2.transform)c2.transform={x:0,y:0,scaleX:100,scaleY:100,rotation:0,anchorX:50,anchorY:50,antiFlicker:false,uniformScale:true};c2.transform.x=parseFloat(this.value)||0;this.previousElementSibling.value=this.value;syncCutVid();renderBoundingBox(${ci});">
         </div>
         <div class="prop-row"><span class="prop-label">Y</span>
-          <input type="range" min="-100" max="100" step="0.5" value="${tf.y||0}" style="flex:1;accent-color:#E8590C"
+          <input type="range" min="-500" max="500" step="0.5" value="${tf.y||0}" style="flex:1;accent-color:#E8590C"
             oninput="const c2=S.cut.clips[${ci}];if(!c2.transform)c2.transform={x:0,y:0,scaleX:100,scaleY:100,rotation:0,anchorX:50,anchorY:50,antiFlicker:false,uniformScale:true};c2.transform.y=parseFloat(this.value);this.nextElementSibling.value=parseFloat(this.value).toFixed(1);syncCutVid();renderBoundingBox(${ci});">
           <input type="number" value="${(tf.y||0).toFixed(1)}" step="0.5" style="width:46px;background:#111;border:0.5px solid rgba(255,255,255,0.1);border-radius:4px;color:var(--tx);font-size:10px;padding:2px 4px;text-align:right"
             onchange="const c2=S.cut.clips[${ci}];if(!c2.transform)c2.transform={x:0,y:0,scaleX:100,scaleY:100,rotation:0,anchorX:50,anchorY:50,antiFlicker:false,uniformScale:true};c2.transform.y=parseFloat(this.value)||0;this.previousElementSibling.value=this.value;syncCutVid();renderBoundingBox(${ci});">
@@ -8202,8 +8202,9 @@ function renderBoundingBox(ci){
   box.style.cssText = 'position:absolute;inset:0;pointer-events:none;z-index:10;overflow:visible;';
 
   const svg = document.createElementNS('http://www.w3.org/2000/svg','svg');
-  // pointer-events:all on SVG background for rotate-outside-border (image only)
-  svg.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;overflow:visible;pointer-events:'+(clip.type==='image'?'all':'none')+';';
+  // pointer-events:none on SVG itself — individual elements handle their own events
+  // (hitRect=move, rotRing=rotate, corners/edges=scale)
+  svg.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;overflow:visible;pointer-events:none;';
 
   // Dashed border
   const borderRect = document.createElementNS('http://www.w3.org/2000/svg','rect');
@@ -8273,14 +8274,26 @@ function renderBoundingBox(ci){
   });
 
   // Transparent interior hit-rect for move
+  // Move zone = full image body (no inset — user clicks anywhere on image to move)
   var hitRect = document.createElementNS('http://www.w3.org/2000/svg','rect');
-  hitRect.setAttribute('x', cx-bW/2+8); hitRect.setAttribute('y', cy-bH/2+8);
-  hitRect.setAttribute('width',  Math.max(0,bW-16));
-  hitRect.setAttribute('height', Math.max(0,bH-16));
+  hitRect.setAttribute('x', cx-bW/2); hitRect.setAttribute('y', cy-bH/2);
+  hitRect.setAttribute('width',  Math.max(4,bW));
+  hitRect.setAttribute('height', Math.max(4,bH));
   hitRect.setAttribute('fill',   'rgba(0,0,0,0.001)');
   hitRect.setAttribute('transform','rotate('+rot+','+cx+','+cy+')');
   hitRect.style.cssText = 'cursor:move;pointer-events:all;';
-  svg.appendChild(hitRect);
+  svg.appendChild(hitRect); // appended last → on top of handles in SVG stacking
+
+  // Rotate ring = transparent rect OUTSIDE image border (20px wider/taller)
+  // Only for image clips (SVG pointer-events:all enables this zone)
+  var rotRing = document.createElementNS('http://www.w3.org/2000/svg','rect');
+  rotRing.setAttribute('x', cx-bW/2-20); rotRing.setAttribute('y', cy-bH/2-20);
+  rotRing.setAttribute('width',  bW+40); rotRing.setAttribute('height', bH+40);
+  rotRing.setAttribute('rx', '4');
+  rotRing.setAttribute('fill', 'rgba(0,0,0,0)');
+  rotRing.setAttribute('transform','rotate('+rot+','+cx+','+cy+')');
+  rotRing.style.cssText = 'cursor:crosshair;pointer-events:all;';
+  svg.insertBefore(rotRing, hitRect); // behind hitRect so body clicks go to hitRect
 
   box.appendChild(svg);
   frame.appendChild(box);
@@ -8326,9 +8339,8 @@ function renderBoundingBox(ci){
     _origTY=cl.transform.y||0;
   });
 
-  // ── Outer SVG mousedown → rotate (click outside selection border) ──
-  svg.addEventListener('mousedown', function(e){
-    // Only fires if click reaches the SVG background (not a handle or hitRect)
+  // ── Rotate ring mousedown → rotate (ring outside border, image clips only) ──
+  rotRing.addEventListener('mousedown', function(e){
     e.stopPropagation(); e.preventDefault();
     var cl = S.cut.clips[S.cut.sel];
     if(!cl) return;
@@ -8336,10 +8348,10 @@ function renderBoundingBox(ci){
     _mode='rotate';
     _startX=e.clientX; _startY=e.clientY;
     _origRot=cl.transform.rotation||0;
-    // Store center in client coords for angle calculation
     var fr=document.getElementById('cut-viewport-frame');
     var rect=fr.getBoundingClientRect();
-    var fW=fr.offsetWidth, fH=fr.offsetHeight;
+    // Use getBoundingClientRect size to account for CSS transform scale (vpZoom)
+    var fW=rect.width, fH=rect.height;
     var tf2=cl.transform;
     svg._rotCX = rect.left + fW/2 + (tf2.x||0)/100*fW;
     svg._rotCY = rect.top  + fH/2 + (tf2.y||0)/100*fH;
@@ -8355,12 +8367,14 @@ function renderBoundingBox(ci){
       if(!cl2||!cl2.transform) return;
       var fr2=document.getElementById('cut-viewport-frame');
       if(!fr2) return;
-      var dx=(e.clientX-_startX)/fr2.offsetWidth*100;
-      var dy=(e.clientY-_startY)/fr2.offsetHeight*100;
+      // Use getBoundingClientRect to get DISPLAY size (accounts for CSS scale/vpZoom)
+      var _fr2Rect = fr2.getBoundingClientRect();
+      var dx=(e.clientX-_startX)/_fr2Rect.width*100;
+      var dy=(e.clientY-_startY)/_fr2Rect.height*100;
 
       if(_mode==='move'){
-        cl2.transform.x=Math.max(-200,Math.min(200,_origTX+dx));
-        cl2.transform.y=Math.max(-200,Math.min(200,_origTY+dy));
+        cl2.transform.x=_origTX+dx;
+        cl2.transform.y=_origTY+dy;
 
       } else if(_mode==='rotate'){
         var rect2=fr2.getBoundingClientRect();
