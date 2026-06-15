@@ -2317,7 +2317,8 @@ function buildCut() {
     ctx.fillText('Import media and drag to timeline', c.width/2, c.height/2+70);
   }, 40);
 
-  setupCutDrop(); setupCutFileInput(); renderCutTimeline(); buildBinList();
+  setupCutDrop();
+  if(window.setupFolderImport) setupFolderImport(); setupCutFileInput(); renderCutTimeline(); buildBinList();
   setupTimelineScrollSync();
   setTimeout(setupMarqueeSelection, 200);
   setTimeout(setupScrubBar, 300);
@@ -2991,10 +2992,28 @@ function setupCutDrop() {
   if (!dz) return;
   dz.addEventListener('dragover',  e => { e.preventDefault(); dz.classList.add('drag-over'); });
   dz.addEventListener('dragleave', ()  => dz.classList.remove('drag-over'));
-  dz.addEventListener('drop', e => {
+  dz.addEventListener('drop', async e => {
     e.preventDefault();
     dz.classList.remove('drag-over');
-    handleCutFiles(e.dataTransfer.files);
+    // Check for folder entries via items API (folders have no files entry)
+    const _items = e.dataTransfer.items ? [...e.dataTransfer.items] : [];
+    const _hasFolder = _items.some(it => {
+      try{ return it.webkitGetAsEntry?.()?.isDirectory; }catch(x){ return false; }
+    });
+    if(_hasFolder && _items.length){
+      // Use recursive folder import
+      let _anyFolder = false;
+      for(const it of _items){
+        const entry = it.webkitGetAsEntry?.();
+        if(!entry) continue;
+        if(entry.isDirectory){ _anyFolder=true; await _readDropEntry(entry, null); }
+        else if(entry.isFile){ entry.file(f=>handleCutFiles([f])); }
+      }
+      if(_anyFolder){ buildBinList(); scheduleSave(); }
+    } else {
+      // Plain file drop — existing pipeline
+      handleCutFiles(e.dataTransfer.files);
+    }
   });
 }
 
@@ -3287,6 +3306,8 @@ function buildBinList() {
       if(!_hit) document.getElementById('cut-fi')?.click();
     });
   }
+  // Re-attach folder drag-drop to bin panel on every rebuild
+  if(window._setupBinDrop) _setupBinDrop();
 }
 
 // ── Sort toggle ────────────────────────────────────────────────
