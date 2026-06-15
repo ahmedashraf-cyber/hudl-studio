@@ -4964,7 +4964,47 @@ function renderCutTimeline() {
       el.addEventListener('mousedown', e => {
         if(e.target.classList.contains('clip-resize-l')||e.target.classList.contains('clip-resize-r')) return;
         if(el._dblClickBlocking) return; // double-click in progress — don't start drag
-        // Select immediately on mousedown (before any drag), capture phase
+
+        if(e.ctrlKey || e.metaKey){
+          // CTRL+click: toggle this clip in/out of multi-selection
+          if(!window._selectedClips) window._selectedClips = new Set();
+          if(window._selectedClips.has(ci)){
+            window._selectedClips.delete(ci);
+            el.classList.remove('selected');
+          } else {
+            window._selectedClips.add(ci);
+            el.classList.add('selected');
+            S.cut.sel = ci;
+          }
+          return; // don't start drag on CTRL+click
+        }
+
+        if(e.shiftKey){
+          // SHIFT+click: select range on same track from S.cut.sel to ci
+          if(!window._selectedClips) window._selectedClips = new Set();
+          const anchorCi = S.cut.sel !== null ? S.cut.sel : ci;
+          const anchorTrack = S.cut.clips[anchorCi]?.track;
+          const clickTrack  = S.cut.clips[ci]?.track;
+          if(anchorTrack !== undefined && anchorTrack === clickTrack){
+            // Range on same track by start time
+            const lo = Math.min(S.cut.clips[anchorCi].start, S.cut.clips[ci].start);
+            const hi = Math.max(S.cut.clips[anchorCi].start, S.cut.clips[ci].start);
+            S.cut.clips.forEach((c2, idx) => {
+              if(c2.track === anchorTrack && c2.start >= lo - 0.01 && c2.start <= hi + 0.01){
+                window._selectedClips.add(idx);
+                const sEl = document.querySelector('[data-ci="'+idx+'"]');
+                if(sEl) sEl.classList.add('selected');
+              }
+            });
+          } else {
+            // Different track: just add to selection
+            window._selectedClips.add(ci);
+            el.classList.add('selected');
+          }
+          return; // don't start drag on SHIFT+click
+        }
+
+        // Plain click: single-select, clear all previous
         _selectClip(ci);
         clipMoveStart(e, ci);
       }, true); // capture:true
@@ -4993,8 +5033,10 @@ function renderCutTimeline() {
 // ── CLIP SELECTION HELPER ────────────────────────────────────
 // Central function called from click, mousedown, context menu
 function _selectClip(ci){
-  if(S.cut.sel === ci) return; // already selected — no work
   S.cut.sel = ci;
+  // BUG1 FIX: always clear multi-select Set on every single click
+  // Previously this was not done, so old multi-selection lingered
+  if(window._selectedClips) window._selectedClips.clear();
   window._activeEditId = null;
   // Clear overlay selection
   if(window.removeOverlayHandles) removeOverlayHandles();
@@ -5201,7 +5243,18 @@ let _rz=null;
 function clipResizeStart(e,ci,edge){
   S.cut._isResizing = true;
   window._snapCache = null;
-  _rz={ci,edge,sx:e.clientX,origDur:S.cut.clips[ci].dur,origStart:S.cut.clips[ci].start,origFileStart:S.cut.clips[ci].fileStart||0};
+  // Store origins of all selected clips for multi-trim
+  const _multiRzOrigins = {};
+  if(window._selectedClips?.size > 1 && window._selectedClips.has(ci)){
+    window._selectedClips.forEach(idx => {
+      if(S.cut.clips[idx]) _multiRzOrigins[idx] = {
+        start: S.cut.clips[idx].start,
+        dur:   S.cut.clips[idx].dur,
+        fileStart: S.cut.clips[idx].fileStart || 0,
+      };
+    });
+  }
+  _rz={ci,edge,sx:e.clientX,origDur:S.cut.clips[ci].dur,origStart:S.cut.clips[ci].start,origFileStart:S.cut.clips[ci].fileStart||0,_multiRzOrigins};
   document.addEventListener('mousemove',clipRzMove);
   document.addEventListener('mouseup',clipRzUp);
 }
@@ -5231,6 +5284,27 @@ function clipRzMove(e){
     c.fileStart = Math.max(0, _newFs);
     c.start = newStart;
     c.dur   = nd;
+  }
+  // Multi-trim: apply the same delta to all other selected clips
+  if(_rz._multiRzOrigins && Object.keys(_rz._multiRzOrigins).length > 1){
+    const primaryDelta = _rz.edge === 'r'
+      ? (c.start + c.dur) - (_rz.origStart + _rz.origDur)   // end delta
+      : c.start - _rz.origStart;                             // start delta
+    Object.entries(_rz._multiRzOrigins).forEach(([idxStr, orig]) => {
+      const idx = parseInt(idxStr);
+      if(idx === _rz.ci) return; // already handled above
+      const oc = S.cut.clips[idx];
+      if(!oc) return;
+      if(_rz.edge === 'r'){
+        oc.dur = Math.max(0.2, orig.dur + primaryDelta);
+      } else {
+        const newS = Math.max(0, orig.start + primaryDelta);
+        const spd = oc.speed || 1;
+        oc.fileStart = Math.max(0, (orig.fileStart||0) + primaryDelta / spd);
+        oc.dur = Math.max(0.2, (orig.start + orig.dur) - newS);
+        oc.start = newS;
+      }
+    });
   }
   renderCutTimeline();
 }
@@ -7715,9 +7789,14 @@ function clipContextMenu(e, ci){
     {sep:true},
     // ── NEW: bottom additions ─────────────────────────────────
     {icon: c.disabled?'👁':'🚫', label: c.disabled?'Enable Clip':'Disable Clip', fn:()=>{
-      c.disabled=!c.disabled;
+      // Apply to all selected clips if multi-selected
+      const targets = (window._selectedClips?.size > 1 && window._selectedClips.has(ci))
+        ? [...window._selectedClips].map(i=>S.cut.clips[i]).filter(Boolean)
+        : [c];
+      const newState = !c.disabled;
+      targets.forEach(tc => { tc.disabled = newState; });
       renderCutTimeline(); if(window.syncCutVid)syncCutVid(); cutSaveHistory('toggle_disable');
-      notify(c.disabled?'Clip disabled':'Clip enabled', c.disabled?'#E31837':'#3fb950');
+      notify((newState?'Disabled ':'Enabled ')+targets.length+' clip'+(targets.length>1?'s':''), newState?'#E31837':'#3fb950');
     }},
     {icon:'✏️', label:'Rename…', fn:()=>{
       const el=document.querySelector('[data-ci="'+ci+'"] span');
@@ -8735,10 +8814,11 @@ document.addEventListener('click', e => {
   if(e.target.closest('.tl-clip') || e.target.closest('.tl-overlay-clip')) return;
   // Don't clear if this click is the tail-end of a marquee drag (within 100ms)
   if(Date.now() - _lastMarqueeEnd < 100) return;
-  if(window._selectedClips?.size > 0){
-    window._selectedClips.clear();
-    document.querySelectorAll('.tl-clip.selected').forEach(el => el.classList.remove('selected'));
-  }
+  // Clear both single and multi-selection completely
+  window._selectedClips?.clear();
+  S.cut.sel = null;
+  document.querySelectorAll('.tl-clip.selected').forEach(el => el.classList.remove('selected'));
+  updatePropsPanel(null);
 });
 
 // ════════════════════════════════════════════════════════════════
@@ -8882,6 +8962,16 @@ document.addEventListener('keydown', e => {
   if(e.code==='KeyF' && !e.ctrlKey && !e.metaKey && !e.shiftKey){
     e.preventDefault();
     cutToggleFullscreen();
+  }
+  if(e.code==='Escape' && !_cutFsActive){
+    // ESC: clear selection entirely
+    if(window._selectedClips?.size > 0 || S.cut.sel !== null){
+      window._selectedClips?.clear();
+      S.cut.sel = null;
+      document.querySelectorAll('.tl-clip.selected').forEach(el => el.classList.remove('selected'));
+      updatePropsPanel(null);
+      e.preventDefault();
+    }
   }
   if(e.code==='Escape' && _cutFsActive){
     if(!document.fullscreenElement) _cutExitSoftFullscreen();
