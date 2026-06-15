@@ -2283,11 +2283,15 @@ function buildCut() {
           </div>
           <input type="file" id="cut-fi" style="display:none" multiple accept="video/*,audio/*,image/*,.mp3,.aac,.wav,.ogg,.m4a,.flac,.opus,.wma,.aiff,.mp4,.mov,.avi,.mkv,.webm">
           <input type="file" id="cut-fi-audio" style="display:none" multiple accept="audio/*,.mp3,.aac,.wav,.ogg,.m4a,.flac,.opus,.wma,.aiff">
-          <div style="padding:6px 10px 0">
+          <div style="padding:6px 10px 0;display:flex;flex-direction:column;gap:4px">
             <button onclick="$('cut-fi-audio').click()" style="width:100%;padding:7px 10px;background:rgba(210,153,34,0.06);border:0.5px solid rgba(210,153,34,0.15);border-radius:7px;color:rgba(210,153,34,0.85);font-size:10px;font-weight:700;font-family:'DM Sans',sans-serif;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:6px;transition:all .15s;letter-spacing:0.03em;text-transform:uppercase"
               onmouseover="this.style.background='rgba(210,153,34,0.12)'" onmouseout="this.style.background='rgba(210,153,34,0.06)'">
               <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg>
               Import Audio
+            </button>
+            <button onclick="document.getElementById('cut-fi-folder')?.click()" style="width:100%;padding:7px 10px;background:rgba(88,166,255,0.06);border:0.5px solid rgba(88,166,255,0.15);border-radius:7px;color:rgba(88,166,255,0.85);font-size:10px;font-weight:700;font-family:'DM Sans',sans-serif;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:6px;transition:all .15s;letter-spacing:0.03em;text-transform:uppercase"
+              onmouseover="this.style.background='rgba(88,166,255,0.12)'" onmouseout="this.style.background='rgba(88,166,255,0.06)'">
+              📁 Import Folder
             </button>
           </div>
           <div style="flex:1;overflow-y:auto;padding:0;display:flex;flex-direction:column" id="cut-bin"></div>
@@ -3032,23 +3036,11 @@ function setupCutFileInput() {
     document.body.appendChild(fiFolder);
     fiFolder.addEventListener('change', ()=>{
       if(!fiFolder.files?.length) return;
-      const folderName = fiFolder.files[0].webkitRelativePath?.split('/')[0] || 'Folder';
-      // Create folder in bin
-      if(!S.cut.bins) S.cut.bins=[{id:'root',name:'All Media',open:true}];
-      const folderId = 'bin_'+Date.now();
-      S.cut.bins.push({id:folderId, name:folderName, open:true});
-      // Import all files and assign to folder
-      const prevLen = S.cut.media.length;
-      handleCutFiles(fiFolder.files);
-      // Assign new media items to the folder
-      setTimeout(()=>{
-        if(!S.cut.mediaBins) S.cut.mediaBins={};
-        for(let k=prevLen; k<S.cut.media.length; k++){
-          const _m = S.cut.media[k];
-          if(_m?.id) S.cut.mediaBins[_m.id]=folderId;
-        }
-        buildBinList(); scheduleSave();
-      }, 500);
+      // Delegate to _importFolderFiles which handles:
+      // - multi-folder (multiple top-level folders in one selection)
+      // - subfolder nesting into child Bins
+      // - UUID per asset, proper mediaBins assignment
+      if(window._importFolderFiles) _importFolderFiles(fiFolder.files);
       fiFolder.value='';
     });
   }
