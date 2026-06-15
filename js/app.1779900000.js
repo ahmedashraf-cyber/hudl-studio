@@ -5004,8 +5004,17 @@ function renderCutTimeline() {
           return; // don't start drag on SHIFT+click
         }
 
-        // Plain click: single-select, clear all previous
-        _selectClip(ci);
+        // Plain click behavior:
+        // If the clicked clip is part of an existing multi-selection,
+        // preserve the selection so clipMoveStart can move all of them.
+        // Only single-select (clearing multi) when clicking a clip NOT in selection.
+        if(window._selectedClips?.size > 1 && window._selectedClips.has(ci)){
+          // Already in multi-select — keep selection, just update S.cut.sel
+          S.cut.sel = ci;
+        } else {
+          // Not in multi-select — clear and select only this clip
+          _selectClip(ci);
+        }
         clipMoveStart(e, ci);
       }, true); // capture:true
       el.querySelector('.clip-resize-l').addEventListener('mousedown',e=>{e.stopPropagation();clipResizeStart(e,ci,'l');});
@@ -7695,9 +7704,25 @@ function trackLabelContextMenu(e, trackIdx){
 
 // Clip right-click → context menu
 function clipContextMenu(e, ci){
-  S.cut.sel=ci;
-  renderCutTimeline();
   const c=S.cut.clips[ci];
+  if(!c) return;
+  // If right-clicking a clip that's part of the multi-selection, preserve selection.
+  // Only reassign single selection if the clip is not in the current multi-select.
+  if(window._selectedClips?.size > 1 && window._selectedClips.has(ci)){
+    S.cut.sel = ci; // update anchor without clearing selection
+    // Refresh visual highlight without full timeline rebuild
+    document.querySelectorAll('.tl-clip:not(.tl-overlay-clip)').forEach(el => {
+      const idx = parseInt(el.dataset.ci);
+      el.classList.toggle('selected', window._selectedClips.has(idx));
+    });
+  } else {
+    // Single clip right-click — normal selection
+    S.cut.sel = ci;
+    if(window._selectedClips) window._selectedClips.clear();
+    document.querySelectorAll('.tl-clip:not(.tl-overlay-clip)').forEach(el =>
+      el.classList.toggle('selected', el.dataset.ci === String(ci))
+    );
+  }
   showContextMenu(e,[
     // ── NEW: top additions ────────────────────────────────────
     {icon:'✂', label:'Cut', fn:()=>{
