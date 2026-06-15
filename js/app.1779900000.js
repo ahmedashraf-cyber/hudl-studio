@@ -6737,10 +6737,28 @@ function syncCutVid(){
         if(!window._fhRegenPending){ window._fhRegenPending=true; setTimeout(()=>{ window._fhRegenPending=false; if(window._regenerateFrameHolds) _regenerateFrameHolds(); }, 200); }
       }
     }
-    // 2. Apply effects (color grade, filters) on top of frozen frame
+    // 2. Apply effects (color grade, filters) ONLY to the video frame layer
+    // Use ctx.filter (canvas 2D API) instead of canvas.style.filter (CSS).
+    // canvas.style.filter affects the ENTIRE canvas element — including any overlays
+    // drawn on top. ctx.filter is scoped to the current save/restore block, so
+    // overlays drawn afterwards on the same canvas inherit no filter at all.
     const fhFilterStr = buildFilterStr(activeCI);
-    canvas.style.filter = fhFilterStr !== 'none' ? fhFilterStr : '';
-    // 3. Render overlays on top of frozen frame (text, shapes, freeze overlays)
+    const fhColorStr  = window.buildColorFilterStr ? window.buildColorFilterStr(active) : 'none';
+    const fhFullFlt   = [fhFilterStr, fhColorStr].filter(f=>f&&f!=='none').join(' ') || 'none';
+    if(fhFullFlt !== 'none'){
+      // Re-draw the frame with ctx.filter applied (inside save/restore so it doesn't leak)
+      ctxFH.save();
+      ctxFH.clearRect(0, 0, canvas.width, canvas.height);
+      ctxFH.filter = fhFullFlt;
+      if(active._img && active._img.complete){
+        ctxFH.drawImage(active._img, 0, 0, canvas.width, canvas.height);
+      }
+      ctxFH.filter = 'none'; // explicitly clear before restore
+      ctxFH.restore();       // ctx.filter is now 'none' — overlays won't be affected
+    }
+    // Ensure canvas.style.filter is always cleared — never inherit from previous frames
+    canvas.style.filter = '';
+    // 3. Render overlays AFTER filter is cleared — text/shapes draw with no filter
     if(window.renderOverlaysOnCanvas)
       window.renderOverlaysOnCanvas(ctxFH, canvas.width, canvas.height, ph, _playedFreezes);
     return;
@@ -6882,6 +6900,7 @@ function syncCutVid(){
     mv.style.opacity = '0';
     mv.style.filter  = '';
     mv.style.transform = '';
+    canvas.style.filter = ''; // always clear CSS filter — video filters use ctx.filter not canvas.style
     canvas.style.display = 'block';
     canvas.style.zIndex  = '2';
     if(placeholder) placeholder.style.display = 'none';
