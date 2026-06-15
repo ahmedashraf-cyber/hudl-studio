@@ -656,8 +656,45 @@ function showImageBgDialog(){
     }
     if(window.cutSaveHistory) cutSaveHistory('add_overlay');
     window._overlays.push(ov);
-    if(window.cutSaveHistory) cutSaveHistory();
-    notify('Background overlay added','#3fb950');
+
+    // ── BUG1 FIX: ALSO add image directly to timeline as a regular image clip ──
+    // User clicks Apply once → image appears on timeline immediately, no drag needed.
+    // Only applies to type='image'; color/gradient overlays stay as overlays only.
+    if(type === 'image' && ov.mediaId && window.S?.cut){
+      const _S2 = window.S;
+      const _ph = _S2.cut.ph || 0;
+      const _dur = 5; // 5-second default
+      // Find the first video track (lowest track index with no clip overlapping ph)
+      let _targetTrack = 0;
+      for(let _t = 0; _t < (_S2.cut.videoTracks||2); _t++){
+        const _clash = _S2.cut.clips.some(c =>
+          c.track === _t && !(c.start + c.dur <= _ph || c.start >= _ph + _dur)
+        );
+        if(!_clash){ _targetTrack = _t; break; }
+      }
+      const _imgClip = {
+        type:      'image',
+        name:      ov.name || 'Image',
+        mediaId:   ov.mediaId,
+        start:     _ph,
+        dur:       _dur,
+        track:     _targetTrack,
+        fileStart: 0,
+        volume:    1,
+        opacity:   1,
+        speed:     1,
+        color:     'linear-gradient(135deg,rgba(88,166,255,0.8),rgba(30,100,200,0.8))',
+      };
+      _S2.cut.clips.push(_imgClip);
+      _S2.cut.sel = _S2.cut.clips.length - 1;
+      if(window.renderCutTimeline) renderCutTimeline();
+      if(window.syncCutVid) syncCutVid();
+      if(window.cutSaveHistory) cutSaveHistory('add_image_clip');
+      notify('Image added to timeline at ' + (Math.round(_ph*10)/10) + 's','#3fb950');
+    } else {
+      if(window.cutSaveHistory) cutSaveHistory();
+      notify('Background overlay added','#3fb950');
+    }
     closeModal();
     renderOverlayTimeline();
   });

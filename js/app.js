@@ -1328,7 +1328,7 @@ async function _readDropEntry(entry, binId){
   if(entry.isDirectory){
     if(!S.cut.bins) S.cut.bins=[{id:'root',name:'All Media',open:true}];
     const subBinId='bin_'+_genUUID();
-    S.cut.bins.push({id:subBinId,name:entry.name,open:true});
+    S.cut.bins.push({id:subBinId,name:entry.name,open:true}); // always initialize open
     const reader=entry.createReader();
     return new Promise(res=>{
       const readAll=()=>reader.readEntries(async entries=>{
@@ -3217,6 +3217,8 @@ function _mlState(){
   if(!S.cut._mlGridSz) S.cut._mlGridSz = 80;
   if(!S.cut.bins) S.cut.bins = [{id:'root',name:'All Media',open:true}];
   if(!S.cut.mediaBins) S.cut.mediaBins = {};
+  // Normalize all bins: missing 'open' field → true (expanded)
+  (S.cut.bins||[]).forEach(b => { if(b.open === undefined) b.open = true; });
 }
 
 function buildBinList() {
@@ -3229,10 +3231,14 @@ function buildBinList() {
   let displayed = S.cut.media
     .map((item,i)=>({item,i}))
     .filter(({item})=>{
+      // Name search
       if(q && !item.name.toLowerCase().includes(q)) return false;
-      if(ft==='video'   && item.type!=='video')  return false;
-      if(ft==='audio'   && item.type!=='audio')  return false;
-      if(ft==='image'   && item.type!=='image')  return false;
+      // Type filter — 'all' or empty always passes through everything
+      if(ft && ft !== 'all'){
+        if(ft==='video'  && item.type!=='video')  return false;
+        if(ft==='audio'  && item.type!=='audio')  return false;
+        if(ft==='image'  && item.type!=='image')  return false;
+      }
       return true;
     });
 
@@ -3546,7 +3552,10 @@ window.cutMediaNewBin = cutMediaNewBin;
 
 function cutMediaToggleBin(id){
   const bin = (S.cut.bins||[]).find(b=>b.id===id);
-  if(bin) bin.open = !bin.open;
+  if(bin){
+    // Normalize: treat undefined as true (open) before toggling
+    bin.open = !(bin.open !== false);
+  }
   buildBinList();
 }
 window.cutMediaToggleBin = cutMediaToggleBin;
