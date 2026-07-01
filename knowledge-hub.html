@@ -3,492 +3,409 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Knowledge Hub — Hudl Studio</title>
+<title>StatsBomb Knowledge Hub — Hudl Studio</title>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=DM+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
 <style>
 :root {
   --navy:#0a0c10; --n2:#0F0F0F; --n3:#161616; --n4:#1c1c1e; --n5:#242424;
-  --orange:#FF6B1F; --orange2:#E8590C;
-  --orange-glow:rgba(232,89,12,0.35);
-  --orange-sub:rgba(232,89,12,0.08);
   --tx:#F5F5F7; --t2:#A1A1A6; --t3:#6E6E73; --t4:#3A3A3C;
   --b1:rgba(255,255,255,0.06); --b2:rgba(255,255,255,0.10); --b3:rgba(255,255,255,0.16);
-  --grn:#30D158; --blu:#0A84FF; --pur:#BF5AF2; --amb:#FFD60A;
-  --grn-sub:rgba(48,209,88,0.10); --blu-sub:rgba(10,132,255,0.10);
-  --pur-sub:rgba(191,90,242,0.10); --red-sub:rgba(227,24,55,0.12);
-  --r-card:22px; --r-btn:12px; --r-pill:999px;
+  /* Category colours */
+  --def:#2563eb;    --def-sub:rgba(37,99,235,0.12);   --def-bd:rgba(37,99,235,0.35);
+  --off:#16a34a;    --off-sub:rgba(22,163,74,0.12);    --off-bd:rgba(22,163,74,0.35);
+  --gk:#7c3aed;     --gk-sub:rgba(124,58,237,0.12);    --gk-bd:rgba(124,58,237,0.35);
+  --ind:#ea580c;    --ind-sub:rgba(234,88,12,0.12);     --ind-bd:rgba(234,88,12,0.35);
+  --r-card:18px; --r-btn:10px; --r-pill:999px;
   --ease:cubic-bezier(0.4,0,0.2,1);
-  --sh-card:0 4px 16px rgba(0,0,0,0.5),0 1px 4px rgba(0,0,0,0.3);
 }
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0;}
 html{scroll-behavior:smooth;}
-body{
-  background:var(--navy);
-  color:var(--tx);
-  font-family:'DM Sans',sans-serif;
-  font-size:14px;
-  line-height:1.5;
-  overflow-x:hidden;
-  min-height:100vh;
-}
-::-webkit-scrollbar{width:4px;height:4px;}
-::-webkit-scrollbar-track{background:transparent;}
-::-webkit-scrollbar-thumb{background:var(--b2);border-radius:2px;}
+body{background:var(--navy);color:var(--tx);font-family:'DM Sans',sans-serif;font-size:14px;line-height:1.5;overflow-x:hidden;min-height:100vh;}
+::-webkit-scrollbar{width:4px;} ::-webkit-scrollbar-track{background:transparent;} ::-webkit-scrollbar-thumb{background:var(--b2);border-radius:2px;}
 
-/* ── NAV ── */
+/* ── TOP NAV ── */
 .topnav{
   position:fixed;top:0;left:0;right:0;z-index:200;
-  display:flex;align-items:center;justify-content:space-between;
-  padding:0 24px;height:52px;
-  background:rgba(10,12,16,0.92);
+  display:flex;align-items:center;gap:4px;
+  padding:0 20px;height:52px;
+  background:rgba(10,12,16,0.94);
   backdrop-filter:saturate(180%) blur(20px);
   border-bottom:0.5px solid var(--b1);
 }
-.nav-logo{display:flex;align-items:center;gap:9px;cursor:pointer;text-decoration:none;}
-.nav-logo-mark{
-  width:30px;height:30px;
-  background:linear-gradient(180deg,#FF6B1F 0%,#E8590C 100%);
-  border-radius:9px;
-  display:flex;align-items:center;justify-content:center;
-  box-shadow:0 2px 8px rgba(232,89,12,0.35),0 1px 0 rgba(255,255,255,0.15) inset;
-  flex-shrink:0;
-}
+
+.nav-logo{display:flex;align-items:center;gap:9px;cursor:pointer;text-decoration:none;margin-right:12px;}
+.nav-logo-mark{width:28px;height:28px;background:linear-gradient(135deg,#2563eb,#7c3aed);border-radius:8px;display:flex;align-items:center;justify-content:center;flex-shrink:0;}
 .nav-logo-mark svg{width:14px;height:14px;fill:white;}
-.nav-logo-text{font-family:'Inter',sans-serif;font-size:15px;font-weight:700;color:var(--tx);letter-spacing:-0.4px;}
-.nav-logo-text span{color:var(--orange);}
-.nav-breadcrumb{display:flex;align-items:center;gap:6px;font-size:12px;color:var(--t3);font-family:'Inter',sans-serif;}
-.nav-breadcrumb .bc-item{cursor:pointer;transition:color .15s;padding:2px 4px;border-radius:4px;}
-.nav-breadcrumb .bc-item:hover{color:var(--tx);}
-.nav-breadcrumb .bc-item.current{color:var(--t2);cursor:default;}
-.nav-breadcrumb .bc-sep{color:var(--t4);font-size:10px;}
+.nav-logo-text{font-family:'Inter',sans-serif;font-size:14px;font-weight:700;color:var(--tx);letter-spacing:-.4px;white-space:nowrap;}
+
+/* Home button */
+.nav-home{padding:5px 12px;border-radius:var(--r-btn);background:transparent;border:0.5px solid transparent;color:var(--t2);font-size:12px;font-weight:500;cursor:pointer;font-family:'DM Sans',sans-serif;transition:all .15s;white-space:nowrap;}
+.nav-home:hover{background:var(--n3);color:var(--tx);border-color:var(--b1);}
+
+/* Category nav buttons */
+.nav-cats{display:flex;align-items:center;gap:2px;}
+.nav-cat{position:relative;}
+
+.nav-cat-btn{
+  display:flex;align-items:center;gap:6px;
+  padding:5px 12px;border-radius:var(--r-btn);
+  background:transparent;border:0.5px solid transparent;
+  font-size:12px;font-weight:600;cursor:pointer;
+  font-family:'DM Sans',sans-serif;transition:all .15s;white-space:nowrap;
+}
+.nav-cat-btn .cdot{width:7px;height:7px;border-radius:50%;flex-shrink:0;}
+.nav-cat-btn .chv{font-size:8px;opacity:.5;transition:transform .15s;}
+.nav-cat-btn[aria-expanded="true"] .chv{transform:rotate(180deg);}
+
+.nav-cat-btn.c-def{color:#93c5fd;}
+.nav-cat-btn.c-def:hover,.nav-cat-btn.c-def.open{background:var(--def-sub);border-color:var(--def-bd);color:#60a5fa;}
+.nav-cat-btn.c-def .cdot{background:var(--def);}
+
+.nav-cat-btn.c-off{color:#86efac;}
+.nav-cat-btn.c-off:hover,.nav-cat-btn.c-off.open{background:var(--off-sub);border-color:var(--off-bd);color:#4ade80;}
+.nav-cat-btn.c-off .cdot{background:var(--off);}
+
+.nav-cat-btn.c-gk{color:#c4b5fd;}
+.nav-cat-btn.c-gk:hover,.nav-cat-btn.c-gk.open{background:var(--gk-sub);border-color:var(--gk-bd);color:#a78bfa;}
+.nav-cat-btn.c-gk .cdot{background:var(--gk);}
+
+.nav-cat-btn.c-ind{color:#fdba74;}
+.nav-cat-btn.c-ind:hover,.nav-cat-btn.c-ind.open{background:var(--ind-sub);border-color:var(--ind-bd);color:#fb923c;}
+.nav-cat-btn.c-ind .cdot{background:var(--ind);}
+
+/* Dropdown */
+.nav-dd{
+  display:none;position:absolute;top:calc(100% + 6px);left:0;min-width:200px;
+  background:var(--n2);border:0.5px solid var(--b2);border-radius:12px;
+  padding:5px;box-shadow:0 20px 50px rgba(0,0,0,.55);z-index:300;
+}
+.nav-dd.open{display:block;}
+.nav-dd-item{
+  display:block;padding:7px 11px;border-radius:7px;
+  color:var(--t2);text-decoration:none;font-size:12px;font-weight:500;
+  transition:all .1s;cursor:pointer;
+}
+.nav-dd-item:hover{color:var(--tx);}
+.nav-dd-item.c-def:hover{background:var(--def-sub);color:#93c5fd;}
+.nav-dd-item.c-off:hover{background:var(--off-sub);color:#86efac;}
+.nav-dd-item.c-gk:hover{background:var(--gk-sub);color:#c4b5fd;}
+.nav-dd-item.c-ind:hover{background:var(--ind-sub);color:#fdba74;}
+
+/* Search */
 .nav-search{
-  display:flex;align-items:center;gap:8px;
-  background:var(--n3);border:0.5px solid var(--b1);
-  border-radius:var(--r-btn);padding:6px 12px;width:200px;
-  transition:all .2s var(--ease);cursor:text;
+  display:flex;align-items:center;gap:7px;
+  background:var(--n3);border:0.5px solid var(--b1);border-radius:var(--r-btn);
+  padding:5px 11px;margin-left:auto;width:200px;transition:all .2s;
 }
-.nav-search:hover{border-color:var(--b2);background:var(--n4);}
-.nav-search svg{flex-shrink:0;}
-.nav-search input{background:none;border:none;outline:none;color:var(--t2);font-size:12px;font-family:'DM Sans',sans-serif;width:100%;}
+.nav-search:focus-within{width:260px;border-color:var(--def);box-shadow:0 0 0 3px rgba(37,99,235,.15);}
+.nav-search svg{flex-shrink:0;color:var(--t4);}
+.nav-search input{background:transparent;border:none;outline:none;color:var(--tx);font-size:12px;font-family:'DM Sans',sans-serif;width:100%;}
 .nav-search input::placeholder{color:var(--t4);}
-.nav-kbd{font-size:10px;color:var(--t4);flex-shrink:0;background:var(--n5);padding:2px 5px;border-radius:4px;border:0.5px solid var(--b1);}
 
-/* ── PAGE SYSTEM ── */
+/* Back button */
+.nav-back{padding:5px 12px;border-radius:var(--r-btn);background:transparent;border:0.5px solid var(--b2);color:var(--t2);font-size:12px;font-weight:500;cursor:pointer;font-family:'DM Sans',sans-serif;transition:all .15s;white-space:nowrap;}
+.nav-back:hover{color:var(--tx);border-color:var(--b3);}
+
+/* ── PAGES ── */
 .page{display:none;min-height:100vh;padding-top:52px;}
-.page.active{display:block;animation:pageIn .32s var(--ease);}
-@keyframes pageIn{from{opacity:0;transform:translateY(14px);}to{opacity:1;transform:translateY(0);}}
+.page.active{display:block;animation:pgIn .3s var(--ease);}
+@keyframes pgIn{from{opacity:0;transform:translateY(12px);}to{opacity:1;transform:translateY(0);}}
 
-/* ── SHARED COMPONENTS ── */
-.sec-label{
-  font-size:10px;font-weight:600;text-transform:uppercase;
-  letter-spacing:.10em;color:var(--t3);
-  margin-bottom:14px;
-  font-family:'Inter',sans-serif;
+/* ── SEARCH OVERLAY ── */
+.search-over{
+  display:none;position:fixed;top:52px;left:0;right:0;bottom:0;
+  background:rgba(10,12,16,.97);z-index:190;overflow-y:auto;
+  padding:28px 24px;
+}
+.search-over.open{display:block;}
+.search-hd{font-size:12px;color:var(--t3);margin-bottom:16px;font-family:'Inter',sans-serif;}
+.sr-item{
   display:flex;align-items:center;gap:12px;
+  padding:14px 16px;background:var(--n2);border:0.5px solid var(--b1);
+  border-radius:12px;margin-bottom:8px;cursor:pointer;transition:all .12s;
 }
+.sr-item:hover{border-color:var(--b2);background:var(--n3);}
+.sr-dot{width:9px;height:9px;border-radius:50%;flex-shrink:0;}
+.sr-name{font-size:14px;font-weight:600;color:var(--tx);margin-bottom:2px;}
+.sr-cat{font-size:11px;color:var(--t3);}
+.sr-none{font-size:13px;color:var(--t3);text-align:center;padding:40px 0;}
+
+/* ── SHARED ── */
+.wrap{max-width:1000px;margin:0 auto;padding:36px 28px 80px;}
+.sec-label{font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.10em;color:var(--t3);margin-bottom:14px;font-family:'Inter',sans-serif;display:flex;align-items:center;gap:12px;}
 .sec-label::after{content:'';flex:1;height:0.5px;background:var(--b1);}
+.card{background:var(--n2);border:0.5px solid var(--b1);border-radius:var(--r-card);position:relative;overflow:hidden;transition:border-color .2s,box-shadow .2s,transform .2s;}
+.card::before{content:'';position:absolute;inset:0;background:linear-gradient(145deg,rgba(255,255,255,.02) 0%,transparent 50%);pointer-events:none;border-radius:inherit;}
+.card:hover{border-color:var(--b2);box-shadow:0 4px 20px rgba(0,0,0,.4);transform:translateY(-2px);}
+.fu{opacity:0;transform:translateY(14px);animation:fadeUp .4s var(--ease) forwards;}
+@keyframes fadeUp{to{opacity:1;transform:translateY(0);}}
+.d1{animation-delay:.04s;}.d2{animation-delay:.09s;}.d3{animation-delay:.14s;}.d4{animation-delay:.19s;}.d5{animation-delay:.24s;}.d6{animation-delay:.29s;}
+.badge{font-size:10px;font-weight:600;letter-spacing:.01em;padding:3px 9px;border-radius:var(--r-pill);font-family:'Inter',sans-serif;}
+.badge-def{background:var(--def-sub);color:#93c5fd;border:0.5px solid var(--def-bd);}
+.badge-off{background:var(--off-sub);color:#86efac;border:0.5px solid var(--off-bd);}
+.badge-gk{background:var(--gk-sub);color:#c4b5fd;border:0.5px solid var(--gk-bd);}
+.badge-ind{background:var(--ind-sub);color:#fdba74;border:0.5px solid var(--ind-bd);}
+.badge-t{background:rgba(255,255,255,.05);color:var(--t2);border:0.5px solid var(--b1);}
+.badge-red{background:rgba(255,69,58,.1);color:#FF453A;border:0.5px solid rgba(255,69,58,.2);}
+.empty{font-size:13px;color:var(--t3);padding:14px 0;font-style:italic;}
 
-/* card base */
-.card{
-  background:var(--n2);
-  border:0.5px solid var(--b1);
-  border-radius:var(--r-card);
-  position:relative;overflow:hidden;
-  transition:border-color .2s var(--ease),box-shadow .2s var(--ease),transform .2s var(--ease);
-}
-/* inner highlight top-left */
-.card::before{
-  content:'';position:absolute;inset:0;
-  background:linear-gradient(145deg,rgba(255,255,255,0.025) 0%,transparent 50%);
-  pointer-events:none;border-radius:inherit;
-}
-/* orange top-line on hover — studio signature */
-.card::after{
-  content:'';position:absolute;top:0;left:0;right:0;height:1px;
-  background:linear-gradient(90deg,transparent 5%,rgba(232,89,12,0.6) 50%,transparent 95%);
-  opacity:0;transition:opacity .2s;
-}
-.card:hover{border-color:var(--b2);box-shadow:var(--sh-card);transform:translateY(-2px);}
-.card:hover::after{opacity:1;}
-
-/* btn-primary */
-.btn-primary{
-  display:inline-flex;align-items:center;gap:6px;
-  padding:7px 15px;border-radius:var(--r-btn);
-  background:linear-gradient(180deg,#FF6B1F 0%,#E8590C 100%);
-  color:#fff;border:1px solid rgba(255,255,255,0.10);
-  font-family:'DM Sans',sans-serif;font-size:13px;font-weight:600;
-  cursor:pointer;transition:all .2s var(--ease);
-  box-shadow:0 1px 0 rgba(255,255,255,0.15) inset,0 2px 8px var(--orange-glow),0 1px 2px rgba(0,0,0,0.3);
-  white-space:nowrap;letter-spacing:.01em;
-}
-.btn-primary:hover{
-  background:linear-gradient(180deg,#FF7A2F 0%,#F06010 100%);
-  box-shadow:0 1px 0 rgba(255,255,255,0.18) inset,0 4px 16px rgba(232,89,12,0.45);
-  transform:translateY(-1px);
-}
-.btn-primary:active{transform:scale(0.97);}
-
-/* badge */
-.badge{
-  font-size:10px;font-weight:600;letter-spacing:.01em;
-  padding:3px 9px;border-radius:var(--r-pill);
-  font-family:'Inter',sans-serif;
-}
-.badge-grn{background:var(--grn-sub);color:var(--grn);border:0.5px solid rgba(48,209,88,0.2);}
-.badge-blu{background:var(--blu-sub);color:var(--blu);border:0.5px solid rgba(10,132,255,0.2);}
-.badge-pur{background:var(--pur-sub);color:var(--pur);border:0.5px solid rgba(191,90,242,0.2);}
-.badge-org{background:var(--orange-sub);color:var(--orange);border:0.5px solid rgba(232,89,12,0.2);}
-.badge-red{background:var(--red-sub);color:#FF453A;border:0.5px solid rgba(255,69,58,0.2);}
-.badge-t{background:rgba(255,255,255,0.06);color:var(--t2);border:0.5px solid var(--b1);}
-
-/* accent dots */
-.dot-org{display:inline-block;width:6px;height:6px;background:var(--orange);border-radius:50;border-radius:50%;}
-.dot-grn{display:inline-block;width:6px;height:6px;background:var(--grn);border-radius:50%;}
-
-/* ═══════════════════════════
-   PAGE 1 — HOME
-═══════════════════════════ */
-.home-wrap{max-width:1000px;margin:0 auto;padding:36px 28px 80px;}
-
-/* hero row */
-.home-hero{
-  display:flex;align-items:flex-start;justify-content:space-between;
-  gap:2rem;margin-bottom:32px;
-  padding-bottom:28px;border-bottom:0.5px solid var(--b1);
-}
-.home-hero-left{}
-.home-eyebrow{
-  display:inline-flex;align-items:center;gap:7px;
-  font-size:10px;font-weight:600;letter-spacing:.10em;
-  text-transform:uppercase;color:var(--t3);
-  font-family:'Inter',sans-serif;
-  margin-bottom:10px;
-}
-.home-eyebrow span{
-  display:inline-block;width:5px;height:5px;
-  background:var(--orange);border-radius:50%;
-  animation:blink 2s ease-in-out infinite;
-}
+/* ── HOME PAGE ── */
+.home-hero{display:flex;align-items:flex-start;justify-content:space-between;gap:2rem;margin-bottom:32px;padding-bottom:28px;border-bottom:0.5px solid var(--b1);}
+.home-eyebrow{display:inline-flex;align-items:center;gap:7px;font-size:10px;font-weight:600;letter-spacing:.10em;text-transform:uppercase;color:var(--t3);font-family:'Inter',sans-serif;margin-bottom:10px;}
+.home-eyebrow span{display:inline-block;width:5px;height:5px;background:var(--def);border-radius:50%;animation:blink 2s ease-in-out infinite;}
 @keyframes blink{0%,100%{opacity:1;}50%{opacity:.3;}}
-.home-title{
-  font-family:'Inter',sans-serif;
-  font-size:26px;font-weight:700;color:var(--tx);
-  letter-spacing:-.6px;line-height:1.25;
-  margin-bottom:7px;
-}
-.home-title em{color:var(--orange);font-style:normal;}
+.home-title{font-family:'Inter',sans-serif;font-size:26px;font-weight:700;color:var(--tx);letter-spacing:-.6px;line-height:1.25;margin-bottom:7px;}
+.home-title em{font-style:normal;background:linear-gradient(90deg,#60a5fa,#a78bfa);-webkit-background-clip:text;-webkit-text-fill-color:transparent;}
 .home-sub{font-size:13px;color:var(--t2);font-weight:400;max-width:440px;line-height:1.6;}
-
-/* stats */
 .home-stats{display:flex;align-items:center;gap:0;flex-shrink:0;}
-.hstat{text-align:center;padding:0 24px;border-right:0.5px solid var(--b1);}
+.hstat{text-align:center;padding:0 22px;border-right:0.5px solid var(--b1);}
 .hstat:last-child{border-right:none;padding-right:0;}
-.hstat-num{
-  font-family:'Inter',sans-serif;font-size:22px;font-weight:700;
-  color:var(--tx);letter-spacing:-.5px;line-height:1;margin-bottom:3px;
-}
+.hstat-num{font-family:'Inter',sans-serif;font-size:22px;font-weight:700;color:var(--tx);letter-spacing:-.5px;line-height:1;margin-bottom:3px;}
 .hstat-lbl{font-size:10px;color:var(--t3);letter-spacing:.04em;font-family:'Inter',sans-serif;}
 
-/* category grid */
 .cat-grid{display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:12px;margin-bottom:32px;}
-.cat-card{
-  padding:22px 20px;cursor:pointer;
-}
-.cat-card-icon{
-  width:40px;height:40px;border-radius:12px;
-  display:flex;align-items:center;justify-content:center;
-  margin-bottom:14px;font-size:18px;
-  border:0.5px solid var(--b1);
-}
-.cat-card-icon.def{background:rgba(232,89,12,0.1);}
-.cat-card-icon.off{background:rgba(10,132,255,0.1);}
-.cat-card-icon.gk{background:rgba(48,209,88,0.1);}
-.cat-card-icon.ind{background:rgba(191,90,242,0.1);}
-.cat-count-chip{
-  position:absolute;top:16px;right:16px;
-  font-size:10px;font-weight:600;
-  color:var(--t3);font-family:'Inter',sans-serif;
-}
-.cat-name{
-  font-family:'Inter',sans-serif;
-  font-size:14px;font-weight:700;color:var(--tx);
-  letter-spacing:-.3px;margin-bottom:5px;
-}
+.cat-card{padding:22px 20px;cursor:pointer;}
+.cat-card-icon{width:40px;height:40px;border-radius:12px;display:flex;align-items:center;justify-content:center;margin-bottom:14px;font-size:18px;border:0.5px solid var(--b1);}
+.cat-count-chip{position:absolute;top:16px;right:16px;font-size:10px;font-weight:600;color:var(--t3);font-family:'Inter',sans-serif;}
+.cat-name{font-family:'Inter',sans-serif;font-size:14px;font-weight:700;color:var(--tx);letter-spacing:-.3px;margin-bottom:5px;}
 .cat-desc{font-size:12px;color:var(--t2);line-height:1.5;margin-bottom:14px;}
 .cat-tags{display:flex;flex-wrap:wrap;gap:5px;margin-bottom:14px;}
-.cat-tag{
-  font-size:10px;font-weight:500;letter-spacing:.02em;
-  padding:2px 8px;border-radius:var(--r-pill);
-  background:var(--n3);color:var(--t3);border:0.5px solid var(--b1);
-  font-family:'Inter',sans-serif;
-}
-.cat-foot{
-  display:flex;align-items:center;justify-content:space-between;
-  padding-top:12px;border-top:0.5px solid var(--b1);
-}
+.cat-tag{font-size:10px;font-weight:500;letter-spacing:.02em;padding:2px 8px;border-radius:var(--r-pill);background:var(--n3);color:var(--t3);border:0.5px solid var(--b1);font-family:'Inter',sans-serif;}
+.cat-foot{display:flex;align-items:center;justify-content:space-between;padding-top:12px;border-top:0.5px solid var(--b1);}
 .cat-open{font-size:12px;font-weight:500;color:var(--t3);transition:color .18s;}
 .cat-arrow{font-size:13px;color:var(--t4);transition:all .18s;}
-.cat-card:hover .cat-open{color:var(--orange);}
-.cat-card:hover .cat-arrow{color:var(--orange);transform:translateX(3px);}
+
+/* Category-specific colours on home cards */
+.cat-card.c-def .cat-card-icon{background:var(--def-sub);}
+.cat-card.c-def:hover{border-color:var(--def-bd);}
+.cat-card.c-def:hover .cat-open{color:#60a5fa;}
+.cat-card.c-def:hover .cat-arrow{color:#60a5fa;transform:translateX(3px);}
+.cat-card.c-off .cat-card-icon{background:var(--off-sub);}
+.cat-card.c-off:hover{border-color:var(--off-bd);}
+.cat-card.c-off:hover .cat-open{color:#4ade80;}
+.cat-card.c-off:hover .cat-arrow{color:#4ade80;transform:translateX(3px);}
+.cat-card.c-gk .cat-card-icon{background:var(--gk-sub);}
+.cat-card.c-gk:hover{border-color:var(--gk-bd);}
+.cat-card.c-gk:hover .cat-open{color:#a78bfa;}
+.cat-card.c-gk:hover .cat-arrow{color:#a78bfa;transform:translateX(3px);}
+.cat-card.c-ind .cat-card-icon{background:var(--ind-sub);}
+.cat-card.c-ind:hover{border-color:var(--ind-bd);}
+.cat-card.c-ind:hover .cat-open{color:#fb923c;}
+.cat-card.c-ind:hover .cat-arrow{color:#fb923c;transform:translateX(3px);}
 
 /* VS strip */
 .vs-strip{display:flex;flex-direction:column;gap:7px;}
-.vs-row{
-  background:var(--n2);border:0.5px solid var(--b1);
-  border-radius:14px;padding:12px 18px;
-  display:flex;align-items:center;justify-content:space-between;
-  cursor:pointer;transition:all .18s var(--ease);
-  position:relative;overflow:hidden;
-}
+.vs-row{background:var(--n2);border:0.5px solid var(--b1);border-radius:14px;padding:12px 18px;display:flex;align-items:center;justify-content:space-between;cursor:pointer;transition:all .18s;position:relative;overflow:hidden;}
 .vs-row::before{content:'';position:absolute;left:0;top:0;bottom:0;width:2px;}
-.vs-row.c-o::before{background:var(--orange);}
-.vs-row.c-b::before{background:var(--blu);}
-.vs-row.c-g::before{background:var(--grn);}
+.vs-row.c-def::before{background:var(--def);}
+.vs-row.c-off::before{background:var(--off);}
+.vs-row.c-gk::before{background:var(--gk);}
+.vs-row.c-ind::before{background:var(--ind);}
 .vs-row:hover{background:var(--n3);border-color:var(--b2);}
 .vs-pair{display:flex;align-items:center;gap:8px;}
-.vs-ev{
-  font-family:'Inter',sans-serif;font-size:13px;font-weight:600;
-  color:var(--tx);padding:3px 10px;background:var(--n3);
-  border-radius:6px;border:0.5px solid var(--b1);
-}
-.vs-label{font-size:9px;font-weight:700;letter-spacing:.1em;color:var(--orange);}
+.vs-ev{font-family:'Inter',sans-serif;font-size:13px;font-weight:600;color:var(--tx);padding:3px 10px;background:var(--n3);border-radius:6px;border:0.5px solid var(--b1);}
+.vs-label{font-size:9px;font-weight:700;letter-spacing:.1em;color:var(--t3);}
 .vs-meta{display:flex;align-items:center;gap:12px;}
 .vs-vc{font-size:11px;color:var(--t3);}
-.vs-go{font-size:11px;font-weight:500;color:var(--orange);display:flex;align-items:center;gap:3px;transition:gap .15s;}
-.vs-row:hover .vs-go{gap:6px;}
+.vs-go{font-size:11px;font-weight:500;color:var(--t3);display:flex;align-items:center;gap:3px;transition:all .15s;}
+.vs-row:hover .vs-go{color:var(--tx);gap:6px;}
 
-/* ═══════════════════════════
-   PAGE 2 — CATEGORY
-═══════════════════════════ */
-.cat-page-wrap{max-width:1000px;margin:0 auto;padding:36px 28px 80px;}
-.cat-hero{
-  display:flex;align-items:flex-end;justify-content:space-between;
-  gap:2rem;margin-bottom:28px;
-  padding-bottom:24px;border-bottom:0.5px solid var(--b1);
-}
-.cat-hero-badge{
-  display:inline-flex;align-items:center;gap:6px;
-  font-size:10px;font-weight:600;letter-spacing:.10em;
-  text-transform:uppercase;font-family:'Inter',sans-serif;
-  padding:3px 10px;border-radius:var(--r-pill);margin-bottom:10px;
-  border:0.5px solid;
-}
-.cat-hero-title{
-  font-family:'Inter',sans-serif;font-size:24px;font-weight:700;
-  color:var(--tx);letter-spacing:-.5px;margin-bottom:6px;
-}
+/* ── CATEGORY PAGE ── */
+.cat-hero{display:flex;align-items:flex-end;justify-content:space-between;gap:2rem;margin-bottom:28px;padding-bottom:24px;border-bottom:0.5px solid var(--b1);}
+.cat-hero-badge{display:inline-flex;align-items:center;gap:6px;font-size:10px;font-weight:600;letter-spacing:.10em;text-transform:uppercase;font-family:'Inter',sans-serif;padding:3px 10px;border-radius:var(--r-pill);margin-bottom:10px;border:0.5px solid;}
+.cat-hero-title{font-family:'Inter',sans-serif;font-size:24px;font-weight:700;color:var(--tx);letter-spacing:-.5px;margin-bottom:6px;}
 .cat-hero-desc{font-size:13px;color:var(--t2);max-width:440px;line-height:1.6;}
-.cat-hero-num{
-  font-family:'Inter',sans-serif;font-size:72px;font-weight:700;
-  line-height:1;letter-spacing:-.04em;opacity:.05;color:var(--tx);
-  flex-shrink:0;
-}
+.cat-hero-num{font-family:'Inter',sans-serif;font-size:72px;font-weight:700;line-height:1;letter-spacing:-.04em;opacity:.05;color:var(--tx);flex-shrink:0;}
 
 .events-list{display:flex;flex-direction:column;gap:7px;}
-.event-row{
-  background:var(--n2);border:0.5px solid var(--b1);
-  border-radius:14px;padding:14px 18px;
-  display:flex;align-items:center;gap:14px;cursor:pointer;
-  transition:all .2s var(--ease);position:relative;overflow:hidden;
-}
-.event-row::before{
-  content:'';position:absolute;left:0;top:0;bottom:0;
-  width:2px;opacity:0;transition:opacity .2s;
-}
+.event-row{background:var(--n2);border:0.5px solid var(--b1);border-radius:14px;padding:14px 18px;display:flex;align-items:center;gap:14px;cursor:pointer;transition:all .2s;position:relative;overflow:hidden;}
+.event-row::before{content:'';position:absolute;left:0;top:0;bottom:0;width:2px;opacity:0;transition:opacity .2s;}
 .event-row:hover{background:var(--n3);border-color:var(--b2);transform:translateX(3px);}
 .event-row:hover::before{opacity:1;}
-.event-row.def::before{background:var(--orange);}
-.event-row.off::before{background:var(--blu);}
-.event-row.gk::before{background:var(--grn);}
-.event-row.ind::before{background:var(--pur);}
-.ev-row-num{
-  font-family:'Inter',sans-serif;font-size:11px;font-weight:600;
-  color:var(--t4);width:22px;flex-shrink:0;
-}
+.event-row.c-def::before{background:var(--def);}
+.event-row.c-off::before{background:var(--off);}
+.event-row.c-gk::before{background:var(--gk);}
+.event-row.c-ind::before{background:var(--ind);}
+.ev-row-num{font-family:'Inter',sans-serif;font-size:11px;font-weight:600;color:var(--t4);width:22px;flex-shrink:0;}
 .ev-row-body{flex:1;min-width:0;}
-.ev-row-name{
-  font-family:'Inter',sans-serif;font-size:14px;font-weight:700;
-  color:var(--tx);letter-spacing:-.2px;margin-bottom:2px;
-}
+.ev-row-name{font-family:'Inter',sans-serif;font-size:14px;font-weight:700;color:var(--tx);letter-spacing:-.2px;margin-bottom:2px;}
 .ev-row-def{font-size:12px;color:var(--t2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
 .ev-row-pills{display:flex;gap:5px;flex-shrink:0;}
 .ev-row-arrow{font-size:14px;color:var(--t4);flex-shrink:0;transition:all .18s;}
-.event-row:hover .ev-row-arrow{color:var(--orange);transform:translateX(3px);}
+.event-row:hover .ev-row-arrow{color:var(--tx);transform:translateX(3px);}
 
-/* ═══════════════════════════
-   PAGE 3 — EVENT DETAIL
-═══════════════════════════ */
-.detail-wrap{max-width:1000px;margin:0 auto;padding:36px 28px 80px;}
-.detail-hero{
-  margin-bottom:24px;padding-bottom:24px;
-  border-bottom:0.5px solid var(--b1);
-}
-.detail-ev-label{
-  display:inline-flex;align-items:center;gap:6px;
-  font-size:10px;font-weight:600;letter-spacing:.10em;
-  text-transform:uppercase;font-family:'Inter',sans-serif;
-  padding:3px 10px;border-radius:var(--r-pill);margin-bottom:10px;
-  border:0.5px solid;
-}
-.detail-ev-title{
-  font-family:'Inter',sans-serif;
-  font-size:32px;font-weight:700;color:var(--tx);
-  letter-spacing:-.7px;line-height:1.15;margin-bottom:10px;
-}
-.detail-ev-def{
-  font-size:13px;font-weight:400;font-style:italic;
-  color:var(--t2);max-width:580px;line-height:1.65;
-  padding-left:14px;border-left:2px solid var(--orange);
-}
+/* ── EVENT DETAIL ── */
+.detail-hero{margin-bottom:24px;padding-bottom:24px;border-bottom:0.5px solid var(--b1);}
+.detail-ev-label{display:inline-flex;align-items:center;gap:6px;font-size:10px;font-weight:600;letter-spacing:.10em;text-transform:uppercase;font-family:'Inter',sans-serif;padding:3px 10px;border-radius:var(--r-pill);margin-bottom:10px;border:0.5px solid;}
+.detail-ev-title{font-family:'Inter',sans-serif;font-size:32px;font-weight:700;color:var(--tx);letter-spacing:-.7px;line-height:1.15;margin-bottom:10px;}
+.detail-ev-def{font-size:13px;font-style:italic;color:var(--t2);max-width:580px;line-height:1.65;padding-left:14px;border-left:2px solid var(--b2);}
 
-/* 2-col layout */
 .detail-cols{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px;}
 .detail-full{margin-bottom:12px;}
+.detail-card{background:var(--n2);border:0.5px solid var(--b1);border-radius:var(--r-card);padding:20px 22px;}
+.detail-card-lbl{font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.10em;color:var(--t3);font-family:'Inter',sans-serif;margin-bottom:14px;}
 
-.detail-card{
-  background:var(--n2);border:0.5px solid var(--b1);
-  border-radius:var(--r-card);padding:20px 22px;
-}
-.detail-card-lbl{
-  font-size:10px;font-weight:600;text-transform:uppercase;
-  letter-spacing:.10em;color:var(--t3);font-family:'Inter',sans-serif;
-  margin-bottom:14px;
-}
-
-/* key points */
 .kp-list{display:flex;flex-direction:column;gap:9px;}
 .kp-item{display:flex;align-items:flex-start;gap:9px;font-size:13px;color:var(--t2);line-height:1.5;}
-.kp-dot{
-  width:4px;height:4px;border-radius:50%;background:var(--orange);
-  flex-shrink:0;margin-top:6px;
-}
+.kp-dot{width:4px;height:4px;border-radius:50%;flex-shrink:0;margin-top:6px;}
 
-/* outcomes */
 .outcomes-list{display:flex;flex-direction:column;gap:7px;}
-.outcome-row{
-  display:flex;align-items:center;justify-content:space-between;
-  padding:10px 14px;
-  background:var(--n3);border:0.5px solid var(--b1);border-radius:10px;
-}
-.outcome-left{}
+.outcome-row{display:flex;align-items:center;justify-content:space-between;padding:10px 14px;background:var(--n3);border:0.5px solid var(--b1);border-radius:10px;}
 .outcome-name{font-family:'Inter',sans-serif;font-size:13px;font-weight:600;color:var(--tx);margin-bottom:1px;}
 .outcome-desc{font-size:11px;color:var(--t3);}
 
-/* types */
 .types-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:8px;}
-.type-item{
-  padding:12px 14px;
-  background:var(--n3);border:0.5px solid var(--b1);border-radius:10px;
-}
+.type-item{padding:12px 14px;background:var(--n3);border:0.5px solid var(--b1);border-radius:10px;}
 .type-header{display:flex;align-items:center;gap:8px;margin-bottom:5px;}
-.type-num{
-  width:20px;height:20px;border-radius:5px;
-  display:flex;align-items:center;justify-content:center;
-  background:rgba(232,89,12,0.12);
-  font-size:10px;font-weight:700;color:var(--orange);
-  font-family:'Inter',sans-serif;flex-shrink:0;
-}
+.type-num{width:20px;height:20px;border-radius:5px;display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:700;font-family:'Inter',sans-serif;flex-shrink:0;}
 .type-name{font-family:'Inter',sans-serif;font-size:13px;font-weight:600;color:var(--tx);}
 .type-desc{font-size:12px;color:var(--t2);line-height:1.45;}
 
-/* video grid */
+/* Videos */
 .videos-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:9px;}
-.video-card{
-  background:var(--n3);border:0.5px solid var(--b1);
-  border-radius:12px;overflow:hidden;cursor:pointer;
-  transition:all .2s var(--ease);
-}
-.video-card:hover{border-color:rgba(232,89,12,0.4);transform:scale(1.02);}
-.video-card:hover .play-ring{background:var(--orange);border-color:var(--orange);}
-.video-thumb{aspect-ratio:16/9;display:flex;align-items:center;justify-content:center;position:relative;}
-.video-thumb::before{content:'';position:absolute;inset:0;background:radial-gradient(circle at 50% 50%,rgba(232,89,12,0.05),transparent 70%);}
-.play-ring{
-  width:34px;height:34px;border-radius:50%;
-  background:rgba(255,255,255,0.08);
-  border:0.5px solid var(--b2);
-  display:flex;align-items:center;justify-content:center;
-  transition:all .2s;
-}
+.video-card{background:var(--n3);border:0.5px solid var(--b1);border-radius:12px;overflow:hidden;cursor:pointer;transition:all .2s;}
+.video-card:hover{border-color:var(--b2);transform:scale(1.02);}
+.video-thumb{aspect-ratio:16/9;display:flex;align-items:center;justify-content:center;position:relative;background:#0d1020;}
+.play-ring{width:34px;height:34px;border-radius:50%;background:rgba(255,255,255,.08);border:0.5px solid var(--b2);display:flex;align-items:center;justify-content:center;transition:all .2s;}
 .play-ring svg{width:12px;height:12px;fill:white;margin-left:2px;}
+.video-card:hover .play-ring{background:rgba(255,255,255,.18);}
 .video-info{padding:9px 10px;border-top:0.5px solid var(--b1);}
-.video-fname{font-size:10px;color:var(--t3);font-family:monospace;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.video-fname{font-size:10px;color:var(--t3);font-family:monospace;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-bottom:3px;}
+.video-fdesc{font-size:10px;color:var(--t2);line-height:1.4;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;}
 
-/* vs comps */
+/* VS comps */
 .vs-comps{display:flex;flex-direction:column;gap:8px;}
-.vs-comp{
-  background:var(--n2);border:0.5px solid var(--b1);
-  border-radius:14px;overflow:hidden;cursor:pointer;
-  transition:border-color .18s;
-}
+.vs-comp{background:var(--n2);border:0.5px solid var(--b1);border-radius:14px;overflow:hidden;cursor:pointer;transition:border-color .18s;}
 .vs-comp:hover{border-color:var(--b2);}
-.vs-comp-head{
-  display:flex;align-items:center;justify-content:space-between;
-  padding:12px 16px;border-bottom:0.5px solid var(--b1);
-}
+.vs-comp-head{display:flex;align-items:center;justify-content:space-between;padding:12px 16px;border-bottom:0.5px solid var(--b1);}
 .vs-comp-pair{display:flex;align-items:center;gap:8px;}
-.vs-name{
-  font-family:'Inter',sans-serif;font-size:12px;font-weight:600;
-  color:var(--tx);padding:3px 10px;background:var(--n3);
-  border-radius:6px;border:0.5px solid var(--b1);
-}
-.vs-vslbl{font-size:9px;font-weight:700;letter-spacing:.1em;color:var(--orange);}
+.vs-name{font-family:'Inter',sans-serif;font-size:12px;font-weight:600;color:var(--tx);padding:3px 10px;background:var(--n3);border-radius:6px;border:0.5px solid var(--b1);}
+.vs-vslbl{font-size:9px;font-weight:700;letter-spacing:.1em;color:var(--t4);}
 .vs-comp-vc{font-size:11px;color:var(--t3);}
 .vs-comp-body{padding:10px 16px;font-size:12px;color:var(--t2);line-height:1.5;}
-.vs-thumb-row{display:flex;gap:7px;padding:0 16px 12px;}
-.vs-thumb{
-  width:90px;height:50px;flex-shrink:0;
-  background:var(--n3);border:0.5px solid var(--b1);
-  border-radius:7px;display:flex;align-items:center;justify-content:center;
-}
-.vs-thumb svg{width:12px;height:12px;fill:rgba(255,255,255,0.3);}
 
-/* fade-up animation */
-.fu{opacity:0;transform:translateY(16px);animation:fadeUp .5s var(--ease) forwards;}
-@keyframes fadeUp{to{opacity:1;transform:translateY(0);}}
-.d1{animation-delay:.04s;}.d2{animation-delay:.1s;}.d3{animation-delay:.16s;}
-.d4{animation-delay:.22s;}.d5{animation-delay:.28s;}.d6{animation-delay:.34s;}
-.d7{animation-delay:.4s;}
-
-/* empty state */
-.empty{font-size:13px;color:var(--t3);padding:16px 0;font-style:italic;}
+/* ── VIDEO MODAL ── */
+.modal-back{display:none;position:fixed;inset:0;background:rgba(0,0,0,.85);z-index:500;align-items:center;justify-content:center;padding:20px;}
+.modal-back.open{display:flex;}
+.modal-box{background:var(--n2);border:0.5px solid var(--b2);border-radius:16px;overflow:hidden;width:100%;max-width:780px;box-shadow:0 40px 80px rgba(0,0,0,.7);}
+.modal-head{display:flex;align-items:center;justify-content:space-between;padding:14px 18px;border-bottom:0.5px solid var(--b1);}
+.modal-title{font-size:13px;font-weight:600;color:var(--tx);}
+.modal-close{width:28px;height:28px;border-radius:6px;background:var(--n3);border:none;color:var(--t2);font-size:17px;cursor:pointer;display:flex;align-items:center;justify-content:center;transition:all .12s;font-family:inherit;line-height:1;}
+.modal-close:hover{background:var(--n4);color:var(--tx);}
+.modal-vid{width:100%;aspect-ratio:16/9;background:#000;}
+.modal-vid iframe,.modal-vid video{width:100%;height:100%;border:none;display:block;}
+.modal-foot{padding:12px 18px;font-size:11px;color:var(--t3);}
 </style>
 </head>
 <body>
 
-<!-- NAV -->
+<!-- ══════════ TOP NAV ══════════ -->
 <nav class="topnav">
-  <div class="nav-logo" onclick="goHome()">
+  <a class="nav-logo" href="#" onclick="goHome();return false;">
     <div class="nav-logo-mark">
-      <svg viewBox="0 0 16 16"><path d="M2 3h12v2H2zm0 4h8v2H2zm0 4h10v2H2z"/></svg>
+      <svg viewBox="0 0 16 16"><circle cx="8" cy="8" r="6" fill="none" stroke="white" stroke-width="1.5"/><path d="M8 2 C4 5 4 11 8 14 C12 11 12 5 8 2Z" fill="white"/></svg>
     </div>
-    <div class="nav-logo-text">Hudl <span>Studio</span></div>
-  </div>
-  <div class="nav-breadcrumb" id="breadcrumb">
-    <span class="bc-item current">Knowledge Hub</span>
-  </div>
-  <div style="display:flex;align-items:center;gap:10px;">
-    <div class="nav-search">
-      <svg width="13" height="13" viewBox="0 0 16 16" fill="none"><circle cx="6.5" cy="6.5" r="4.5" stroke="#3A3A3C" stroke-width="1.3"/><path d="M10 10l3 3" stroke="#3A3A3C" stroke-width="1.3" stroke-linecap="round"/></svg>
-      <input type="text" placeholder="Search events…"/>
-      <span class="nav-kbd">⌘K</span>
+    <span class="nav-logo-text">StatsBomb Hub</span>
+  </a>
+
+  <button class="nav-home" onclick="goHome()">Home</button>
+
+  <div class="nav-cats">
+    <!-- Defensive (Blue) -->
+    <div class="nav-cat">
+      <button class="nav-cat-btn c-def" id="btn-def" onclick="toggleDD('dd-def',this)" aria-expanded="false">
+        <span class="cdot"></span>Defensive<span class="chv">▼</span>
+      </button>
+      <div class="nav-dd" id="dd-def">
+        <span class="nav-dd-item c-def" onclick="navTo('def','block')">Block</span>
+        <span class="nav-dd-item c-def" onclick="navTo('def','ballrecovery')">Ball Recovery</span>
+        <span class="nav-dd-item c-def" onclick="navTo('def','interception')">Interception</span>
+        <span class="nav-dd-item c-def" onclick="navTo('def','clearance')">Clearance</span>
+        <span class="nav-dd-item c-def" onclick="navTo('def','tackle')">Tackle</span>
+        <span class="nav-dd-item c-def" onclick="navTo('def','legstretch')">Leg Stretch Duel</span>
+        <span class="nav-dd-item c-def" onclick="navTo('def','pressure')">Pressure</span>
+        <span class="nav-dd-item c-def" onclick="navTo('def','shield')">Shield</span>
+      </div>
     </div>
-    <button onclick="window.location.href='/'" style="padding:6px 13px;border-radius:var(--r-btn);background:transparent;border:0.5px solid var(--b2);color:var(--t2);font-family:'DM Sans',sans-serif;font-size:12px;font-weight:500;cursor:pointer;white-space:nowrap;transition:all .18s;" onmouseover="this.style.color='var(--tx)';this.style.borderColor='var(--b3)'" onmouseout="this.style.color='var(--t2)';this.style.borderColor='var(--b2)'">← Projects</button>
+    <!-- Offensive (Green) -->
+    <div class="nav-cat">
+      <button class="nav-cat-btn c-off" id="btn-off" onclick="toggleDD('dd-off',this)" aria-expanded="false">
+        <span class="cdot"></span>Offensive<span class="chv">▼</span>
+      </button>
+      <div class="nav-dd" id="dd-off">
+        <span class="nav-dd-item c-off" onclick="navTo('off','pass')">Pass</span>
+        <span class="nav-dd-item c-off" onclick="navTo('off','unknownpass')">Unknown Pass End</span>
+        <span class="nav-dd-item c-off" onclick="navTo('off','shot')">Shot</span>
+        <span class="nav-dd-item c-off" onclick="navTo('off','dribble')">Dribble</span>
+        <span class="nav-dd-item c-off" onclick="navTo('off','miscontrol')">Miscontrol</span>
+        <span class="nav-dd-item c-off" onclick="navTo('off','holdup')">Hold Up Duel</span>
+        <span class="nav-dd-item c-off" onclick="navTo('off','separation')">Separation Duel</span>
+      </div>
+    </div>
+    <!-- Goalkeeper (Purple) -->
+    <div class="nav-cat">
+      <button class="nav-cat-btn c-gk" id="btn-gk" onclick="toggleDD('dd-gk',this)" aria-expanded="false">
+        <span class="cdot"></span>Goalkeeper<span class="chv">▼</span>
+      </button>
+      <div class="nav-dd" id="dd-gk">
+        <span class="nav-dd-item c-gk" onclick="navTo('gk','collected')">Collected</span>
+        <span class="nav-dd-item c-gk" onclick="navTo('gk','punch')">Punch</span>
+        <span class="nav-dd-item c-gk" onclick="navTo('gk','smother')">Smother</span>
+        <span class="nav-dd-item c-gk" onclick="navTo('gk','sweeper')">Keeper Sweeper</span>
+        <span class="nav-dd-item c-gk" onclick="navTo('gk','saveattempt')">Save Attempt</span>
+        <span class="nav-dd-item c-gk" onclick="navTo('gk','noconcede')">Conceded No Save</span>
+        <span class="nav-dd-item c-gk" onclick="navTo('gk','save')">Save</span>
+        <span class="nav-dd-item c-gk" onclick="navTo('gk','gkextras')">GK Extras</span>
+      </div>
+    </div>
+    <!-- Independent (Orange) -->
+    <div class="nav-cat">
+      <button class="nav-cat-btn c-ind" id="btn-ind" onclick="toggleDD('dd-ind',this)" aria-expanded="false">
+        <span class="cdot"></span>Independent<span class="chv">▼</span>
+      </button>
+      <div class="nav-dd" id="dd-ind">
+        <span class="nav-dd-item c-ind" onclick="navTo('ind','fifty')">50-50</span>
+        <span class="nav-dd-item c-ind" onclick="navTo('ind','posduel')">Positioning Duel</span>
+        <span class="nav-dd-item c-ind" onclick="navTo('ind','error')">Error</span>
+        <span class="nav-dd-item c-ind" onclick="navTo('ind','owngoal')">Own Goal Against</span>
+        <span class="nav-dd-item c-ind" onclick="navTo('ind','foul')">Foul Committed</span>
+        <span class="nav-dd-item c-ind" onclick="navTo('ind','card')">Card</span>
+        <span class="nav-dd-item c-ind" onclick="navTo('ind','out')">Out</span>
+        <span class="nav-dd-item c-ind" onclick="navTo('ind','stoppage')">Stoppage</span>
+        <span class="nav-dd-item c-ind" onclick="navTo('ind','refball')">Referee Ball Drop</span>
+        <span class="nav-dd-item c-ind" onclick="navTo('ind','startingxi')">Starting XI</span>
+        <span class="nav-dd-item c-ind" onclick="navTo('ind','tacticalshift')">Tactical Shift</span>
+        <span class="nav-dd-item c-ind" onclick="navTo('ind','playeroff')">Player Off & On</span>
+      </div>
+    </div>
   </div>
+
+  <!-- Search -->
+  <div class="nav-search">
+    <svg width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m16.5 16.5 4 4"/></svg>
+    <input type="text" id="search-input" placeholder="Search events…" autocomplete="off">
+  </div>
+
+  <button class="nav-back" onclick="window.location.href='/'">← Projects</button>
 </nav>
 
+<!-- ══════════ SEARCH OVERLAY ══════════ -->
+<div class="search-over" id="search-over">
+  <div style="max-width:700px;margin:0 auto;">
+    <div class="search-hd" id="search-hd">Type to search all events…</div>
+    <div id="search-results"></div>
+  </div>
+</div>
 
-<!-- ═════════════════════════════════
-     PAGE 1 — HOME
-═════════════════════════════════ -->
+<!-- ══════════ HOME PAGE ══════════ -->
 <div id="page-home" class="page active">
-<div class="home-wrap">
+<div class="wrap">
 
   <div class="home-hero fu d1">
     <div class="home-hero-left">
-      <div class="home-eyebrow"><span></span>Ops Knowledge Hub</div>
+      <div class="home-eyebrow"><span></span>StatsBomb Knowledge Hub</div>
       <div class="home-title">Your complete tagging<br>reference — <em>in one place.</em></div>
-      <div class="home-sub">Every football event defined, demonstrated, and compared with real video examples. No more guessing.</div>
+      <div class="home-sub">Every football event defined, demonstrated, and compared with real video examples. Browse by category or search for any event.</div>
     </div>
     <div class="home-stats">
       <div class="hstat"><div class="hstat-num">35</div><div class="hstat-lbl">Event types</div></div>
@@ -497,90 +414,78 @@ body{
     </div>
   </div>
 
-  <div class="sec-label fu d2">Applications</div>
+  <div class="sec-label fu d2">Event Types</div>
   <div class="cat-grid fu d3">
 
-    <div class="card cat-card" onclick="goCategory('def')">
+    <div class="card cat-card c-def" onclick="goCategory('def')">
       <div class="cat-count-chip">08</div>
-      <div class="cat-card-icon def">🛡</div>
-      <div class="cat-name">Defensive Events</div>
+      <div class="cat-card-icon">🛡</div>
+      <div class="cat-name" style="color:#93c5fd">Defensive Events</div>
       <div class="cat-desc">Actions taken to prevent the opponent from progressing or scoring.</div>
       <div class="cat-tags">
         <span class="cat-tag">Block</span><span class="cat-tag">Tackle</span>
         <span class="cat-tag">Interception</span><span class="cat-tag">Pressure</span><span class="cat-tag">+4</span>
       </div>
-      <div class="cat-foot">
-        <span class="cat-open">Explore events</span>
-        <span class="cat-arrow">→</span>
-      </div>
+      <div class="cat-foot"><span class="cat-open">Explore events</span><span class="cat-arrow">→</span></div>
     </div>
 
-    <div class="card cat-card" onclick="goCategory('off')">
+    <div class="card cat-card c-off" onclick="goCategory('off')">
       <div class="cat-count-chip">07</div>
-      <div class="cat-card-icon off">⚡</div>
-      <div class="cat-name">Offensive Events</div>
+      <div class="cat-card-icon">⚡</div>
+      <div class="cat-name" style="color:#86efac">Offensive Events</div>
       <div class="cat-desc">Actions in possession to create or finish goal-scoring opportunities.</div>
       <div class="cat-tags">
         <span class="cat-tag">Pass</span><span class="cat-tag">Shot</span>
         <span class="cat-tag">Dribble</span><span class="cat-tag">Miscontrol</span><span class="cat-tag">+3</span>
       </div>
-      <div class="cat-foot">
-        <span class="cat-open">Explore events</span>
-        <span class="cat-arrow">→</span>
-      </div>
+      <div class="cat-foot"><span class="cat-open">Explore events</span><span class="cat-arrow">→</span></div>
     </div>
 
-    <div class="card cat-card" onclick="goCategory('gk')">
+    <div class="card cat-card c-gk" onclick="goCategory('gk')">
       <div class="cat-count-chip">08</div>
-      <div class="cat-card-icon gk">🥅</div>
-      <div class="cat-name">Goalkeeper Events</div>
+      <div class="cat-card-icon">🥅</div>
+      <div class="cat-name" style="color:#c4b5fd">Goalkeeper Events</div>
       <div class="cat-desc">All keeper-specific actions — saves, smothers, collected balls, sweeping.</div>
       <div class="cat-tags">
         <span class="cat-tag">Save</span><span class="cat-tag">Collected</span>
         <span class="cat-tag">Smother</span><span class="cat-tag">Punch</span><span class="cat-tag">+4</span>
       </div>
-      <div class="cat-foot">
-        <span class="cat-open">Explore events</span>
-        <span class="cat-arrow">→</span>
-      </div>
+      <div class="cat-foot"><span class="cat-open">Explore events</span><span class="cat-arrow">→</span></div>
     </div>
 
-    <div class="card cat-card" onclick="goCategory('ind')">
+    <div class="card cat-card c-ind" onclick="goCategory('ind')">
       <div class="cat-count-chip">12</div>
-      <div class="cat-card-icon ind">⚖️</div>
-      <div class="cat-name">Independent Events</div>
+      <div class="cat-card-icon">⚖️</div>
+      <div class="cat-name" style="color:#fdba74">Independent Events</div>
       <div class="cat-desc">Match events not tied to one team — duels, fouls, stoppages and more.</div>
       <div class="cat-tags">
         <span class="cat-tag">50-50</span><span class="cat-tag">Foul</span>
         <span class="cat-tag">Error</span><span class="cat-tag">Card</span><span class="cat-tag">+8</span>
       </div>
-      <div class="cat-foot">
-        <span class="cat-open">Explore events</span>
-        <span class="cat-arrow">→</span>
-      </div>
+      <div class="cat-foot"><span class="cat-open">Explore events</span><span class="cat-arrow">→</span></div>
     </div>
 
   </div>
 
   <div class="sec-label fu d5">Common edge cases — event vs event</div>
   <div class="vs-strip fu d6">
-    <div class="vs-row c-o" onclick="goEvent('def','block')">
+    <div class="vs-row c-def" onclick="navTo('def','block')">
       <div class="vs-pair"><span class="vs-ev">Block</span><span class="vs-label">VS</span><span class="vs-ev">Interception</span></div>
       <div class="vs-meta"><span class="vs-vc">4 videos</span><span class="vs-go">Study →</span></div>
     </div>
-    <div class="vs-row c-b" onclick="goEvent('def','tackle')">
+    <div class="vs-row c-def" onclick="navTo('def','tackle')">
       <div class="vs-pair"><span class="vs-ev">Tackle</span><span class="vs-label">VS</span><span class="vs-ev">Ball Recovery</span></div>
       <div class="vs-meta"><span class="vs-vc">4 videos</span><span class="vs-go">Study →</span></div>
     </div>
-    <div class="vs-row c-g" onclick="goEvent('off','pass')">
+    <div class="vs-row c-off" onclick="navTo('off','pass')">
       <div class="vs-pair"><span class="vs-ev">Clearance</span><span class="vs-label">VS</span><span class="vs-ev">Pass</span></div>
       <div class="vs-meta"><span class="vs-vc">3 videos</span><span class="vs-go">Study →</span></div>
     </div>
-    <div class="vs-row c-o" onclick="goEvent('ind','fifty')">
+    <div class="vs-row c-ind" onclick="navTo('ind','fifty')">
       <div class="vs-pair"><span class="vs-ev">50-50</span><span class="vs-label">VS</span><span class="vs-ev">Tackle</span></div>
       <div class="vs-meta"><span class="vs-vc">4 videos</span><span class="vs-go">Study →</span></div>
     </div>
-    <div class="vs-row c-b" onclick="goEvent('off','holdup')">
+    <div class="vs-row c-off" onclick="navTo('off','holdup')">
       <div class="vs-pair"><span class="vs-ev">Hold Up Duel</span><span class="vs-label">VS</span><span class="vs-ev">Shield</span></div>
       <div class="vs-meta"><span class="vs-vc">2 videos</span><span class="vs-go">Study →</span></div>
     </div>
@@ -589,12 +494,9 @@ body{
 </div>
 </div>
 
-
-<!-- ═════════════════════════════════
-     PAGE 2 — CATEGORY
-═════════════════════════════════ -->
+<!-- ══════════ CATEGORY PAGE ══════════ -->
 <div id="page-category" class="page">
-<div class="cat-page-wrap">
+<div class="wrap">
   <div class="cat-hero fu d1">
     <div>
       <div class="cat-hero-badge" id="cat-badge"></div>
@@ -608,19 +510,14 @@ body{
 </div>
 </div>
 
-
-<!-- ═════════════════════════════════
-     PAGE 3 — EVENT DETAIL
-═════════════════════════════════ -->
+<!-- ══════════ EVENT DETAIL PAGE ══════════ -->
 <div id="page-event" class="page">
-<div class="detail-wrap">
-
+<div class="wrap">
   <div class="detail-hero fu d1">
     <div class="detail-ev-label" id="ev-label"></div>
     <div class="detail-ev-title" id="ev-title"></div>
     <div class="detail-ev-def" id="ev-def"></div>
   </div>
-
   <div class="detail-cols fu d2">
     <div class="detail-card">
       <div class="detail-card-lbl">Key points</div>
@@ -631,152 +528,430 @@ body{
       <div class="outcomes-list" id="ev-outcomes"></div>
     </div>
   </div>
-
   <div class="detail-full fu d3">
     <div class="detail-card">
       <div class="detail-card-lbl">Types &amp; subtypes</div>
       <div class="types-grid" id="ev-types"></div>
     </div>
   </div>
-
   <div class="detail-full fu d4">
     <div class="detail-card">
       <div class="detail-card-lbl">Video examples</div>
       <div class="videos-grid" id="ev-videos"></div>
     </div>
   </div>
-
   <div class="detail-full fu d5">
     <div class="detail-card">
       <div class="detail-card-lbl">Event vs event — edge cases</div>
       <div class="vs-comps" id="ev-vs"></div>
     </div>
   </div>
-
 </div>
 </div>
 
+<!-- ══════════ VIDEO MODAL ══════════ -->
+<div class="modal-back" id="video-modal" onclick="if(event.target===this)closeModal()">
+  <div class="modal-box">
+    <div class="modal-head">
+      <span class="modal-title" id="modal-title">Video</span>
+      <button class="modal-close" onclick="closeModal()">×</button>
+    </div>
+    <div class="modal-vid" id="modal-vid"></div>
+    <div class="modal-foot" id="modal-desc"></div>
+  </div>
+</div>
 
 <script>
+// ══════════════════════════════════════════════════════
+// CATEGORY CONFIG
+// ══════════════════════════════════════════════════════
 const CATS = {
-  def:{emoji:'🛡',label:'Defensive',title:'Defensive Events',desc:'Actions taken to prevent the opponent from progressing or scoring.',badgeCls:'badge-org',acc:'def',count:'08'},
-  off:{emoji:'⚡',label:'Offensive',title:'Offensive Events',desc:'Actions in possession to create or finish goal-scoring opportunities.',badgeCls:'badge-blu',acc:'off',count:'07'},
-  gk: {emoji:'🥅',label:'Goalkeeper',title:'Goalkeeper Events',desc:'All keeper-specific actions — saves, smothers, collected balls and sweeping.',badgeCls:'badge-grn',acc:'gk',count:'08'},
-  ind:{emoji:'⚖️',label:'Independent',title:'Independent Events',desc:'Match events not tied to one team — duels, fouls, stoppages and more.',badgeCls:'badge-pur',acc:'ind',count:'12'},
+  def:{emoji:'🛡',label:'Defensive',title:'Defensive Events',desc:'Actions taken to prevent the opponent from progressing or scoring.',cls:'c-def',badgeCls:'badge-def',color:'#2563eb',num:'08'},
+  off:{emoji:'⚡',label:'Offensive',title:'Offensive Events',desc:'Actions in possession to create or finish goal-scoring opportunities.',cls:'c-off',badgeCls:'badge-off',color:'#16a34a',num:'07'},
+  gk: {emoji:'🥅',label:'Goalkeeper',title:'Goalkeeper Events',desc:'All keeper-specific actions — saves, smothers, collected balls and sweeping.',cls:'c-gk',badgeCls:'badge-gk',color:'#7c3aed',num:'08'},
+  ind:{emoji:'⚖️',label:'Independent',title:'Independent Events',desc:'Match events not tied to one team — duels, fouls, stoppages and more.',cls:'c-ind',badgeCls:'badge-ind',color:'#ea580c',num:'12'},
 };
 
+// ══════════════════════════════════════════════════════
+// VIDEO CATALOGUE
+// Replace PLACEHOLDER values with real Google Drive file IDs.
+// Get the ID from: drive.google.com/file/d/FILE_ID/view
+// Folders to pull from:
+//   https://drive.google.com/drive/folders/1qy5S3lKBfMdyT-x5WTdt_qqZ9bM6t392
+//   https://drive.google.com/drive/folders/1E8AH7APrMRtW5h1fqcYyutIT9PD7FXOQ
+// ══════════════════════════════════════════════════════
+const VIDEO_IDS = {
+  // Format: 'filename.mp4': { id: 'DRIVE_FILE_ID', desc: 'Short description' }
+  // Defensive
+  'Copy of 1.mp4':              { id: '', desc: 'Example 1' },
+  'Copy of 2.mp4':              { id: '', desc: 'Example 2' },
+  'Copy of 6.mp4':              { id: '', desc: 'Example 6' },
+  'Copy of 5.mp4':              { id: '', desc: 'Example 5' },
+  'Block Save.mp4':             { id: '', desc: 'Goalkeeper block save — standing in path of shot' },
+  'Block offensive.mp4':        { id: '', desc: 'Offensive block — ball hits own teammate' },
+  'Ball Recovery not Tackle.mp4':{ id: '', desc: 'Ball loose after miscontrol — recovery, not tackle' },
+  'Won 1.mp4':                  { id: '', desc: 'Interception won — full possession gained' },
+  'Won 2.mp4':                  { id: '', desc: 'Interception won — second example' },
+  'Success 1.mp4':              { id: '', desc: 'Interception success — pass disrupted but not held' },
+  '1- Step In.mp4':             { id: '', desc: 'Step In rule — defender must reach ball first' },
+  '2-Step In.mp4':              { id: '', desc: 'Step In rule — second example' },
+  'Copy of 3.mp4':              { id: '', desc: 'Example 3' },
+  'Copy of 4.mp4':              { id: '', desc: 'Example 4' },
+  'Dribble Attempt 1.mp4':      { id: '', desc: 'Tackle during a dribble attempt' },
+  'Tackle 1.mp4':               { id: '', desc: 'Standard tackle — ball won cleanly' },
+  'Tackle 2.mp4':               { id: '', desc: 'Tackle — ball knocked to team' },
+  '1.mp4':                      { id: '', desc: 'Example' },
+  'Leg Stretch Duel 1.mp4':     { id: '', desc: 'Defender stretches leg without full challenge' },
+  'Receiving.mp4':              { id: '', desc: 'Pressure applied as opponent receives the ball' },
+  'pressure (Carrying).mp4':    { id: '', desc: 'Pressure as opponent carries the ball' },
+  'Before Shot.mp4':            { id: '', desc: 'Pressure applied before opponent releases' },
+  'More than 1 Press.mp4':      { id: '', desc: 'Multiple pressure events on same player' },
+  'Shield.mp4':                 { id: '', desc: 'Player shields ball until it exits play' },
+  'Point 2-2.mp4':              { id: '', desc: 'Shield — opponent pressing closely' },
+  // Offensive
+  'Open play pass.mp4':         { id: '', desc: 'Regular open play pass' },
+  'Pass First Time.mp4':        { id: '', desc: 'One-touch pass without prior control' },
+  'Through Ball.mp4':           { id: '', desc: 'Pass cutting through the defensive line' },
+  'Pass Backheel.mp4':          { id: '', desc: 'Backheel pass technique' },
+  'Shot open play.mp4':         { id: '', desc: 'Open play shot attempt' },
+  'Copy of Goal.mp4':           { id: '', desc: 'Shot outcome: Goal' },
+  'Copy of Saved 2.mp4':        { id: '', desc: 'Shot outcome: Saved by goalkeeper' },
+  'Copy of Block.mp4':          { id: '', desc: 'Shot outcome: Blocked by outfield player' },
+  'Copy of Dribble nutmeg.mp4': { id: '', desc: 'Dribble — nutmeg technique' },
+  'Copy of no touch.mp4':       { id: '', desc: 'Dribble — no touch subtype' },
+  'Reguler 1.mp4':              { id: '', desc: 'Miscontrol — poor touch in ground play' },
+  'Reguler 2.mp4':              { id: '', desc: 'Miscontrol — second example' },
+  'Aerial won 1.mp4':           { id: '', desc: 'Miscontrol after winning aerial duel' },
+  'Right1.mp4':                 { id: '', desc: 'Separation duel — ball moved right' },
+  'Left 1.mp4':                 { id: '', desc: 'Separation duel — ball moved left' },
+  // Goalkeeper
+  'Collected Success.mp4':      { id: '', desc: 'Goalkeeper collects high ball cleanly' },
+  'Collected Fail.mp4':         { id: '', desc: 'Goalkeeper drops the ball on collection' },
+  'Collected 1.mp4':            { id: '', desc: 'Collected — cross scenario' },
+  'Collected 2.mkv':            { id: '', desc: 'Collected — contested scenario' },
+  'Punch Success.mp4':          { id: '', desc: 'Goalkeeper punches ball away cleanly' },
+  'Fail.mp4':                   { id: '', desc: 'Goalkeeper fails to connect on punch' },
+  'Smother Won.mp4':            { id: '', desc: 'Smother — keeper wins the ball' },
+  'Dribble Take on 2.mp4':      { id: '', desc: 'Smother during dribble attempt' },
+  'Dribble Take on 5.mp4':      { id: '', desc: 'Smother during dribble — second example' },
+  'Sweeper Claim.mp4':          { id: '', desc: 'Keeper sweeper — claims ball off the line' },
+  'Sweeper clear.mp4':          { id: '', desc: 'Keeper sweeper — clears danger' },
+  'Sweeper 1.mp4':              { id: '', desc: 'Keeper sweeper — intercepts through ball' },
+  'Sweeper 5.mp4':              { id: '', desc: 'Keeper sweeper — fifth example' },
+  'Won.mp4':                    { id: '', desc: 'Save — full possession gained' },
+  'Second Effort.mp4':          { id: '', desc: 'Second effort save attempt' },
+  'Success.mp4':                { id: '', desc: 'Save — ball parried away' },
+  'Conceded No Save 1.mp4':     { id: '', desc: 'Conceded without save — ball unreachable' },
+  'Conceded No Save 2.mp4':     { id: '', desc: 'Conceded no save — second example' },
+  'Save Fail.mp4':              { id: '', desc: 'Save fail — goal conceded' },
+  // Independent
+  'Fifty Fifty Won.mp4':        { id: '', desc: '50-50 won — clear possession gained' },
+  '2- Success.mp4':             { id: '', desc: '50-50 success — ball won for team' },
+  'Fifty-fifty 1.mp4':          { id: '', desc: '50-50 — example 1' },
+  '50-50 3.mp4':                { id: '', desc: '50-50 — example 3' },
+  'Touch 1.mp4':                { id: '', desc: 'Positioning duel with touch' },
+  'No touch 1.mp4':             { id: '', desc: 'Positioning duel with no touch' },
+  'Error.mp4':                  { id: '', desc: 'Error leading to a dangerous opportunity' },
+  'Own Goal.mp4':               { id: '', desc: 'Own goal against' },
+  'Foul committed regular.mp4': { id: '', desc: 'Regular foul committed during play' },
+  'Foul Committed handball.mp4':{ id: '', desc: 'Handball foul' },
+  'Foul Advantage.mp4':         { id: '', desc: 'Foul with advantage played' },
+  'Penalty.mp4':                { id: '', desc: 'Foul resulting in penalty' },
+  'Yellow Card.mp4':            { id: '', desc: 'Yellow card issued' },
+  'Red Card.mp4':               { id: '', desc: 'Red card — straight dismissal' },
+  'Sideline.mp4':               { id: '', desc: 'Ball out over sideline — throw-in' },
+  'Endline.mp4':                { id: '', desc: 'Ball out over endline — goal kick or corner' },
+  'Point 1.mp4':                { id: '', desc: 'Example 1' },
+  'VAR.mp4':                    { id: '', desc: 'VAR review stoppage' },
+  'Example ReBDr.mp4':          { id: '', desc: 'Referee ball drop restart' },
+  'Starting XI.mp4':            { id: '', desc: 'Starting lineup and formation shown' },
+  'Point 2.mp4':                { id: '', desc: 'Example 2' },
+  'Player off.mp4':             { id: '', desc: 'Player exits temporarily for treatment' },
+  'Player on.mp4':              { id: '', desc: 'Player returns after temporary absence' },
+  '2.mp4':{ id: '', desc: 'Example 2' },
+  '3.mp4':{ id: '', desc: 'Example 3' },
+  '4.mp4':{ id: '', desc: 'Example 4' },
+};
+
+// ══════════════════════════════════════════════════════
+// EVENT DATA (unchanged from original — all data preserved)
+// ══════════════════════════════════════════════════════
 const EVENTS = {
   def:[
-    {id:'block',name:'Block',def:'Blocking the ball by standing in its path.',kps:['Close distance to the opponent','A simple or normal move, or standing still','Deflection touch against a pass or shot','Save block or goal-line clearance'],types:[{n:'Defensive',d:'The ball hits an opposing player.'},{n:'Offensive',d:'The ball hits a teammate of the player who made the action.'}],outcomes:[{n:'Regular',d:'Ball clearly changes direction.',b:'badge-org',bl:'Regular'},{n:'Deflection',d:'Slightly alters path only.',b:'badge-blu',bl:'Deflection'}],videos:['Copy of 1.mp4','Copy of 2.mp4','Copy of 6.mp4','Copy of 5.mp4','Block Save.mp4','Block offensive.mp4'],vs:[{ev:'Interception',vc:4,desc:'Close distance, simple movement, ball touches player unintentionally = Block. Smart positioning cutting the passing lane = Interception.'},{ev:'Tackle',vc:1,desc:'Opponent\'s intention was a pass, not a dribble = Block, not Tackle.'},{ev:'Clearance',vc:1,desc:'Moved with simple movement and misjudged the ball = Block, not Clearance.'}]},
-    {id:'ballrecovery',name:'Ball Recovery',def:'An attempt to recover a loose ball.',kps:['Regains possession for his team','Normal, natural movement toward the ball','The ball is loose — not under control of any player','Little effort required'],types:[{n:'Complete',d:'Player successfully regains the ball and secures possession.'},{n:'Fail',d:'Player attempts to recover but ball runs too far away.'}],outcomes:[{n:'Complete',d:'Possession secured.',b:'badge-grn',bl:'Complete'},{n:'Fail',d:'Ball lost.',b:'badge-red',bl:'Fail'}],videos:['Copy of 1.mp4','Copy of 2.mp4','Copy of 3.mp4','Ball Recovery not Tackle.mp4'],vs:[{ev:'Interception',vc:4,desc:'Natural movement tracking back = Recovery. Smart anticipation cutting lane = Interception.'},{ev:'Tackle',vc:3,desc:'Miscontrol makes ball loose, next touch = Recovery, not Tackle.'},{ev:'50-50',vc:1,desc:'One player has no real chance = Recovery, not 50-50.'}]},
-    {id:'interception',name:'Interception',def:'Anticipating and positioning oneself in the passing lane to prevent an opponent\'s pass from reaching their teammate.',kps:['Against opponent pass only','Clever movement and smart positioning','Cutting the passing lane','Defender must reach ball first (Step In rule)'],types:[{n:'Won',d:'Ball secured — possession gained by defender.'},{n:'Success',d:'Pass disrupted but not fully controlled.'}],outcomes:[{n:'Won',d:'Full possession.',b:'badge-grn',bl:'Won'},{n:'Success',d:'Pass disrupted.',b:'badge-blu',bl:'Success'}],videos:['Won 1.mp4','Won 2.mp4','Success 1.mp4','1- Step In.mp4','2-Step In.mp4'],vs:[{ev:'Block',vc:4,desc:'Anticipation + smart positioning = Interception. Standing still, ball hits player = Block.'},{ev:'Ball Recovery',vc:3,desc:'Pretending to press then cutting lane = Interception. Natural tracking back = Recovery.'},{ev:'Tackle',vc:2,desc:'Defender intercepts before attacker touches ball = Interception, not Tackle.'}]},
-    {id:'clearance',name:'Clearance',def:'Action by a player to clear danger without intention to deliver to a teammate.',kps:['Removes danger with quick one-touch action','Does not look up — just clears','No aim for a specific teammate','Usually performed under pressure','Usually in defending team\'s half'],types:[{n:'Regular',d:'Clearance without aerial duel — any body part except head.'},{n:'Aerial Won',d:'Removes ball from danger during an aerial duel.'}],outcomes:[{n:'Regular',d:'Standard ground clearance.',b:'badge-org',bl:'Regular'},{n:'Aerial Won',d:'Won in the air.',b:'badge-blu',bl:'Aerial'}],videos:['Copy of 1.mp4','Copy of 3.mp4','Copy of 4.mp4','Copy of 5.mp4'],vs:[{ev:'Interception',vc:4,desc:'Covering natural defensive position, ball comes into zone = Clearance. Stepping into passing lane = Interception.'},{ev:'Pass',vc:3,desc:'No intention to direct to teammate = Clearance. Spots and plays to teammate = Pass.'}]},
-    {id:'tackle',name:'Tackle',def:'A ground contest in which a defender successfully dispossesses an opponent in possession.',kps:['Direct duel between defender and ball carrier','One player is in clear possession — not a 50-50','Sliding or standing challenge with any legal body part','Direction tracked: Left / Right Take On, or None'],types:[{n:'Dribble Attempt',d:'Attacker was trying to dribble and failed.'},{n:'Dispossessed',d:'Attacker was not trying to dribble — just lost the ball.'},{n:'Take On / Not Take On / None',d:'Direction attacker takes, read from defender\'s shoulders.'}],outcomes:[{n:'Won',d:'Defender regains full possession.',b:'badge-grn',bl:'Won'},{n:'Success',d:'Ball knocked to another player or out.',b:'badge-blu',bl:'Success'}],videos:['Dribble Attempt 1.mp4','Won 1.mp4','Success 1.mp4','Tackle 1.mp4','Tackle 2.mp4'],vs:[{ev:'50-50',vc:3,desc:'One player has clear possession = Tackle. Equal chance for both = 50-50.'},{ev:'Ball Recovery',vc:4,desc:'Miscontrol makes ball loose, next touch = Recovery. Ball still under control = Tackle.'},{ev:'Interception',vc:2,desc:'Defender contacts attacker\'s leg while receiving = Tackle, not Interception.'}]},
+    {id:'block',name:'Block',def:'Blocking the ball by standing in its path.',kps:['Close distance to the opponent','A simple or normal move, or standing still','Deflection touch against a pass or shot','Save block or goal-line clearance'],types:[{n:'Defensive',d:'The ball hits an opposing player.'},{n:'Offensive',d:'The ball hits a teammate of the player who made the action.'}],outcomes:[{n:'Regular',d:'Ball clearly changes direction.',b:'badge-def',bl:'Regular'},{n:'Deflection',d:'Slightly alters path only.',b:'badge-off',bl:'Deflection'}],videos:['Copy of 1.mp4','Copy of 2.mp4','Copy of 6.mp4','Copy of 5.mp4','Block Save.mp4','Block offensive.mp4'],vs:[{ev:'Interception',vc:4,desc:"Close distance, simple movement, ball touches player unintentionally = Block. Smart positioning cutting the passing lane = Interception."},{ev:'Tackle',vc:1,desc:"Opponent's intention was a pass, not a dribble = Block, not Tackle."},{ev:'Clearance',vc:1,desc:"Moved with simple movement and misjudged the ball = Block, not Clearance."}]},
+    {id:'ballrecovery',name:'Ball Recovery',def:'An attempt to recover a loose ball.',kps:['Regains possession for his team','Normal, natural movement toward the ball','The ball is loose — not under control of any player','Little effort required'],types:[{n:'Complete',d:'Player successfully regains the ball and secures possession.'},{n:'Fail',d:'Player attempts to recover but ball runs too far away.'}],outcomes:[{n:'Complete',d:'Possession secured.',b:'badge-off',bl:'Complete'},{n:'Fail',d:'Ball lost.',b:'badge-red',bl:'Fail'}],videos:['Copy of 1.mp4','Copy of 2.mp4','Copy of 3.mp4','Ball Recovery not Tackle.mp4'],vs:[{ev:'Interception',vc:4,desc:"Natural movement tracking back = Recovery. Smart anticipation cutting lane = Interception."},{ev:'Tackle',vc:3,desc:"Miscontrol makes ball loose, next touch = Recovery, not Tackle."},{ev:'50-50',vc:1,desc:"One player has no real chance = Recovery, not 50-50."}]},
+    {id:'interception',name:'Interception',def:"Anticipating and positioning oneself in the passing lane to prevent an opponent's pass from reaching their teammate.",kps:['Against opponent pass only','Clever movement and smart positioning','Cutting the passing lane','Defender must reach ball first (Step In rule)'],types:[{n:'Won',d:'Ball secured — possession gained by defender.'},{n:'Success',d:'Pass disrupted but not fully controlled.'}],outcomes:[{n:'Won',d:'Full possession.',b:'badge-off',bl:'Won'},{n:'Success',d:'Pass disrupted.',b:'badge-def',bl:'Success'}],videos:['Won 1.mp4','Won 2.mp4','Success 1.mp4','1- Step In.mp4','2-Step In.mp4'],vs:[{ev:'Block',vc:4,desc:"Anticipation + smart positioning = Interception. Standing still, ball hits player = Block."},{ev:'Ball Recovery',vc:3,desc:"Pretending to press then cutting lane = Interception. Natural tracking back = Recovery."},{ev:'Tackle',vc:2,desc:"Defender intercepts before attacker touches ball = Interception, not Tackle."}]},
+    {id:'clearance',name:'Clearance',def:'Action by a player to clear danger without intention to deliver to a teammate.',kps:["Removes danger with quick one-touch action","Does not look up — just clears","No aim for a specific teammate","Usually performed under pressure","Usually in defending team's half"],types:[{n:'Regular',d:'Clearance without aerial duel — any body part except head.'},{n:'Aerial Won',d:'Removes ball from danger during an aerial duel.'}],outcomes:[{n:'Regular',d:'Standard ground clearance.',b:'badge-def',bl:'Regular'},{n:'Aerial Won',d:'Won in the air.',b:'badge-gk',bl:'Aerial'}],videos:['Copy of 1.mp4','Copy of 3.mp4','Copy of 4.mp4','Copy of 5.mp4'],vs:[{ev:'Interception',vc:4,desc:"Covering natural defensive position, ball comes into zone = Clearance. Stepping into passing lane = Interception."},{ev:'Pass',vc:3,desc:"No intention to direct to teammate = Clearance. Spots and plays to teammate = Pass."}]},
+    {id:'tackle',name:'Tackle',def:'A ground contest in which a defender successfully dispossesses an opponent in possession.',kps:['Direct duel between defender and ball carrier','One player is in clear possession — not a 50-50','Sliding or standing challenge with any legal body part','Direction tracked: Left / Right Take On, or None'],types:[{n:'Dribble Attempt',d:"Attacker was trying to dribble and failed."},{n:'Dispossessed',d:"Attacker was not trying to dribble — just lost the ball."},{n:"Take On / Not Take On / None",d:"Direction attacker takes, read from defender's shoulders."}],outcomes:[{n:'Won',d:'Defender regains full possession.',b:'badge-off',bl:'Won'},{n:'Success',d:'Ball knocked to another player or out.',b:'badge-def',bl:'Success'}],videos:['Dribble Attempt 1.mp4','Won 1.mp4','Success 1.mp4','Tackle 1.mp4','Tackle 2.mp4'],vs:[{ev:'50-50',vc:3,desc:"One player has clear possession = Tackle. Equal chance for both = 50-50."},{ev:'Ball Recovery',vc:4,desc:"Miscontrol makes ball loose, next touch = Recovery. Ball still under control = Tackle."},{ev:'Interception',vc:2,desc:"Defender contacts attacker's leg while receiving = Tackle, not Interception."}]},
     {id:'legstretch',name:'Leg Stretch Duel',def:'Defender stretches their leg to try to win the ball while attacker does not attempt to dribble past or create space.',kps:['Close distance with leg stretch toward the ball','Attacker in clear possession','No successful tackle, no dribble past'],types:[{n:'Leg Stretch',d:'Defender stretches leg — no full challenge or tackle made.'}],outcomes:[{n:'Attempted',d:'Leg stretch made.',b:'badge-t',bl:'Attempted'}],videos:['1.mp4','Leg Stretch Duel 1.mp4'],vs:[]},
-    {id:'pressure',name:'Pressure',def:'A defensive move where a player applies pressure to an opponent receiving, carrying, or releasing the ball.',kps:['Direct movement toward the ball carrier','Close distance between players','High intensity in the press','Possible physical contact'],types:[{n:'While Receiving',d:'Pressure as opponent receives the ball.'},{n:'While Carrying',d:'Pressure as opponent carries the ball.'},{n:'Before Releasing',d:'Pressure just before opponent plays the ball.'}],outcomes:[{n:'Applied',d:'Pressure registered.',b:'badge-org',bl:'Applied'}],videos:['Receiving.mp4','pressure (Carrying).mp4','Before Shot.mp4','More than 1 Press.mp4'],vs:[]},
-    {id:'shield',name:'Shield',def:'Player shields the ball to prevent an opponent from gaining possession, allowing it to go out of bounds.',kps:['Player shields while ball goes out of play','Usually a tight one-on-one duel','Opponent pressing very closely','Opponent not allowed to touch the ball'],types:[{n:'Shield',d:'Protects ball from opponent until it exits play.'}],outcomes:[{n:'Complete',d:'Ball goes out safely.',b:'badge-grn',bl:'Complete'}],videos:['Shield.mp4','Point 2-2.mp4'],vs:[{ev:'Tackle',vc:1,desc:'Opponent steps in and pushes ball away = Tackle; shield becomes Ball Recovery.'}]},
+    {id:'pressure',name:'Pressure',def:'A defensive move where a player applies pressure to an opponent receiving, carrying, or releasing the ball.',kps:['Direct movement toward the ball carrier','Close distance between players','High intensity in the press','Possible physical contact'],types:[{n:'While Receiving',d:'Pressure as opponent receives the ball.'},{n:'While Carrying',d:'Pressure as opponent carries the ball.'},{n:'Before Releasing',d:'Pressure just before opponent plays the ball.'}],outcomes:[{n:'Applied',d:'Pressure registered.',b:'badge-def',bl:'Applied'}],videos:['Receiving.mp4','pressure (Carrying).mp4','Before Shot.mp4','More than 1 Press.mp4'],vs:[]},
+    {id:'shield',name:'Shield',def:'Player shields the ball to prevent an opponent from gaining possession, allowing it to go out of bounds.',kps:['Player shields while ball goes out of play','Usually a tight one-on-one duel','Opponent pressing very closely','Opponent not allowed to touch the ball'],types:[{n:'Shield',d:'Protects ball from opponent until it exits play.'}],outcomes:[{n:'Complete',d:'Ball goes out safely.',b:'badge-off',bl:'Complete'}],videos:['Shield.mp4','Point 2-2.mp4'],vs:[{ev:'Tackle',vc:1,desc:"Opponent steps in and pushes ball away = Tackle; shield becomes Ball Recovery."}]},
   ],
   off:[
-    {id:'pass',name:'Pass',def:'An intended kick from one player to a teammate.',kps:['Intent to deliver to a teammate','Can be complete, incomplete, out of play, or offside','Through balls cut through the last defensive line','Height: Ground / Low / High'],types:[{n:'Open Play',d:'Regular pass during play.'},{n:'Set Piece',d:'Free kick, corner, goal kick, throw-in, kick-off.'},{n:'First Time',d:'One-touch pass without prior control.'},{n:'Interception / Recovery',d:'Pass off an interception or loose ball.'}],outcomes:[{n:'Complete',d:'Reaches teammate.',b:'badge-grn',bl:'Complete'},{n:'Incomplete',d:'Doesn\'t reach target.',b:'badge-red',bl:'Incomplete'},{n:'Out',d:'Goes out of play.',b:'badge-red',bl:'Out'},{n:'Offside',d:'Receiver in offside position.',b:'badge-red',bl:'Offside'}],videos:['Open play pass.mp4','Pass First Time.mp4','Through Ball.mp4','Pass Backheel.mp4'],vs:[{ev:'Clearance',vc:3,desc:'Intent to reach teammate = Pass. Just clearing danger without looking up = Clearance.'}]},
-    {id:'unknownpass',name:'Unknown Pass End',def:'A pass that occurred but whose end didn\'t match any known outcome.',kps:['Pass interrupted by a foul','Half ends while pass is in flight','Own goal off back-pass','Ball hits referee, post, or object'],types:[{n:'Foul Committed',d:'Pass interrupted by a foul.'},{n:'Half End',d:'Whistle blows while pass is in flight.'},{n:'Own Goal Against',d:'Back-pass results in own goal.'},{n:'X Event',d:'Ball hits referee, post, corner flag, etc.'}],outcomes:[{n:'Tagged',d:'At moment of interruption.',b:'badge-t',bl:'Tagged'}],videos:['1.mp4','2.mp4','3.mp4','4.mp4'],vs:[]},
-    {id:'shot',name:'Shot',def:'An attempt to score a goal, made with any legal part of the body.',kps:['Clear intent to score','Final action of the attack','Body parts: foot, head, other','Technique: Normal, Volley, Half-Volley, Overhead, Lob, Diving Header, Backheel'],types:[{n:'Open Play',d:'Shot during normal play.'},{n:'Set Piece',d:'Free kick, penalty, corner shot.'},{n:'Redirected',d:'Ball redirected toward goal.'}],outcomes:[{n:'Goal',d:'Crosses the line.',b:'badge-grn',bl:'Goal'},{n:'Saved',d:'Goalkeeper stops it.',b:'badge-blu',bl:'Saved'},{n:'Blocked',d:'Another player deflects it.',b:'badge-org',bl:'Blocked'},{n:'Post / Wayward',d:'Misses the goal.',b:'badge-red',bl:'Off target'}],videos:['Shot open play.mp4','Copy of Goal.mp4','Copy of Saved 2.mp4','Copy of Block.mp4'],vs:[]},
-    {id:'dribble',name:'Dribble',def:'A successful action where a player gets past an opponent or creates space for a key action.',kps:['Ball control while beating a defender','Direction tracked vs defender\'s shoulders','No Touch and Nutmeg are special subtypes'],types:[{n:'Complete',d:'Player beats defender, continues in intended direction.'},{n:'Overrun',d:'Player beats defender but same touch pushes ball too far.'}],outcomes:[{n:'Complete',d:'Successfully past the defender.',b:'badge-grn',bl:'Complete'},{n:'Overrun',d:'Beat defender but ball overruns.',b:'badge-blu',bl:'Overrun'}],videos:['Copy of 1.mp4','Copy of 2.mp4','Copy of Dribble nutmeg.mp4','Copy of no touch.mp4'],vs:[{ev:'Not Dribble',vc:5,desc:'Defender taken completely out of play = Dribble. Attacker just moves backward into open space = Not a Dribble.'}]},
-    {id:'miscontrol',name:'Miscontrol',def:'A player loses possession due to a poor touch.',kps:['Poor touch while receiving or carrying','Misjudging the ball','No direct defensive action caused it'],types:[{n:'Regular',d:'Poor touch during ground play.'},{n:'Aerial Won',d:'Poor touch after winning an aerial duel.'}],outcomes:[{n:'Miscontrol',d:'Ball lost from poor touch.',b:'badge-red',bl:'Miscontrol'}],videos:['Reguler 1.mp4','Reguler 2.mp4','Aerial won 1.mp4'],vs:[{ev:'Dribble / Tackle',vc:7,desc:'Unintentional touch that loses the ball = Miscontrol, even if it accidentally beats a player.'}]},
-    {id:'holdup',name:'Hold Up Duel',def:'A player uses physical strength to protect the ball from an opponent while maintaining possession.',kps:['Ground challenge with real physical contact','Attacker already in clear possession','Physical contact while shielding or blocking defender'],types:[{n:'Hold Up',d:'Protecting the ball using body strength.'}],outcomes:[{n:'Won',d:'Maintained possession.',b:'badge-grn',bl:'Won'},{n:'Lost',d:'Opponent wins the ball.',b:'badge-red',bl:'Lost'}],videos:['1.mp4','2.mp4'],vs:[{ev:'Shield',vc:2,desc:'Ball stays in play = Hold Up Duel. Ball goes out of play = Shield.'},{ev:'Positioning Duel',vc:2,desc:'Player protecting own possession = Hold Up. Neither player has possession = Positioning Duel.'}]},
-    {id:'separation',name:'Separation Duel',def:'A player uses skills to gain space against an opponent before a cross or shot.',kps:['Contact between two players in ball\'s path','Both players on the ground','No clear advantage for either player over the ball'],types:[{n:'Right',d:'Attacker moved ball toward defender\'s right.'},{n:'Left',d:'Attacker moved ball toward defender\'s left.'}],outcomes:[{n:'Separation gained',d:'Player gets space for cross or shot.',b:'badge-grn',bl:'Won'}],videos:['Right1.mp4','Left 1.mp4'],vs:[]},
+    {id:'pass',name:'Pass',def:'An intended kick from one player to a teammate.',kps:['Intent to deliver to a teammate','Can be complete, incomplete, out of play, or offside','Through balls cut through the last defensive line','Height: Ground / Low / High'],types:[{n:'Open Play',d:'Regular pass during play.'},{n:'Set Piece',d:'Free kick, corner, goal kick, throw-in, kick-off.'},{n:'First Time',d:'One-touch pass without prior control.'},{n:'Interception / Recovery',d:'Pass off an interception or loose ball.'}],outcomes:[{n:'Complete',d:'Reaches teammate.',b:'badge-off',bl:'Complete'},{n:'Incomplete',d:"Doesn't reach target.",b:'badge-red',bl:'Incomplete'},{n:'Out',d:'Goes out of play.',b:'badge-red',bl:'Out'},{n:'Offside',d:'Receiver in offside position.',b:'badge-red',bl:'Offside'}],videos:['Open play pass.mp4','Pass First Time.mp4','Through Ball.mp4','Pass Backheel.mp4'],vs:[{ev:'Clearance',vc:3,desc:"Intent to reach teammate = Pass. Just clearing danger without looking up = Clearance."}]},
+    {id:'unknownpass',name:'Unknown Pass End',def:"A pass that occurred but whose end didn't match any known outcome.",kps:['Pass interrupted by a foul','Half ends while pass is in flight','Own goal off back-pass','Ball hits referee, post, or object'],types:[{n:'Foul Committed',d:'Pass interrupted by a foul.'},{n:'Half End',d:'Whistle blows while pass is in flight.'},{n:'Own Goal Against',d:'Back-pass results in own goal.'},{n:'X Event',d:'Ball hits referee, post, corner flag, etc.'}],outcomes:[{n:'Tagged',d:'At moment of interruption.',b:'badge-t',bl:'Tagged'}],videos:['1.mp4','2.mp4','3.mp4','4.mp4'],vs:[]},
+    {id:'shot',name:'Shot',def:'An attempt to score a goal, made with any legal part of the body.',kps:['Clear intent to score','Final action of the attack','Body parts: foot, head, other','Technique: Normal, Volley, Half-Volley, Overhead, Lob, Diving Header, Backheel'],types:[{n:'Open Play',d:'Shot during normal play.'},{n:'Set Piece',d:'Free kick, penalty, corner shot.'},{n:'Redirected',d:'Ball redirected toward goal.'}],outcomes:[{n:'Goal',d:'Crosses the line.',b:'badge-off',bl:'Goal'},{n:'Saved',d:'Goalkeeper stops it.',b:'badge-def',bl:'Saved'},{n:'Blocked',d:'Another player deflects it.',b:'badge-ind',bl:'Blocked'},{n:'Post / Wayward',d:'Misses the goal.',b:'badge-red',bl:'Off target'}],videos:['Shot open play.mp4','Copy of Goal.mp4','Copy of Saved 2.mp4','Copy of Block.mp4'],vs:[]},
+    {id:'dribble',name:'Dribble',def:'A successful action where a player gets past an opponent or creates space for a key action.',kps:["Ball control while beating a defender","Direction tracked vs defender's shoulders","No Touch and Nutmeg are special subtypes"],types:[{n:'Complete',d:'Player beats defender, continues in intended direction.'},{n:'Overrun',d:'Player beats defender but same touch pushes ball too far.'}],outcomes:[{n:'Complete',d:'Successfully past the defender.',b:'badge-off',bl:'Complete'},{n:'Overrun',d:'Beat defender but ball overruns.',b:'badge-def',bl:'Overrun'}],videos:['Copy of 1.mp4','Copy of 2.mp4','Copy of Dribble nutmeg.mp4','Copy of no touch.mp4'],vs:[{ev:'Not Dribble',vc:5,desc:"Defender taken completely out of play = Dribble. Attacker just moves backward into open space = Not a Dribble."}]},
+    {id:'miscontrol',name:'Miscontrol',def:'A player loses possession due to a poor touch.',kps:['Poor touch while receiving or carrying','Misjudging the ball','No direct defensive action caused it'],types:[{n:'Regular',d:'Poor touch during ground play.'},{n:'Aerial Won',d:'Poor touch after winning an aerial duel.'}],outcomes:[{n:'Miscontrol',d:'Ball lost from poor touch.',b:'badge-red',bl:'Miscontrol'}],videos:['Reguler 1.mp4','Reguler 2.mp4','Aerial won 1.mp4'],vs:[{ev:'Dribble / Tackle',vc:7,desc:"Unintentional touch that loses the ball = Miscontrol, even if it accidentally beats a player."}]},
+    {id:'holdup',name:'Hold Up Duel',def:'A player uses physical strength to protect the ball from an opponent while maintaining possession.',kps:['Ground challenge with real physical contact','Attacker already in clear possession','Physical contact while shielding or blocking defender'],types:[{n:'Hold Up',d:'Protecting the ball using body strength.'}],outcomes:[{n:'Won',d:'Maintained possession.',b:'badge-off',bl:'Won'},{n:'Lost',d:'Opponent wins the ball.',b:'badge-red',bl:'Lost'}],videos:['1.mp4','2.mp4'],vs:[{ev:'Shield',vc:2,desc:"Ball stays in play = Hold Up Duel. Ball goes out of play = Shield."},{ev:'Positioning Duel',vc:2,desc:"Player protecting own possession = Hold Up. Neither player has possession = Positioning Duel."}]},
+    {id:'separation',name:'Separation Duel',def:'A player uses skills to gain space against an opponent before a cross or shot.',kps:["Contact between two players in ball's path","Both players on the ground","No clear advantage for either player over the ball"],types:[{n:'Right',d:"Attacker moved ball toward defender's right."},{n:'Left',d:"Attacker moved ball toward defender's left."}],outcomes:[{n:'Separation gained',d:'Player gets space for cross or shot.',b:'badge-off',bl:'Won'}],videos:['Right1.mp4','Left 1.mp4'],vs:[]},
   ],
   gk:[
-    {id:'collected',name:'Collected',def:'Keeper comes out or jumps to collect a high ball, including crosses and lofted passes.',kps:['Catches high or low balls from crosses, corners, or loose balls','Comes out of goal when opponent is nearby contesting','Key difference from Ball Recovery: opponent must be present'],types:[{n:'Success',d:'Goalkeeper catches the ball cleanly.'},{n:'Collected Twice',d:'Goalkeeper catches a second time.'},{n:'Fail',d:'Goalkeeper fails to hold the ball.'}],outcomes:[{n:'Success',d:'Ball secured.',b:'badge-grn',bl:'Success'},{n:'Fail',d:'Ball dropped or missed.',b:'badge-red',bl:'Fail'}],videos:['Collected Success.mp4','Collected Fail.mp4','Collected 1.mp4','Collected 2.mkv'],vs:[{ev:'Ball Recovery',vc:4,desc:'Opponent nearby contesting = Collected. No opponent present = Ball Recovery for GK.'}]},
-    {id:'punch',name:'Punch',def:'Keeper punches the ball away to clear it from danger.',kps:['Ball clearance with fist closed','No specific direction required','Used when catching cleanly isn\'t possible','Happens at set pieces or open-play crosses'],types:[{n:'Success',d:'Goalkeeper punches ball away cleanly.'},{n:'Fail',d:'Goalkeeper fails to connect properly.'}],outcomes:[{n:'Success',d:'Ball cleared.',b:'badge-grn',bl:'Success'},{n:'Fail',d:'Failed punch.',b:'badge-red',bl:'Fail'}],videos:['Punch Success.mp4','Fail.mp4'],vs:[{ev:'Keeper Sweeper',vc:1,desc:'One-handed action outside the box = Punch (no one-handed Sweeper option exists).'}]},
-    {id:'smother',name:'Smother',def:'Keeper equivalent of a tackle — coming out to dispossess a player.',kps:['Similar to a Tackle for outfield players','Usually against Dribble or Dispossessed','Direction also tracked: Left / Right Take On or None'],types:[{n:'Dribble Attempt',d:'Opponent was trying to dribble the keeper.'},{n:'Dispossessed',d:'Opponent was not trying to dribble.'}],outcomes:[{n:'Won',d:'Keeper wins the ball fully.',b:'badge-grn',bl:'Won'},{n:'Success',d:'Ball knocked away.',b:'badge-blu',bl:'Success'}],videos:['Smother Won.mp4','Dribble Take on 2.mp4','Dribble Take on 5.mp4'],vs:[]},
-    {id:'sweeper',name:'Keeper Sweeper',def:'Keeper comes off their line to claim or clear the ball — similar to an Interception.',kps:['Usually happens outside the penalty area','Often against through balls or long passes','Deals with dangerous situations before attackers reach the ball'],types:[{n:'Claim',d:'Goalkeeper comes out and claims possession.'},{n:'Clear',d:'Goalkeeper comes out and clears the ball.'}],outcomes:[{n:'Claim',d:'Ball secured.',b:'badge-grn',bl:'Claim'},{n:'Clear',d:'Danger cleared.',b:'badge-blu',bl:'Clear'}],videos:['Sweeper Claim.mp4','Sweeper clear.mp4','Sweeper 1.mp4','Sweeper 5.mp4'],vs:[]},
-    {id:'saveattempt',name:'Save Attempt',def:'Keeper save from an opposing team shot — happens only after a Shot.',kps:['After Shots only','Preventing the ball from entering the goal','Body part, technique, and body state all tagged here'],types:[{n:'Won',d:'Goalkeeper wins the ball completely.'},{n:'Success',d:'Shot saved, ball stays in play.'},{n:'Fail',d:'Goal conceded.'},{n:'Second Effort',d:'Keeper makes a second save attempt.'}],outcomes:[{n:'Won',d:'Full possession.',b:'badge-grn',bl:'Won'},{n:'Success',d:'Ball parried.',b:'badge-blu',bl:'Success'},{n:'Fail',d:'Goal scored.',b:'badge-red',bl:'Fail'}],videos:['Won.mp4','Success.mp4','Fail.mp4','Second Effort.mp4'],vs:[]},
+    {id:'collected',name:'Collected',def:'Keeper comes out or jumps to collect a high ball, including crosses and lofted passes.',kps:['Catches high or low balls from crosses, corners, or loose balls','Comes out of goal when opponent is nearby contesting','Key difference from Ball Recovery: opponent must be present'],types:[{n:'Success',d:'Goalkeeper catches the ball cleanly.'},{n:'Collected Twice',d:'Goalkeeper catches a second time.'},{n:'Fail',d:'Goalkeeper fails to hold the ball.'}],outcomes:[{n:'Success',d:'Ball secured.',b:'badge-off',bl:'Success'},{n:'Fail',d:'Ball dropped or missed.',b:'badge-red',bl:'Fail'}],videos:['Collected Success.mp4','Collected Fail.mp4','Collected 1.mp4','Collected 2.mkv'],vs:[{ev:'Ball Recovery',vc:4,desc:"Opponent nearby contesting = Collected. No opponent present = Ball Recovery for GK."}]},
+    {id:'punch',name:'Punch',def:'Keeper punches the ball away to clear it from danger.',kps:["Ball clearance with fist closed","No specific direction required","Used when catching cleanly isn't possible","Happens at set pieces or open-play crosses"],types:[{n:'Success',d:'Goalkeeper punches ball away cleanly.'},{n:'Fail',d:'Goalkeeper fails to connect properly.'}],outcomes:[{n:'Success',d:'Ball cleared.',b:'badge-off',bl:'Success'},{n:'Fail',d:'Failed punch.',b:'badge-red',bl:'Fail'}],videos:['Punch Success.mp4','Fail.mp4'],vs:[{ev:'Keeper Sweeper',vc:1,desc:"One-handed action outside the box = Punch (no one-handed Sweeper option exists)."}]},
+    {id:'smother',name:'Smother',def:"Keeper equivalent of a tackle — coming out to dispossess a player.",kps:['Similar to a Tackle for outfield players','Usually against Dribble or Dispossessed','Direction also tracked: Left / Right Take On or None'],types:[{n:'Dribble Attempt',d:'Opponent was trying to dribble the keeper.'},{n:'Dispossessed',d:'Opponent was not trying to dribble.'}],outcomes:[{n:'Won',d:'Keeper wins the ball fully.',b:'badge-off',bl:'Won'},{n:'Success',d:'Ball knocked away.',b:'badge-gk',bl:'Success'}],videos:['Smother Won.mp4','Dribble Take on 2.mp4','Dribble Take on 5.mp4'],vs:[]},
+    {id:'sweeper',name:'Keeper Sweeper',def:'Keeper comes off their line to claim or clear the ball — similar to an Interception.',kps:['Usually happens outside the penalty area','Often against through balls or long passes','Deals with dangerous situations before attackers reach the ball'],types:[{n:'Claim',d:'Goalkeeper comes out and claims possession.'},{n:'Clear',d:'Goalkeeper comes out and clears the ball.'}],outcomes:[{n:'Claim',d:'Ball secured.',b:'badge-off',bl:'Claim'},{n:'Clear',d:'Danger cleared.',b:'badge-gk',bl:'Clear'}],videos:['Sweeper Claim.mp4','Sweeper clear.mp4','Sweeper 1.mp4','Sweeper 5.mp4'],vs:[]},
+    {id:'saveattempt',name:'Save Attempt',def:'Keeper save from an opposing team shot — happens only after a Shot.',kps:['After Shots only','Preventing the ball from entering the goal','Body part, technique, and body state all tagged here'],types:[{n:'Won',d:'Goalkeeper wins the ball completely.'},{n:'Success',d:'Shot saved, ball stays in play.'},{n:'Fail',d:'Goal conceded.'},{n:'Second Effort',d:'Keeper makes a second save attempt.'}],outcomes:[{n:'Won',d:'Full possession.',b:'badge-off',bl:'Won'},{n:'Success',d:'Ball parried.',b:'badge-gk',bl:'Success'},{n:'Fail',d:'Goal scored.',b:'badge-red',bl:'Fail'}],videos:['Won.mp4','Success.mp4','Fail.mp4','Second Effort.mp4'],vs:[]},
     {id:'noconcede',name:'Conceded No Save',def:'Goalkeeper concedes a goal without touching the ball.',kps:['After Shots only','Goalkeeper had no chance to touch the ball'],types:[{n:'Conceded No Save',d:'Goalkeeper could not reach the ball.'}],outcomes:[{n:'Goal conceded',d:'Ball enters net untouched.',b:'badge-red',bl:'Conceded'}],videos:['Conceded No Save 1.mp4','Conceded No Save 2.mp4'],vs:[]},
-    {id:'save',name:'Save',def:'Keeper save from a non-shot situation — after deflection or own-goal risk.',kps:['NOT after a direct Shot — that is Save Attempt','After clearance or deflection toward goal','Quick reaction from goalkeeper'],types:[{n:'Won',d:'Goalkeeper wins the ball completely.'},{n:'Success',d:'Ball kept out, stays in play.'},{n:'Second Effort',d:'Second save attempt.'}],outcomes:[{n:'Won',d:'Full possession.',b:'badge-grn',bl:'Won'},{n:'Success',d:'Ball kept out.',b:'badge-blu',bl:'Success'},{n:'Fail',d:'Goal conceded.',b:'badge-red',bl:'Fail'}],videos:['Won.mp4','Success.mp4','Save Fail.mp4'],vs:[]},
-    {id:'gkextras',name:'GK Extras',def:'Additional descriptors tagged for every shot on goal — body part, technique, and body state.',kps:['Body Part: Right/Left Foot, Right/Left/Both Hands, Chest, Head','Technique: Standing (didn\'t leave feet) or Diving','Body State at moment shot was taken: Set / Moving / Prone'],types:[{n:'Body Part',d:'Which part of body was used.'},{n:'Technique',d:'Standing or Diving save.'},{n:'Body State',d:'Set / Moving / Prone at moment of shot.'}],outcomes:[],videos:[],vs:[]},
+    {id:'save',name:'Save',def:'Keeper save from a non-shot situation — after deflection or own-goal risk.',kps:['NOT after a direct Shot — that is Save Attempt','After clearance or deflection toward goal','Quick reaction from goalkeeper'],types:[{n:'Won',d:'Goalkeeper wins the ball completely.'},{n:'Success',d:'Ball kept out, stays in play.'},{n:'Second Effort',d:'Second save attempt.'}],outcomes:[{n:'Won',d:'Full possession.',b:'badge-off',bl:'Won'},{n:'Success',d:'Ball kept out.',b:'badge-gk',bl:'Success'},{n:'Fail',d:'Goal conceded.',b:'badge-red',bl:'Fail'}],videos:['Won.mp4','Success.mp4','Save Fail.mp4'],vs:[]},
+    {id:'gkextras',name:'GK Extras',def:'Additional descriptors tagged for every shot on goal — body part, technique, and body state.',kps:["Body Part: Right/Left Foot, Right/Left/Both Hands, Chest, Head","Technique: Standing (didn't leave feet) or Diving","Body State at moment shot was taken: Set / Moving / Prone"],types:[{n:'Body Part',d:'Which part of body was used.'},{n:'Technique',d:'Standing or Diving save.'},{n:'Body State',d:'Set / Moving / Prone at moment of shot.'}],outcomes:[],videos:[],vs:[]},
   ],
   ind:[
-    {id:'fifty',name:'50-50',def:'Two players challenging to recover a loose ball — equal chance for both.',kps:['Both players have equal chance — no clear advantage','Ball must be loose, not in possession of either team','Both move toward ball and compete simultaneously'],types:[{n:'Won',d:'Player wins contest and regains possession.'},{n:'Success',d:'Player wins and knocks ball to team.'}],outcomes:[{n:'Won',d:'Clear possession.',b:'badge-grn',bl:'Won'},{n:'Success',d:'Ball knocked to team.',b:'badge-blu',bl:'Success'}],videos:['Fifty Fifty Won.mp4','2- Success.mp4','Fifty-fifty 1.mp4','50-50 3.mp4'],vs:[{ev:'Tackle',vc:4,desc:'Equal chance for both = 50-50. One player clearly has possession = Tackle.'}]},
-    {id:'posduel',name:'Positioning Duel',def:'Players compete for ball or space using physical positioning — neither in clear possession initially.',kps:['Contact in ball\'s path before it arrives','Both players on the ground','No clear advantage for either player'],types:[{n:'With Touch',d:'One or both players touch the ball.'},{n:'No Touch',d:'Contest for position without touching ball.'}],outcomes:[{n:'Won',d:'One player secures ball.',b:'badge-grn',bl:'Won'}],videos:['Touch 1.mp4','No touch 1.mp4'],vs:[{ev:'Hold Up Duel',vc:2,desc:'Player protecting own possession = Hold Up. Neither player has possession = Positioning Duel.'}]},
+    {id:'fifty',name:'50-50',def:'Two players challenging to recover a loose ball — equal chance for both.',kps:['Both players have equal chance — no clear advantage','Ball must be loose, not in possession of either team','Both move toward ball and compete simultaneously'],types:[{n:'Won',d:'Player wins contest and regains possession.'},{n:'Success',d:'Player wins and knocks ball to team.'}],outcomes:[{n:'Won',d:'Clear possession.',b:'badge-off',bl:'Won'},{n:'Success',d:'Ball knocked to team.',b:'badge-gk',bl:'Success'}],videos:['Fifty Fifty Won.mp4','2- Success.mp4','Fifty-fifty 1.mp4','50-50 3.mp4'],vs:[{ev:'Tackle',vc:4,desc:"Equal chance for both = 50-50. One player clearly has possession = Tackle."}]},
+    {id:'posduel',name:'Positioning Duel',def:"Players compete for ball or space using physical positioning — neither in clear possession initially.",kps:["Contact in ball's path before it arrives","Both players on the ground","No clear advantage for either player"],types:[{n:'With Touch',d:'One or both players touch the ball.'},{n:'No Touch',d:'Contest for position without touching ball.'}],outcomes:[{n:'Won',d:'One player secures ball.',b:'badge-off',bl:'Won'}],videos:['Touch 1.mp4','No touch 1.mp4'],vs:[{ev:'Hold Up Duel',vc:2,desc:"Player protecting own possession = Hold Up. Neither player has possession = Positioning Duel."}]},
     {id:'error',name:'Error',def:'A mistake by a player that leads to a dangerous goal-scoring opportunity.',kps:['Must lead to a dangerous opportunity — shot or clear 1v1 with keeper'],types:[{n:'Error',d:'Mistake creates a goal-scoring opportunity.'}],outcomes:[{n:'Dangerous',d:'Opportunity created.',b:'badge-red',bl:'Error'}],videos:['Error.mp4'],vs:[]},
     {id:'owngoal',name:'Own Goal Against',def:'An own goal scored against the team.',kps:['Ball crosses own goal line off own player'],types:[{n:'Own Goal',d:'Ball put into own net.'}],outcomes:[{n:'Goal',d:'Counts as a goal.',b:'badge-red',bl:'Own Goal'}],videos:['Own Goal.mp4'],vs:[]},
-    {id:'foul',name:'Foul Committed',def:'Any infringement penalized as foul play by the referee.',kps:['Cards tagged as Extra on this event','Types: Regular, Handball, Dive, Dangerous Play, Offside, 6/8 Seconds, Backpass Pick, Foul Out'],types:[{n:'Regular',d:'Standard foul during open play.'},{n:'Handball',d:'Illegal handling of the ball.'},{n:'Dive',d:'Player simulates a foul.'},{n:'Dangerous Play',d:'Action endangering another player.'}],outcomes:[{n:'Regular',d:'Free kick awarded.',b:'badge-red',bl:'Foul'},{n:'Advantage',d:'Play continues.',b:'badge-blu',bl:'Advantage'},{n:'Penalty',d:'Penalty kick awarded.',b:'badge-red',bl:'Penalty'}],videos:['Foul committed regular.mp4','Foul Committed handball.mp4','Foul Advantage.mp4','Penalty.mp4'],vs:[]},
+    {id:'foul',name:'Foul Committed',def:'Any infringement penalized as foul play by the referee.',kps:['Cards tagged as Extra on this event','Types: Regular, Handball, Dive, Dangerous Play, Offside, 6/8 Seconds, Backpass Pick, Foul Out'],types:[{n:'Regular',d:'Standard foul during open play.'},{n:'Handball',d:'Illegal handling of the ball.'},{n:'Dive',d:'Player simulates a foul.'},{n:'Dangerous Play',d:'Action endangering another player.'}],outcomes:[{n:'Regular',d:'Free kick awarded.',b:'badge-red',bl:'Foul'},{n:'Advantage',d:'Play continues.',b:'badge-def',bl:'Advantage'},{n:'Penalty',d:'Penalty kick awarded.',b:'badge-red',bl:'Penalty'}],videos:['Foul committed regular.mp4','Foul Committed handball.mp4','Foul Advantage.mp4','Penalty.mp4'],vs:[]},
     {id:'card',name:'Card',def:'A card issued for an infringement outside active play — not classified as a Foul Committed.',kps:['Covers dissent, time-wasting, encroachment','Different from Card Extra on Foul Committed','Yellow, Second Yellow, or Red'],types:[{n:'Yellow',d:'First booking.'},{n:'Second Yellow',d:'Second booking — leads to red.'},{n:'Red Card',d:'Straight dismissal.'}],outcomes:[{n:'Yellow',d:'Player booked.',b:'badge-t',bl:'Yellow'},{n:'Red',d:'Player dismissed.',b:'badge-red',bl:'Red'}],videos:['Yellow Card.mp4','Red Card.mp4'],vs:[]},
     {id:'out',name:'Out',def:'The ball goes out of bounds over the sideline or endline.',kps:['Sideline → Throw-in','Endline → Goal Kick or Corner Kick'],types:[{n:'Sideline',d:'Results in a throw-in.'},{n:'Endline',d:'Results in goal kick or corner.'}],outcomes:[{n:'Sideline',d:'Throw-in.',b:'badge-t',bl:'Sideline'},{n:'Endline',d:'Goal kick / Corner.',b:'badge-t',bl:'Endline'}],videos:['Sideline.mp4','Endline.mp4'],vs:[]},
-    {id:'stoppage',name:'Stoppage',def:'A stop in play caused by a match interruption.',kps:['Types: Injury, VAR Review, Abandoned, Other'],types:[{n:'Injury',d:'Player injury stops play.'},{n:'Review (VAR)',d:'Video review check.'},{n:'Abandoned',d:'Match cannot continue.'},{n:'Other',d:'Lights, weather, crowd, etc.'}],outcomes:[{n:'Temporary',d:'Play resumes.',b:'badge-blu',bl:'Temporary'},{n:'Abandoned',d:'Match ends early.',b:'badge-red',bl:'Abandoned'}],videos:['Point 1.mp4','VAR.mp4'],vs:[]},
-    {id:'refball',name:'Referee Ball Drop',def:'The referee restarts play by dropping the ball after a stoppage.',kps:['Used to restart after stoppage','Ball dropped between two players'],types:[{n:'Referee Ball Drop',d:'Referee drops ball to restart.'}],outcomes:[{n:'Restarted',d:'Play resumes.',b:'badge-grn',bl:'Restarted'}],videos:['Example ReBDr.mp4'],vs:[]},
-    {id:'startingxi',name:'Starting XI',def:'Indicates the 11 players chosen to start the match, their positions, and the team\'s initial formation.',kps:['Tagged at match start','Includes jersey numbers, names, positions','Outlines initial tactical formation'],types:[{n:'Starting XI',d:'Full lineup and formation at kickoff.'}],outcomes:[],videos:['Starting XI.mp4'],vs:[]},
-    {id:'tacticalshift',name:'Tactical Shift',def:'Indicates a tactical change — new positions or a new team formation.',kps:['Tagged when team changes formation','Shows players\' new positions','Often happens after substitutions'],types:[{n:'Tactical Shift',d:'New positions and/or formation noted.'}],outcomes:[],videos:['Point 1.mp4','Point 2.mp4'],vs:[]},
+    {id:'stoppage',name:'Stoppage',def:'A stop in play caused by a match interruption.',kps:['Types: Injury, VAR Review, Abandoned, Other'],types:[{n:'Injury',d:'Player injury stops play.'},{n:'Review (VAR)',d:'Video review check.'},{n:'Abandoned',d:'Match cannot continue.'},{n:'Other',d:'Lights, weather, crowd, etc.'}],outcomes:[{n:'Temporary',d:'Play resumes.',b:'badge-def',bl:'Temporary'},{n:'Abandoned',d:'Match ends early.',b:'badge-red',bl:'Abandoned'}],videos:['Point 1.mp4','VAR.mp4'],vs:[]},
+    {id:'refball',name:'Referee Ball Drop',def:'The referee restarts play by dropping the ball after a stoppage.',kps:['Used to restart after stoppage','Ball dropped between two players'],types:[{n:'Referee Ball Drop',d:'Referee drops ball to restart.'}],outcomes:[{n:'Restarted',d:'Play resumes.',b:'badge-off',bl:'Restarted'}],videos:['Example ReBDr.mp4'],vs:[]},
+    {id:'startingxi',name:'Starting XI',def:"Indicates the 11 players chosen to start the match, their positions, and the team's initial formation.",kps:['Tagged at match start','Includes jersey numbers, names, positions','Outlines initial tactical formation'],types:[{n:'Starting XI',d:'Full lineup and formation at kickoff.'}],outcomes:[],videos:['Starting XI.mp4'],vs:[]},
+    {id:'tacticalshift',name:'Tactical Shift',def:'Indicates a tactical change — new positions or a new team formation.',kps:["Tagged when team changes formation","Shows players' new positions","Often happens after substitutions"],types:[{n:'Tactical Shift',d:'New positions and/or formation noted.'}],outcomes:[],videos:['Point 1.mp4','Point 2.mp4'],vs:[]},
     {id:'playeroff',name:'Player Off & On',def:'A player leaves or returns to the pitch without a substitution.',kps:['NOT a substitution','Covers treatment exits and returns','Permanent exit with no replacement = no Player On event'],types:[{n:'Player Off',d:'Leaves temporarily (e.g. treatment).'},{n:'Player On',d:'Returns after temporary absence.'},{n:'Permanent Off',d:'Leaves permanently, not replaced.'}],outcomes:[],videos:['Player off.mp4','Player on.mp4'],vs:[]},
   ]
 };
 
+// ══════════════════════════════════════════════════════
+// NAVIGATION
+// ══════════════════════════════════════════════════════
+let _curCat = null;
+
 function goHome(){
+  closeAllDDs(); closeSearch();
   showPage('page-home');
-  setBreadcrumb([{label:'Knowledge Hub',action:null}]);
 }
 
 function goCategory(cat){
-  const info=CATS[cat];
-  document.getElementById('cat-badge').className='cat-hero-badge '+info.badgeCls;
-  document.getElementById('cat-badge').textContent=info.emoji+' '+info.label;
-  document.getElementById('cat-title').textContent=info.title;
-  document.getElementById('cat-desc').textContent=info.desc;
-  document.getElementById('cat-num').textContent=info.count;
-  document.getElementById('events-list').innerHTML=EVENTS[cat].map((ev,i)=>`
-    <div class="event-row ${cat}" onclick="goEvent('${cat}','${ev.id}')">
+  closeAllDDs(); closeSearch();
+  _curCat = cat;
+  const info = CATS[cat];
+  const badge = document.getElementById('cat-badge');
+  badge.className = 'cat-hero-badge ' + info.badgeCls;
+  badge.style.borderColor = info.color + '55';
+  badge.textContent = info.emoji + ' ' + info.label;
+  document.getElementById('cat-title').textContent = info.title;
+  document.getElementById('cat-desc').textContent = info.desc;
+  document.getElementById('cat-num').textContent = info.num;
+  document.getElementById('events-list').innerHTML = EVENTS[cat].map((ev,i) => `
+    <div class="event-row ${info.cls}" onclick="goEvent('${cat}','${ev.id}')">
       <div class="ev-row-num">${String(i+1).padStart(2,'0')}</div>
       <div class="ev-row-body">
         <div class="ev-row-name">${ev.name}</div>
         <div class="ev-row-def">${ev.def}</div>
       </div>
       <div class="ev-row-pills">
-        ${ev.videos.length?`<span class="badge badge-t">${ev.videos.length} videos</span>`:''}
-        ${ev.vs.length?`<span class="badge badge-org">${ev.vs.length} comparisons</span>`:''}
+        ${ev.videos.length ? `<span class="badge badge-t">${ev.videos.length} videos</span>` : ''}
+        ${ev.vs.length    ? `<span class="badge ${info.badgeCls}">${ev.vs.length} vs</span>` : ''}
       </div>
       <div class="ev-row-arrow">→</div>
     </div>
   `).join('');
   showPage('page-category');
-  setBreadcrumb([{label:'Knowledge Hub',action:'goHome()'},{label:info.title,action:null}]);
 }
 
-function goEvent(cat,evId){
-  const ev=EVENTS[cat].find(e=>e.id===evId);
-  if(!ev)return;
-  const info=CATS[cat];
-  document.getElementById('ev-label').className='detail-ev-label '+info.badgeCls;
-  document.getElementById('ev-label').textContent=info.emoji+' '+info.label+' · Event';
-  document.getElementById('ev-title').textContent=ev.name;
-  document.getElementById('ev-def').textContent=ev.def;
-  document.getElementById('ev-kps').innerHTML=ev.kps.map(k=>`<div class="kp-item"><div class="kp-dot"></div>${k}</div>`).join('');
-  document.getElementById('ev-outcomes').innerHTML=ev.outcomes.length
-    ?ev.outcomes.map(o=>`<div class="outcome-row"><div class="outcome-left"><div class="outcome-name">${o.n}</div><div class="outcome-desc">${o.d}</div></div><span class="badge ${o.b}">${o.bl}</span></div>`).join('')
-    :'<div class="empty">No specific outcomes for this event.</div>';
-  document.getElementById('ev-types').innerHTML=ev.types.map((t,i)=>`<div class="type-item"><div class="type-header"><div class="type-num">${i+1}</div><div class="type-name">${t.n}</div></div><div class="type-desc">${t.d}</div></div>`).join('');
-  document.getElementById('ev-videos').innerHTML=ev.videos.length
-    ?ev.videos.map(v=>`<div class="video-card"><div class="video-thumb"><div class="play-ring"><svg viewBox="0 0 12 12"><path d="M3 2l7 4-7 4V2z"/></svg></div></div><div class="video-info"><div class="video-fname">${v}</div></div></div>`).join('')
-    :'<div class="empty">No video examples for this event.</div>';
-  document.getElementById('ev-vs').innerHTML=ev.vs.length
-    ?ev.vs.map(vs=>`<div class="vs-comp"><div class="vs-comp-head"><div class="vs-comp-pair"><span class="vs-name">${ev.name}</span><span class="vs-vslbl">VS</span><span class="vs-name">${vs.ev}</span></div><span class="vs-comp-vc">${vs.vc} video examples</span></div><div class="vs-comp-body">${vs.desc}</div><div class="vs-thumb-row">${Array(Math.min(vs.vc,4)).fill(0).map(()=>`<div class="vs-thumb"><svg viewBox="0 0 12 12"><path d="M3 2l7 4-7 4V2z"/></svg></div>`).join('')}</div></div>`).join('')
-    :'<div class="empty">No direct comparisons for this event.</div>';
+function goEvent(cat, evId){
+  const ev = EVENTS[cat].find(e => e.id === evId);
+  if(!ev) return;
+  const info = CATS[cat];
+  _curCat = cat;
+
+  // Header
+  const lbl = document.getElementById('ev-label');
+  lbl.className = 'detail-ev-label ' + info.badgeCls;
+  lbl.style.borderColor = info.color + '55';
+  lbl.textContent = info.emoji + ' ' + info.label + ' · Event';
+  lbl.style.borderLeftColor = info.color;
+  document.getElementById('ev-title').textContent = ev.name;
+  document.getElementById('ev-def').style.borderLeftColor = info.color;
+  document.getElementById('ev-def').textContent = ev.def;
+
+  // Key points — dot uses category colour
+  document.getElementById('ev-kps').innerHTML = ev.kps.map(k =>
+    `<div class="kp-item"><div class="kp-dot" style="background:${info.color}"></div>${k}</div>`
+  ).join('');
+
+  // Outcomes
+  document.getElementById('ev-outcomes').innerHTML = ev.outcomes.length
+    ? ev.outcomes.map(o => `
+        <div class="outcome-row">
+          <div class="outcome-left">
+            <div class="outcome-name">${o.n}</div>
+            <div class="outcome-desc">${o.d}</div>
+          </div>
+          <span class="badge ${o.b}">${o.bl}</span>
+        </div>`).join('')
+    : '<div class="empty">No specific outcomes for this event.</div>';
+
+  // Types — type number uses category colour
+  document.getElementById('ev-types').innerHTML = ev.types.map((t,i) => `
+    <div class="type-item">
+      <div class="type-header">
+        <div class="type-num" style="background:${info.color}22;color:${info.color}">${i+1}</div>
+        <div class="type-name">${t.n}</div>
+      </div>
+      <div class="type-desc">${t.d}</div>
+    </div>`).join('');
+
+  // Videos — with description, clickable
+  document.getElementById('ev-videos').innerHTML = ev.videos.length
+    ? ev.videos.map(fname => {
+        const vdata = VIDEO_IDS[fname] || {};
+        const desc = vdata.desc || fname;
+        const driveId = vdata.id || '';
+        return `<div class="video-card" onclick="openVideo('${esc(driveId)}','${esc(fname)}','${esc(desc)}')">
+          <div class="video-thumb">
+            ${driveId ? `<img src="https://drive.google.com/thumbnail?id=${driveId}&sz=w320" style="width:100%;height:100%;object-fit:cover;position:absolute;inset:0;" onerror="this.remove()" alt="">` : ''}
+            <div class="play-ring" style="position:relative;z-index:1">
+              <svg viewBox="0 0 12 12"><path d="M3 2l7 4-7 4V2z"/></svg>
+            </div>
+          </div>
+          <div class="video-info">
+            <div class="video-fname">${esc(fname)}</div>
+            <div class="video-fdesc">${esc(desc)}</div>
+          </div>
+        </div>`;
+      }).join('')
+    : '<div class="empty">No video examples for this event.</div>';
+
+  // VS comparisons
+  document.getElementById('ev-vs').innerHTML = ev.vs.length
+    ? ev.vs.map(vs => `
+        <div class="vs-comp">
+          <div class="vs-comp-head">
+            <div class="vs-comp-pair">
+              <span class="vs-name">${ev.name}</span>
+              <span class="vs-vslbl">VS</span>
+              <span class="vs-name">${vs.ev}</span>
+            </div>
+            <span class="vs-comp-vc">${vs.vc} video examples</span>
+          </div>
+          <div class="vs-comp-body">${vs.desc}</div>
+        </div>`).join('')
+    : '<div class="empty">No direct comparisons for this event.</div>';
+
   showPage('page-event');
-  setBreadcrumb([{label:'Knowledge Hub',action:'goHome()'},{label:info.title,action:`goCategory('${cat}')`},{label:ev.name,action:null}]);
+  closeAllDDs();
+  closeSearch();
+}
+
+function navTo(cat, evId){
+  closeAllDDs();
+  goEvent(cat, evId);
+  return false;
 }
 
 function showPage(id){
-  document.querySelectorAll('.page').forEach(p=>p.classList.remove('active'));
+  document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
   document.getElementById(id).classList.add('active');
   window.scrollTo(0,0);
 }
 
-function setBreadcrumb(items){
-  document.getElementById('breadcrumb').innerHTML=items.map((item,i)=>{
-    const isLast=i===items.length-1;
-    const sep=i>0?'<span class="bc-sep">/</span>':'';
-    if(isLast) return sep+`<span class="bc-item current">${item.label}</span>`;
-    return sep+`<span class="bc-item" onclick="${item.action}">${item.label}</span>`;
+function esc(s){ return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;'); }
+
+// ══════════════════════════════════════════════════════
+// DROPDOWNS
+// ══════════════════════════════════════════════════════
+function toggleDD(id, btn){
+  const dd = document.getElementById(id);
+  const isOpen = dd.classList.contains('open');
+  closeAllDDs();
+  if(!isOpen){
+    dd.classList.add('open');
+    btn.setAttribute('aria-expanded','true');
+    btn.classList.add('open');
+  }
+}
+function closeAllDDs(){
+  document.querySelectorAll('.nav-dd').forEach(d => d.classList.remove('open'));
+  document.querySelectorAll('.nav-cat-btn').forEach(b => { b.setAttribute('aria-expanded','false'); b.classList.remove('open'); });
+}
+document.addEventListener('click', e => { if(!e.target.closest('.nav-cat')) closeAllDDs(); });
+document.addEventListener('keydown', e => { if(e.key==='Escape'){ closeAllDDs(); closeSearch(); closeModal(); } });
+
+// ══════════════════════════════════════════════════════
+// SEARCH (fixed — actually works)
+// ══════════════════════════════════════════════════════
+const SEARCH_INDEX = [];
+Object.entries(EVENTS).forEach(([cat, evs]) => {
+  evs.forEach(ev => SEARCH_INDEX.push({ cat, ev }));
+});
+
+const searchInput = document.getElementById('search-input');
+const searchOver  = document.getElementById('search-over');
+const searchHd    = document.getElementById('search-hd');
+const searchRes   = document.getElementById('search-results');
+
+searchInput.addEventListener('input', function(){
+  const q = this.value.trim().toLowerCase();
+  if(!q){ closeSearch(); return; }
+  openSearch(q);
+});
+searchInput.addEventListener('focus', function(){
+  if(this.value.trim()) openSearch(this.value.trim().toLowerCase());
+});
+
+function openSearch(q){
+  searchOver.classList.add('open');
+  const hits = SEARCH_INDEX.filter(({ev}) =>
+    ev.name.toLowerCase().includes(q) ||
+    ev.def.toLowerCase().includes(q)  ||
+    ev.kps.some(k => k.toLowerCase().includes(q))
+  );
+  if(!hits.length){
+    searchRes.innerHTML = `<div class="sr-none">No events found for "<strong>${esc(q)}</strong>"</div>`;
+    searchHd.textContent = 'No results';
+    return;
+  }
+  searchHd.textContent = hits.length + ' result' + (hits.length !== 1 ? 's' : '');
+  searchRes.innerHTML = hits.map(({cat, ev}) => {
+    const info = CATS[cat];
+    return `<div class="sr-item" onclick="goEvent('${cat}','${ev.id}')">
+      <div class="sr-dot" style="background:${info.color}"></div>
+      <div>
+        <div class="sr-name">${esc(ev.name)}</div>
+        <div class="sr-cat">${info.label}</div>
+      </div>
+    </div>`;
   }).join('');
+}
+
+function closeSearch(){
+  searchOver.classList.remove('open');
+}
+document.addEventListener('click', e => {
+  if(!e.target.closest('.nav-search') && !e.target.closest('#search-over')) closeSearch();
+});
+
+// ══════════════════════════════════════════════════════
+// VIDEO MODAL (actually plays videos)
+// ══════════════════════════════════════════════════════
+function openVideo(driveId, fname, desc){
+  if(!driveId){
+    alert('Video "' + fname + '" is not yet linked to a Google Drive file.\n\nAdd the Drive file ID to the VIDEO_IDS table in the script.');
+    return;
+  }
+  document.getElementById('modal-title').textContent = fname;
+  document.getElementById('modal-desc').textContent = desc;
+  document.getElementById('modal-vid').innerHTML =
+    `<iframe src="https://drive.google.com/file/d/${driveId}/preview" allow="autoplay" allowfullscreen></iframe>`;
+  document.getElementById('video-modal').classList.add('open');
+  document.body.style.overflow = 'hidden';
+}
+function closeModal(){
+  document.getElementById('video-modal').classList.remove('open');
+  document.getElementById('modal-vid').innerHTML = '';
+  document.body.style.overflow = '';
 }
 </script>
 </body>
